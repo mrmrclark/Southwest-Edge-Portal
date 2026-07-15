@@ -1,0 +1,2495 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Southwest Edge Portal</title>
+<style>
+  :root{
+    --edge:#E1531A;
+    --edge-dark:#B8410F;
+    --edge-darker:#8F3009;
+    --edge-light:#FDECE3;
+    --edge-lighter:#FFF7F3;
+    --ink:#20242C;
+    --ink-soft:#5B6270;
+    --line:#E7E5E2;
+    --line-soft:#F0EEEB;
+    --paper:#FFFFFF;
+    --canvas:#FAF9F7;
+    --good:#3E8E5B;
+    --bad:#D64545;
+    --warn:#C98A1E;
+    --radius:10px;
+    --shadow:0 12px 40px rgba(32,20,10,0.14);
+    --shadow-sm:0 2px 8px rgba(32,20,10,0.06);
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;}
+  body{
+    margin:0;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:var(--canvas);
+    color:var(--ink);
+    overflow:hidden;
+  }
+  #app{height:100vh;width:100vw;display:flex;flex-direction:column;position:relative;}
+  button{font-family:inherit;cursor:pointer;}
+  input,select,textarea{font-family:inherit;}
+  a{color:inherit;}
+  ::-webkit-scrollbar{width:8px;height:8px;}
+  ::-webkit-scrollbar-thumb{background:#DDD8D2;border-radius:8px;}
+  ::-webkit-scrollbar-track{background:transparent;}
+
+  /* ---------- LOGIN ---------- */
+  .login-wrap{
+    min-height:100vh;width:100vw;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;
+    background:var(--canvas);
+    padding:48px 24px;overflow-y:auto;
+  }
+  .login-logo{margin-bottom:2px;}
+  .login-logo img{height:64px;width:auto;display:block;margin:0 auto;}
+  .login-title{font-size:30px;font-weight:600;margin-top:14px;color:var(--edge);}
+  .login-title-sub{font-size:16px;font-weight:600;margin-top:2px;color:var(--edge);}
+  .login-tag{color:var(--ink-soft);margin-top:8px;font-size:12px;letter-spacing:.12em;text-transform:uppercase;}
+  .login-card{
+    background:var(--paper);border-radius:16px;box-shadow:var(--shadow);width:420px;max-width:100%;
+    padding:30px 30px 26px;margin-top:34px;
+  }
+  .login-card-title{font-size:20px;font-weight:600;color:var(--edge);margin-bottom:16px;}
+  .login-user-row{
+    display:flex;align-items:center;gap:12px;border:1.5px solid var(--line);border-radius:10px;padding:11px 14px;
+    margin-bottom:10px;cursor:pointer;transition:border-color .12s, background .12s;
+  }
+  .login-user-row:hover{border-color:#EFC1A8;}
+  .login-user-row.selected{border-color:var(--edge);background:var(--edge-lighter);}
+  .login-user-row .user-avatar{
+    width:34px;height:34px;border-radius:50%;background:var(--edge);color:#fff;font-weight:600;font-size:13px;
+    display:flex;align-items:center;justify-content:center;flex-shrink:0;
+  }
+  .login-user-row .user-name{font-weight:600;font-size:14.5px;color:var(--edge-darker);}
+  .login-user-row .user-handle{font-size:12px;color:var(--ink-soft);margin-top:1px;}
+  .login-password-field{
+    width:100%;padding:11px 13px;border:1px solid var(--line);border-radius:9px;font-size:13.5px;
+    background:var(--line-soft);margin-top:6px;
+  }
+  .login-submit-btn{
+    width:100%;padding:12px;border:none;border-radius:9px;background:var(--edge);color:#fff;font-weight:600;
+    font-size:14.5px;margin-top:14px;
+  }
+  .login-submit-btn:hover{background:var(--edge-dark);}
+  .login-hint{margin-top:16px;font-size:12px;color:var(--ink-soft);text-align:left;line-height:1.55;}
+  .login-register-link{
+    display:block;text-align:center;margin-top:14px;color:var(--edge);font-weight:600;font-size:13.5px;
+    background:none;border:none;width:100%;padding:6px;
+  }
+  .login-register-panel{
+    margin-top:14px;padding-top:14px;border-top:1px solid var(--line);
+  }
+  .login-register-panel .field{margin-bottom:10px;}
+  .login-register-panel label{font-size:11.5px;font-weight:600;color:var(--ink-soft);display:block;margin-bottom:4px;}
+  .login-register-panel input{
+    width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:8px;font-size:13px;
+  }
+
+  /* ---------- BUTTONS ---------- */
+  .btn{
+    background:var(--edge);color:#fff;border:none;border-radius:8px;padding:9px 16px;font-size:13px;font-weight:600;
+    transition:background .12s;
+  }
+  .btn:hover{background:var(--edge-dark);}
+  .btn.secondary{background:var(--paper);color:var(--ink);border:1px solid var(--line);}
+  .btn.secondary:hover{background:var(--line-soft);}
+  .btn.ghost{background:transparent;color:var(--edge);border:1px solid var(--edge);}
+  .btn.ghost:hover{background:var(--edge-light);}
+  .btn.sm{padding:6px 11px;font-size:12px;}
+  .btn.danger{background:var(--bad);}
+  .btn:disabled{opacity:.45;cursor:not-allowed;}
+
+  /* ---------- SHELL ---------- */
+  .shell{display:flex;height:100vh;width:100vw;}
+  .sidebar{
+    width:270px;min-width:270px;height:100vh;background:var(--paper);border-right:1px solid var(--line);
+    display:flex;flex-direction:column;overflow-y:auto;
+  }
+  .sidebar-header{
+    padding:16px 16px 12px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--line-soft);
+  }
+  .sidebar-avatar{
+    width:36px;height:36px;border-radius:50%;background:var(--edge);color:#fff;font-weight:600;font-size:14px;
+    display:flex;align-items:center;justify-content:center;flex-shrink:0;
+  }
+  .sidebar-user{font-weight:600;font-size:14px;}
+  .sidebar-sub{font-size:11px;color:var(--ink-soft);}
+  .sidebar-topicons{margin-left:auto;display:flex;gap:6px;}
+  .icon-btn{
+    width:30px;height:30px;border-radius:8px;border:none;background:transparent;display:flex;align-items:center;
+    justify-content:center;font-size:15px;color:var(--ink-soft);
+  }
+  .icon-btn:hover{background:var(--line-soft);color:var(--ink);}
+
+  .nav-section-label{
+    font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-soft);font-weight:600;
+    padding:14px 16px 6px;display:flex;align-items:center;justify-content:space-between;
+  }
+  .nav-add{
+    width:20px;height:20px;border-radius:50%;background:var(--edge-light);color:var(--edge-dark);border:none;
+    font-size:13px;line-height:1;display:flex;align-items:center;justify-content:center;font-weight:600;
+  }
+  .nav-list{display:flex;flex-direction:column;padding:0 8px;}
+  .nav-row-wrap{
+    display:flex;align-items:center;border-radius:8px;position:relative;
+  }
+  .nav-row-wrap:hover{background:var(--edge-lighter);}
+  .nav-row-wrap:hover .nav-ellipsis{opacity:1;}
+  .nav-row-wrap.active{background:var(--edge-light);}
+  .nav-row-wrap.active .nav-row{color:var(--edge-darker);font-weight:600;}
+  .nav-row{
+    display:flex;align-items:center;gap:10px;padding:9px 8px;font-size:13.5px;color:var(--ink);flex:1;min-width:0;
+    border:none;background:transparent;text-align:left;
+  }
+  .nav-ellipsis{
+    background:none;border:none;color:var(--ink-soft);font-size:13px;padding:6px 8px;border-radius:6px;
+    opacity:0;flex-shrink:0;margin-right:4px;
+  }
+  .nav-ellipsis:hover{opacity:1 !important;background:var(--line-soft);}
+  .nav-context-menu{
+    position:absolute;top:34px;right:6px;background:#fff;border:1px solid var(--line);border-radius:8px;
+    box-shadow:var(--shadow);z-index:250;min-width:150px;overflow:hidden;
+  }
+  .nav-context-menu button{
+    display:block;width:100%;text-align:left;padding:8px 12px;font-size:12.5px;background:none;border:none;color:var(--ink);
+  }
+  .nav-context-menu button:hover{background:var(--edge-lighter);}
+  .nav-context-menu button.danger{color:var(--bad);}
+  .nav-icon{width:20px;text-align:center;font-size:14px;flex-shrink:0;}
+  .nav-label{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .nav-count{
+    font-size:11px;font-weight:600;color:#fff;background:#C7C2BC;border-radius:9px;padding:1px 7px;min-width:16px;
+    text-align:center;
+  }
+  .nav-count.urgent{background:var(--bad);}
+  .nav-count.mild{background:var(--warn);}
+  .sidebar-footer{margin-top:auto;padding:12px 16px;border-top:1px solid var(--line-soft);}
+
+  .main{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--canvas);}
+  .topbar{
+    height:56px;min-height:56px;border-bottom:1px solid var(--line);background:var(--paper);
+    display:flex;align-items:center;padding:0 22px;gap:14px;
+  }
+  .topbar-title{font-size:22px;font-weight:700;color:var(--edge-darker);letter-spacing:-0.01em;}
+  .topbar-eyebrow{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-soft);}
+  .topbar-sub{font-size:12px;color:var(--ink-soft);}
+  .topbar-spacer{flex:1;}
+  .segmented{display:flex;background:var(--line-soft);border-radius:8px;padding:2px;}
+  .segmented button{
+    border:none;background:transparent;padding:6px 13px;border-radius:7px;font-size:12.5px;font-weight:600;color:var(--ink-soft);
+  }
+  .segmented button.active{background:var(--paper);color:var(--edge-darker);box-shadow:var(--shadow-sm);}
+
+  .content{flex:1;overflow-y:auto;padding:20px 26px 60px;}
+  .content-flex{display:flex;gap:24px;align-items:flex-start;max-width:1280px;margin:0 auto;}
+  .content-inner{flex:1;min-width:0;max-width:760px;}
+  .side-panel{width:300px;flex-shrink:0;display:flex;flex-direction:column;gap:16px;}
+  @media (max-width:1180px){ .side-panel{display:none;} }
+  .widget-card{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:16px;box-shadow:var(--shadow-sm);}
+  .widget-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
+  .widget-title{font-size:12.5px;font-weight:700;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.04em;}
+  .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;text-align:center;}
+  .cal-dow{font-size:9.5px;color:var(--ink-soft);font-weight:700;padding-bottom:4px;}
+  .cal-day{
+    font-size:11.5px;padding:5px 0;border-radius:6px;position:relative;color:var(--ink);
+  }
+  .cal-day.today{background:var(--edge);color:#fff;font-weight:700;}
+  .cal-day.has-todos:not(.today)::after{
+    content:'';position:absolute;bottom:2px;left:50%;transform:translateX(-50%);width:4px;height:4px;
+    border-radius:50%;background:var(--edge);
+  }
+  .cal-day.blank{visibility:hidden;}
+  .weather-row{display:flex;align-items:center;gap:12px;}
+  .weather-temp{font-size:30px;font-weight:700;color:var(--edge-darker);}
+  .weather-icon{font-size:32px;}
+  .widget-picker-toggle{background:none;border:none;color:var(--ink-soft);font-size:14px;padding:2px 4px;}
+  .widget-picker-toggle:hover{color:var(--edge);}
+
+  /* ---------- ROWS / CARDS ---------- */
+  .section-label{
+    font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-soft);font-weight:600;
+    margin:22px 0 8px;
+  }
+  .section-label:first-child{margin-top:0;}
+  .row-card{
+    background:var(--paper);border:1px solid var(--line);border-radius:var(--radius);padding:13px 16px;
+    margin-bottom:9px;display:flex;align-items:flex-start;gap:13px;cursor:pointer;transition:box-shadow .12s, border-color .12s;
+  }
+  .row-card:hover{box-shadow:var(--shadow-sm);border-color:#E3B79E;}
+  .row-check{
+    width:20px;height:20px;border-radius:50%;border:2px solid #D8D4CE;flex-shrink:0;margin-top:1px;
+    display:flex;align-items:center;justify-content:center;font-size:11px;color:#fff;
+  }
+  .row-check.done{background:var(--good);border-color:var(--good);}
+  .row-body{flex:1;min-width:0;}
+  .row-title{font-size:14.5px;font-weight:600;color:var(--ink);}
+  .row-title.done{text-decoration:line-through;color:var(--ink-soft);}
+  .row-meta{font-size:12px;color:var(--ink-soft);margin-top:2px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+  .row-meta .due{font-weight:600;}
+  .row-meta .due.overdue{color:var(--bad);}
+  .row-meta .due.today{color:var(--edge-dark);}
+  .pill{
+    font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:20px;background:var(--edge-light);color:var(--edge-darker);
+  }
+  .pill.gray{background:var(--line-soft);color:var(--ink-soft);}
+  .pill.private{background:#EFE7FB;color:#7647B5;}
+  .progress-track{height:5px;border-radius:4px;background:var(--line-soft);margin-top:8px;overflow:hidden;}
+  .progress-fill{height:100%;background:var(--good);}
+  .row-right{display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0;}
+  .row-select{width:17px;height:17px;margin-top:2px;flex-shrink:0;accent-color:var(--edge);}
+  .row-trash{
+    background:none;border:none;font-size:14px;opacity:.55;padding:2px;border-radius:6px;line-height:1;
+  }
+  .row-trash:hover{opacity:1;background:var(--edge-light);}
+  .row-contact{display:flex;flex-direction:column;gap:3px;margin-left:6px;flex-shrink:0;max-width:170px;align-items:flex-end;}
+  .contact-link{
+    font-size:11px;color:var(--edge-dark);text-decoration:none;white-space:nowrap;overflow:hidden;
+    text-overflow:ellipsis;max-width:170px;
+  }
+  .contact-link:hover{text-decoration:underline;}
+  .bulk-bar{
+    display:flex;align-items:center;gap:10px;background:var(--edge-light);border:1px solid var(--edge-light);
+    border-radius:10px;padding:9px 14px;margin-bottom:10px;font-size:13px;color:var(--edge-darker);
+  }
+  .bulk-bar .btn{padding:6px 12px;font-size:12px;}
+  .avatar-chip{
+    width:24px;height:24px;border-radius:50%;background:var(--edge);color:#fff;font-size:10.5px;font-weight:600;
+    display:flex;align-items:center;justify-content:center;
+  }
+  .star{color:#E8B23D;}
+  .empty-state{
+    text-align:center;padding:60px 20px;color:var(--ink-soft);
+  }
+  .empty-state .big{font-size:15px;font-weight:600;color:var(--ink);margin-bottom:4px;}
+  .empty-state .tiny{font-size:12.5px;line-height:1.6;}
+
+  .team-row{
+    background:var(--paper);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;
+    margin-bottom:9px;display:flex;align-items:center;gap:13px;cursor:pointer;
+  }
+  .team-row:hover{box-shadow:var(--shadow-sm);}
+  .team-stats{margin-left:auto;display:flex;gap:18px;}
+  .team-stat{text-align:center;}
+  .team-stat .num{font-size:16px;font-weight:600;color:var(--edge-darker);}
+  .team-stat .lab{font-size:10px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.04em;}
+
+  .fab{
+    position:absolute;bottom:26px;left:30px;width:52px;height:52px;border-radius:50%;background:var(--edge);
+    color:#fff;font-size:24px;border:none;box-shadow:0 8px 22px rgba(225,83,26,0.45);display:flex;
+    align-items:center;justify-content:center;
+  }
+  .fab:hover{background:var(--edge-dark);}
+
+  /* ---------- MODALS ---------- */
+  .modal-overlay{
+    position:fixed;inset:0;background:rgba(20,14,8,0.42);display:flex;align-items:center;justify-content:center;
+    z-index:100;animation:fadeIn .12s ease-out;
+  }
+  @keyframes fadeIn{from{opacity:0;}to{opacity:1;}}
+  .modal-card{
+    background:var(--paper);border-radius:16px;width:560px;max-width:92vw;max-height:86vh;display:flex;flex-direction:column;
+    box-shadow:var(--shadow);overflow:hidden;
+  }
+  .modal-card.wide{width:660px;}
+  .modal-head{
+    background:var(--edge);color:#fff;padding:16px 20px;display:flex;align-items:center;gap:10px;
+  }
+  .modal-breadcrumb{font-size:12px;opacity:.85;display:flex;gap:5px;flex-wrap:wrap;}
+  .modal-breadcrumb span{cursor:pointer;text-decoration:underline;text-underline-offset:2px;}
+  .modal-title-row{display:flex;align-items:center;width:100%;}
+  .modal-title{font-size:17px;font-weight:600;flex:1;}
+  .modal-close{background:rgba(255,255,255,.18);border:none;color:#fff;width:28px;height:28px;border-radius:8px;font-size:14px;}
+  .modal-close:hover{background:rgba(255,255,255,.32);}
+  .modal-body{padding:18px 20px;overflow-y:auto;flex:1;}
+  .modal-foot{padding:12px 20px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end;}
+
+  .contact-card{
+    background:var(--edge-lighter);border:1px solid var(--edge-light);border-radius:10px;padding:12px 14px;margin-bottom:14px;
+  }
+  .contact-card .label{font-size:10px;text-transform:uppercase;color:var(--edge-darker);font-weight:600;letter-spacing:.05em;}
+  .contact-line{display:flex;justify-content:space-between;font-size:13px;margin-top:6px;}
+  .contact-line b{font-weight:600;}
+
+  .field{margin-bottom:13px;}
+  .field label{font-size:12px;font-weight:600;color:var(--ink-soft);display:block;margin-bottom:5px;}
+  .field input, .field select, .field textarea{
+    width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:8px;font-size:13.5px;color:var(--ink);
+    background:#fff;
+  }
+  .field input:focus, .field select:focus, .field textarea:focus{outline:2px solid var(--edge);outline-offset:1px;}
+  .field-row{display:flex;gap:10px;}
+  .field-row .field{flex:1;}
+  .type-toggle{display:flex;gap:6px;margin-bottom:13px;}
+  .type-toggle button{
+    flex:1;padding:8px;border-radius:8px;border:1px solid var(--line);background:#fff;font-size:12.5px;font-weight:600;color:var(--ink-soft);
+  }
+  .type-toggle button.active{background:var(--edge);color:#fff;border-color:var(--edge);}
+  .quickdate-row{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;}
+  .quickdate-row button{
+    border:1px solid var(--line);background:#fff;border-radius:20px;padding:4px 11px;font-size:11.5px;color:var(--ink-soft);
+  }
+  .quickdate-row button:hover{border-color:var(--edge);color:var(--edge-dark);}
+  .autocomplete-box{position:relative;}
+  .suggest-list{
+    position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid var(--line);border-radius:8px;
+    box-shadow:var(--shadow);z-index:20;max-height:180px;overflow-y:auto;margin-top:3px;
+  }
+  .suggest-item{padding:8px 12px;font-size:13px;cursor:pointer;}
+  .suggest-item:hover{background:var(--edge-lighter);}
+  .suggest-item .sub{font-size:11px;color:var(--ink-soft);}
+
+  .assign-toggle{display:flex;gap:8px;margin-top:6px;}
+  .assign-toggle .btn{flex:1;}
+
+  .toast{
+    position:fixed;bottom:26px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;
+    padding:11px 20px;border-radius:10px;font-size:13px;box-shadow:var(--shadow);z-index:300;
+    animation:toastIn .15s ease-out;
+  }
+  @keyframes toastIn{from{opacity:0;transform:translate(-50%,8px);}to{opacity:1;transform:translate(-50%,0);}}
+
+  .admin-menu{
+    position:absolute;top:64px;left:16px;background:#fff;border:1px solid var(--line);border-radius:10px;
+    box-shadow:var(--shadow);width:250px;z-index:150;overflow:hidden;
+  }
+  .admin-item{padding:11px 14px;font-size:13px;border-bottom:1px solid var(--line-soft);display:flex;align-items:center;gap:9px;}
+  .admin-item:hover{background:var(--edge-lighter);cursor:pointer;}
+  .admin-item:last-child{border-bottom:none;}
+
+  .contacts-table{width:100%;border-collapse:collapse;font-size:13px;}
+  .contacts-table th{
+    text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft);
+    padding:8px 10px;border-bottom:2px solid var(--line);position:sticky;top:0;background:var(--canvas);
+  }
+  .contacts-table td{padding:9px 10px;border-bottom:1px solid var(--line-soft);}
+  .contacts-table tr:hover td{background:var(--edge-lighter);}
+  .checkbox-cell{width:28px;}
+
+  .tab-strip{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:16px;}
+  .tab-strip button{
+    padding:9px 4px;margin-right:18px;border:none;background:transparent;font-size:13px;font-weight:600;color:var(--ink-soft);
+    border-bottom:2px solid transparent;
+  }
+  .tab-strip button.active{color:var(--edge-darker);border-color:var(--edge);}
+
+  /* ---------- MOBILE ---------- */
+  @media (max-width:820px){
+    .sidebar{
+      position:fixed;inset:0;z-index:60;width:100%;min-width:0;transform:translateX(0);
+    }
+    .shell.mobile-detail .sidebar{display:none;}
+    .main{width:100%;}
+    .shell.mobile-list .main{display:none;}
+    .modal-card{width:100%;max-width:100%;height:100%;max-height:100%;border-radius:0;position:fixed;inset:0;}
+    .fab{bottom:78px;left:18px;}
+    .mobile-tabbar{
+      display:flex;position:fixed;bottom:0;left:0;right:0;height:58px;background:#fff;border-top:1px solid var(--line);
+      z-index:70;
+    }
+    .mobile-tabbar button{
+      flex:1;border:none;background:transparent;display:flex;flex-direction:column;align-items:center;justify-content:center;
+      gap:2px;font-size:10px;color:var(--ink-soft);
+    }
+    .mobile-tabbar button.active{color:var(--edge);}
+    .mobile-tabbar .mt-icon{font-size:18px;}
+    .content{padding-bottom:80px;}
+  }
+  .mobile-tabbar{display:none;}
+  @media (max-width:820px){ .mobile-tabbar{display:flex;} }
+  .mobile-back{display:none;background:none;border:none;color:#fff;font-size:20px;margin-right:6px;}
+  @media (max-width:820px){ .mobile-back.show{display:block;} }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script>
+/* =========================================================================
+   SOUTHWEST EDGE PORTAL — prototype build
+   In-memory data model. No backend yet — this validates structure & feel.
+   ========================================================================= */
+
+const EDGE_LOGO_DATA_URI = 'data:image/png;base64,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';
+const CATEGORY_ORANGE_ICONS = ['💲','🏢','🎯','📋','☁️','🔧','✈️','🏛️','💎','📄','⭐','🗂️'];
+
+let state = {
+  screen:'login',              // 'login' | 'app'
+  loginTarget:null,            // userId currently entering password
+  selectedLoginUser:null,      // which user row is highlighted on the login card
+  showRegisterForm:false,
+  pendingLoginUser:null,
+  showEmailClientPicker:false,
+  currentUser:null,
+  isMobile: window.innerWidth <= 820,
+  mobileScreen:'nav',           // 'nav' | 'main' — which pane shows on a phone-width screen
+  mainView:{type:'smart', id:'todayMe'},   // what's showing in the main content pane
+  modalStack:[],                // drill-down stack: {kind:'client'|'deal'|'flatEntry', ...}
+  todoView:'mine',              // 'mine' | 'team' (for smart-list todo panes)
+  expandedTeamUser:null,
+  toast:null,
+  showAdminMenu:false,
+  newTodoModal:null,            // {context:{...}} when open
+  contactModal:null,            // 'master' | {id} for detail
+  selectedContactIds:[],
+  selectedTodoIds:[],
+  todoDetailModal:null,         // {id} when the To-Do detail/edit modal is open
+  newSmartListModal:null,       // filter-builder state when creating a custom smart list
+  navContextMenu:null,          // {kind:'smart'|'list', id} — which ellipsis menu is open
+  showAllSmartLists:false,      // collapse toggle once there are more than 10 smart lists
+  notifSettingsOpen:false,      // whether the notification-preferences modal is open
+  pendingUsersModalOpen:false,
+  sidePanelWidgets:{calendar:true, weather:true},
+  showWidgetPicker:false,
+  contactPickerOpen:null,       // {clientId, slot:'primary'|'secondary1'|'secondary2'} while searching
+  contactPickerQuery:'',
+  duplicatePrompt:null,         // {match, pending} when a possible duplicate is found
+};
+
+/* ---------------- USERS ---------------- */
+const USERS = [
+  {id:'mclark', name:'Michael Clark', email:'mclark@edge-re.com', role:'Admin', initials:'MC', passwordSet:false, password:null, emailClient:null, notifPref:null},
+  {id:'nault', name:'Nick Ault', email:'ault@edge-re.com', role:'Admin', initials:'NA', passwordSet:false, password:null, emailClient:null, notifPref:null},
+  {id:'lkhoudary', name:'Lexi Khoudary', email:'lkhoudary@edge-re.com', role:'User', initials:'LK', passwordSet:false, password:null, emailClient:null, notifPref:null},
+];
+let pendingUsers = []; // {id, name, email, requestedAt} — awaiting admin approval before they can sign in
+
+/* ---------------- DATE HELPERS ---------------- */
+function todayDate(){ const d=new Date(); d.setHours(0,0,0,0); return d; }
+function addDays(d,n){ const r=new Date(d); r.setDate(r.getDate()+n); return r; }
+function fmtDate(d){
+  if(!d) return null;
+  const opts={month:'short',day:'numeric'};
+  const now = new Date();
+  if(d.getFullYear()!==now.getFullYear()) opts.year='numeric';
+  return d.toLocaleDateString('en-US',opts);
+}
+function isSameDay(a,b){ return a && b && a.toDateString()===b.toDateString(); }
+function dueStatus(d){
+  if(!d) return 'none';
+  const t = todayDate();
+  if(d < t) return 'overdue';
+  if(isSameDay(d,t)) return 'today';
+  if(d <= addDays(t,7)) return 'week';
+  if(d <= addDays(t,30)) return 'month';
+  return 'future';
+}
+// Natural language date parser: today, tomorrow, next monday, 7/20, 7/20/26, 7/20/2026
+function parseNaturalDate(str){
+  if(!str) return null;
+  str = str.trim().toLowerCase();
+  const t = todayDate();
+  if(str==='today') return t;
+  if(str==='tomorrow') return addDays(t,1);
+  if(str==='next week') return addDays(t,7);
+  const days=['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
+  for(let i=0;i<days.length;i++){
+    if(str.includes(days[i])){
+      let target = i, cur = t.getDay();
+      let diff = (target - cur + 7) % 7;
+      if(diff===0) diff=7;
+      if(str.includes('this') && diff>0 && (target-cur+7)%7 !== 0) diff = (target-cur+7)%7 || 7;
+      return addDays(t, diff);
+    }
+  }
+  // mm/dd or mm/dd/yy or mm/dd/yyyy
+  const m = str.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?$/);
+  if(m){
+    let year = m[3] ? parseInt(m[3]) : t.getFullYear();
+    if(year < 100) year += 2000; // shorthand '26' -> 2026
+    return new Date(year, parseInt(m[1])-1, parseInt(m[2]));
+  }
+  const d2 = new Date(str);
+  if(!isNaN(d2)) return d2;
+  return null;
+}
+
+/* ---------------- SEED DATA ---------------- */
+let idCounter = 1000;
+function uid(){ return 'id'+(idCounter++); }
+let adminDefaultSchedule = {type:'weekly', days:['sunday'], time:'00:00'};
+
+let db = {
+  contacts: [
+    {id:'c1', first:'Greg', last:'Abbott', company:'Velocity Retail Group', email:'gabbott@velocityrg.com', mobile:'(602) 555-0101', phone:'(602) 682-8181'},
+    {id:'c2', first:'Kristina', last:'Abel', company:"Draper's & Damon's", email:'kristinaa@drapers.com', mobile:'(949) 555-0102', phone:'(949) 784-3109'},
+    {id:'c3', first:'Michael', last:'Clark', company:'Southwest Edge', email:'mclark@edge-re.com', mobile:'(602) 555-0103', phone:'(602) 555-0104'},
+    {id:'c4', first:'Nick', last:'Ault', company:'Southwest Edge', email:'ault@edge-re.com', mobile:'(602) 555-0105', phone:'(602) 555-0106'},
+    {id:'c5', first:'Dana', last:'Whitfield', company:'City Vet Holdings', email:'dana@cityvet.com', mobile:'(480) 555-0177', phone:'(480) 555-0178'},
+    {id:'c6', first:'Marcus', last:'Reyes', company:'Dutch Bros Franchise Group', email:'marcus@dutchbros.com', mobile:'(541) 555-0199', phone:'(541) 555-0198'},
+  ],
+  lists: [
+    {
+      id:'clients', name:'Clients', icon:'💲', type:'deep',
+      clients:[
+        {
+          id:'cityvet', name:'City Vet', primary:'c5', secondary:[],
+          deals:[
+            {id:'d1', name:'Thunderbird & 7th St SEC', complete:false, dueDate: addDays(todayDate(),-2)},
+            {id:'d2', name:'Germann & Gilbert SEC', complete:false, dueDate: addDays(todayDate(),1)},
+            {id:'d3', name:'Glendale / 12th', complete:false, dueDate:null},
+            {id:'d4', name:'Happy Valley & 83rd Ave ESEC', complete:false, dueDate:null},
+            {id:'d5', name:'Baseline & Gilbert NWC', complete:true, dueDate: addDays(todayDate(),-11)},
+          ]
+        },
+        {
+          id:'dutchbros', name:'Dutch Bros', primary:'c6', secondary:[],
+          deals:[
+            {id:'d6', name:'Bartaco Pad Site', complete:false, dueDate: addDays(todayDate(),3)},
+            {id:'d7', name:"Culver's Outparcel", complete:false, dueDate: addDays(todayDate(),7)},
+          ]
+        },
+      ]
+    },
+    {
+      id:'listings', name:'Listings', icon:'🏢', type:'deep',
+      clients:[
+        {id:'redriverctr', name:'Red River Center', primary:null, secondary:[], deals:[
+          {id:'d8', name:'Suite 140 — Lease Out', complete:false, dueDate: addDays(todayDate(),14)}
+        ]}
+      ]
+    },
+    {
+      id:'hotlist', name:'Hot List', icon:'🎯', type:'flat',
+      entries:[
+        {id:'e1', name:'Matcha Magic', lastCall: addDays(todayDate(),-6), feedback:'Interested in end-cap, waiting on their franchise approval.'},
+      ]
+    },
+    {
+      id:'hitlist', name:'Hit List', icon:'📋', type:'flat',
+      entries:[
+        {id:'e2', name:'Savvy Sliders', lastCall: addDays(todayDate(),-3), feedback:'Left voicemail, following up Thursday.'},
+        {id:'e3', name:'Clean Freak', lastCall: addDays(todayDate(),-1), feedback:'Wants site plan for Baseline corridor.'},
+      ]
+    },
+  ],
+  todos: []
+};
+
+// seed todos, linked into the structure above
+function seedTodo(t){
+  db.todos.push(Object.assign({
+    id: uid(), title:'', category:'', dueDate:null, assignedTo: state.currentUser?.id, createdBy: state.currentUser?.id,
+    type:'task', private:false, completed:false, notes:'',
+    clientId:null, dealId:null, listId:null, entryId:null, contactSnapshot:null
+  }, t));
+}
+
+function seedAll(){
+  db.todos = [];
+  seedTodo({title:'Send LOI redline to Dana', category:'City Vet', dueDate:addDays(todayDate(),-2), assignedTo:'mclark', createdBy:'mclark', listId:'clients', clientId:'cityvet', dealId:'d1'});
+  seedTodo({title:'Confirm zoning letter received', category:'City Vet', dueDate:addDays(todayDate(),1), assignedTo:'nault', createdBy:'mclark', listId:'clients', clientId:'cityvet', dealId:'d2'});
+  seedTodo({title:'Order survey', category:'City Vet', dueDate:null, assignedTo:'mclark', createdBy:'mclark', listId:'clients', clientId:'cityvet', dealId:'d3'});
+  seedTodo({title:'Call Marcus re: pad site pricing', category:'Dutch Bros', dueDate:todayDate(), assignedTo:'nault', createdBy:'mclark', listId:'clients', clientId:'dutchbros', dealId:'d6'});
+  seedTodo({title:'Draft co-tenancy summary', category:'Dutch Bros', dueDate:addDays(todayDate(),5), assignedTo:'lkhoudary', createdBy:'mclark', listId:'clients', clientId:'dutchbros', dealId:'d7'});
+  seedTodo({title:'Follow up — franchise approval status', category:'Matcha Magic', dueDate:addDays(todayDate(),2), assignedTo:'mclark', createdBy:'mclark', listId:'hotlist', entryId:'e1'});
+  seedTodo({title:'Call back re: voicemail', category:'Savvy Sliders', dueDate:addDays(todayDate(),1), assignedTo:'nault', createdBy:'nault', listId:'hitlist', entryId:'e2'});
+  seedTodo({title:'Send Baseline corridor site plan', category:'Clean Freak', dueDate:todayDate(), assignedTo:'lkhoudary', createdBy:'nault', listId:'hitlist', entryId:'e3'});
+  seedTodo({title:'Pick up drycleaning', category:'Personal', dueDate:todayDate(), assignedTo:'nault', createdBy:'nault'});
+  seedTodo({title:'Drop kids at school', category:'Personal', dueDate:todayDate(), assignedTo:'nault', createdBy:'nault'});
+  seedTodo({title:'Book flight — ICSC Vegas', category:'ICSC', dueDate:addDays(todayDate(),20), assignedTo:'nault', createdBy:'nault'});
+  seedTodo({title:'Renew broker license', category:'Personal', dueDate:addDays(todayDate(),25), assignedTo:'mclark', createdBy:'mclark', private:true});
+  seedTodo({title:'Review Q3 commission report', category:'Admin', dueDate:addDays(todayDate(),-1), assignedTo:'mclark', createdBy:'mclark'});
+  seedTodo({title:'Prep Red River leasing flyer', category:'Red River Center', dueDate:addDays(todayDate(),3), assignedTo:'lkhoudary', createdBy:'mclark', listId:'listings', clientId:'redriverctr', dealId:'d8'});
+  seedTodo({title:'Schedule dentist', category:'Personal', dueDate:addDays(todayDate(),9), assignedTo:'lkhoudary', createdBy:'lkhoudary'});
+}
+
+/* ---------------- SMART LISTS ---------------- */
+const SMART_LIST_DEFAULTS = [
+  {id:'todayMe', name:'Today Me', icon:'🔥'},
+  {id:'todayAll', name:'Today - All', icon:'🔥'},
+  {id:'overdueMe', name:'Overdue Me', icon:'⏰'},
+  {id:'overdueAll', name:'Overdue', icon:'⏰'},
+  {id:'week', name:'Due This Week', icon:'📅'},
+  {id:'month', name:'Due This Month', icon:'🗓️'},
+  {id:'someday', name:'Someday', icon:'💭'},
+  {id:'completed', name:'Completed', icon:'✅'},
+  {id:'everything', name:'Everything', icon:'📚'},
+  {id:'activeDeals', name:'Active Deals', icon:'⭐'},
+];
+// Single mutable, ordered list of every smart list (defaults + user-created). Reordering,
+// hiding, and deleting all operate on this one array so order is consistent everywhere.
+let smartListsArr = SMART_LIST_DEFAULTS.map(s=>({...s, isDefault:true}));
+
+function smartListTodos(key){
+  const t = db.todos.filter(td=>true);
+  const me = state.currentUser.id;
+  switch(key){
+    case 'todayMe': return t.filter(td=>!td.completed && td.assignedTo===me && dueStatus(td.dueDate)==='today');
+    case 'todayAll': return t.filter(td=>!td.completed && dueStatus(td.dueDate)==='today');
+    case 'overdueMe': return t.filter(td=>!td.completed && td.assignedTo===me && dueStatus(td.dueDate)==='overdue');
+    case 'overdueAll': return t.filter(td=>!td.completed && dueStatus(td.dueDate)==='overdue');
+    case 'week': return t.filter(td=>!td.completed && ['today','overdue','week'].includes(dueStatus(td.dueDate)));
+    case 'month': return t.filter(td=>!td.completed && ['today','overdue','week','month'].includes(dueStatus(td.dueDate)));
+    case 'someday': return t.filter(td=>!td.completed && !td.dueDate);
+    case 'completed': return t.filter(td=>td.completed);
+    case 'everything': return t.filter(td=>!td.completed);
+    case 'activeDeals': {
+      // all todos linked to a non-complete deal
+      const activeDealIds = new Set();
+      db.lists.filter(l=>l.type==='deep').forEach(l=>l.clients.forEach(c=>c.deals.forEach(d=>{ if(!d.complete) activeDealIds.add(d.id); })));
+      return t.filter(td=>td.dealId && activeDealIds.has(td.dealId) && !td.completed);
+    }
+    default: {
+      const custom = smartListsArr.find(c=>c.id===key && !c.isDefault);
+      if(custom) return t.filter(td=>matchesCustomFilter(td, custom.filter));
+      return [];
+    }
+  }
+}
+function matchesCustomFilter(td, f){
+  if(!f) return false;
+  if(f.status==='open' && td.completed) return false;
+  if(f.status==='completed' && !td.completed) return false;
+  if(f.assignee==='me' && td.assignedTo!==state.currentUser.id) return false;
+  if(f.assignee && f.assignee!=='me' && f.assignee!=='any' && td.assignedTo!==f.assignee) return false;
+  if(f.dateRule && f.dateRule!=='any'){
+    const s = dueStatus(td.dueDate);
+    if(f.dateRule==='nodate'){ if(td.dueDate) return false; }
+    else if(f.dateRule==='exact'){
+      if(!td.dueDate || !f.exactDate) return false;
+      const target = new Date(f.exactDate+'T00:00:00');
+      if(!isSameDay(td.dueDate, target)) return false;
+    }
+    else {
+      if(f.dateRule==='today' && s!=='today') return false;
+      if(f.dateRule==='week' && !['today','overdue','week'].includes(s)) return false;
+      if(f.dateRule==='month' && !['today','overdue','week','month'].includes(s)) return false;
+      if(f.dateRule==='overdue' && s!=='overdue') return false;
+    }
+  }
+  if(f.clientId){
+    if(td.clientId!==f.clientId){
+      // also match to-do's linked to a deal that belongs to this client
+      let dealMatches=false;
+      if(td.dealId){
+        for(const l of db.lists){ if(l.type==='deep'){ const c=l.clients.find(x=>x.id===f.clientId); if(c && c.deals.some(d=>d.id===td.dealId)){ dealMatches=true; break; } } }
+      }
+      if(!dealMatches) return false;
+    }
+  }
+  if(f.category && f.category.trim()){
+    if((td.category||'').toLowerCase() !== f.category.trim().toLowerCase()) return false;
+  }
+  return true;
+}
+function visibleTodo(td){
+  // privacy: if private and not mine and not... (admins still can't see detail, only count)
+  if(td.private && td.assignedTo!==state.currentUser.id) return false;
+  return true;
+}
+
+/* ---------------- RENDER ROOT ---------------- */
+function render(){
+  const app = document.getElementById('app');
+  if(state.screen==='login'){
+    app.innerHTML = renderLogin();
+    attachLoginHandlers();
+    if(state.showEmailClientPicker) renderEmailClientPicker();
+    if(state.toast) showToastNow();
+    return;
+  }
+  app.innerHTML = renderShell();
+  attachShellHandlers();
+  if(state.modalStack.length){
+    renderModalStack();
+  }
+  if(state.newTodoModal) renderNewTodoModal();
+  if(state.contactModal) renderContactModal();
+  if(state.duplicatePrompt) renderDuplicatePrompt();
+  if(state.todoDetailModal) renderTodoDetailModal();
+  if(state.newSmartListModal) renderNewSmartListModal();
+  if(state.notifSettingsOpen) renderNotifSettingsModal();
+  if(state.pendingUsersModalOpen) renderPendingUsersModal();
+  wireTodoRowHandlers(app);
+  if(state.toast) showToastNow();
+}
+
+/* ---------------- LOGIN SCREEN ---------------- */
+function handleForUser(u){ return '@'+u.name.split(' ')[0].toLowerCase(); }
+function renderLogin(){
+  if(!state.selectedLoginUser) state.selectedLoginUser = USERS[0].id;
+  const sel = USERS.find(u=>u.id===state.selectedLoginUser);
+  return `
+  <div class="login-wrap">
+    <div class="login-logo"><img src="${EDGE_LOGO_DATA_URI}" alt="Edge"></div>
+    <div class="login-title">Southwest Edge</div>
+    <div class="login-title-sub">Portal</div>
+    <div class="login-tag">Built by Brokers, for Brokers</div>
+    <div class="login-card">
+      <div class="login-card-title">Sign in</div>
+      ${USERS.map(u=>`
+        <div class="login-user-row ${u.id===sel.id?'selected':''}" data-selectuser="${u.id}">
+          <div class="user-avatar">${u.initials.charAt(0)}</div>
+          <div>
+            <div class="user-name">${u.name.split(' ')[0]}</div>
+            <div class="user-handle">${handleForUser(u)}</div>
+          </div>
+        </div>
+      `).join('')}
+      <input type="password" class="login-password-field" id="loginPw" placeholder="${sel.passwordSet?'Password':'Create a password'}" autocomplete="${sel.passwordSet?'current-password':'new-password'}">
+      ${!sel.passwordSet? `<input type="password" class="login-password-field" id="loginPw2" placeholder="Confirm password" autocomplete="new-password" style="margin-top:8px;">`:''}
+      <button class="login-submit-btn" id="loginSubmitBtn">${sel.passwordSet?'Sign in':'Create Password & Sign In'}</button>
+      <div class="login-hint">First sign-in requires setting a password. New teammates need an admin to admit them first.</div>
+      ${state.showRegisterForm ? `
+        <div class="login-register-panel">
+          <div class="field"><label>Full Name</label><input id="regName" placeholder="e.g., Jordan Reyes"></div>
+          <div class="field"><label>Email</label><input id="regEmail" placeholder="jreyes@edge-re.com"></div>
+          <button class="btn sm" id="regCreateBtn" style="width:100%;">Request Access</button>
+        </div>
+      ` : `<button class="login-register-link" id="showRegisterBtn">+ Request access as a new user</button>`}
+    </div>
+  </div>`;
+}
+const EMAIL_CLIENT_OPTIONS = [
+  {id:'outlookWeb', label:'Outlook (web)', hint:'outlook.office.com'},
+  {id:'outlookDesktop', label:'Outlook (desktop)', hint:'opens your mail app'},
+  {id:'gmail', label:'Gmail', hint:'mail.google.com'},
+  {id:'other', label:'Apple Mail / Other', hint:'uses your system default'},
+];
+function renderEmailClientPicker(){
+  const overlay = document.createElement('div');
+  overlay.className='modal-overlay'; overlay.style.zIndex=400;
+  overlay.innerHTML = `
+  <div class="modal-card" style="width:420px;">
+    <div class="modal-head"><div class="modal-title">One last thing</div></div>
+    <div class="modal-body">
+      <p style="font-size:13.5px;line-height:1.5;margin-top:0;">Which email do you send from? When you assign a to-do to a teammate, we'll open a ready-to-send draft in this app instead of sending it silently — you'll always see it before it goes out.</p>
+      ${EMAIL_CLIENT_OPTIONS.map(o=>`
+        <div class="login-user-row" data-pickclient="${o.id}" style="margin-top:8px;">
+          <div style="flex:1;">
+            <div class="user-name" style="color:var(--ink);">${o.label}</div>
+            <div class="user-handle">${o.hint}</div>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  </div>`;
+  document.getElementById('app').appendChild(overlay);
+  overlay.querySelectorAll('[data-pickclient]').forEach(el=>el.onclick=()=>{
+    const u = state.pendingLoginUser;
+    u.emailClient = el.dataset.pickclient;
+    state.showEmailClientPicker=false;
+    state.pendingLoginUser=null;
+    state.currentUser=u; state.screen='app'; seedAll();
+    render();
+  });
+}
+const DAYS_OF_WEEK = [
+  {id:'sunday',short:'Sun'},{id:'monday',short:'Mon'},{id:'tuesday',short:'Tue'},{id:'wednesday',short:'Wed'},
+  {id:'thursday',short:'Thu'},{id:'friday',short:'Fri'},{id:'saturday',short:'Sat'}
+];
+function scheduleSummary(sched){
+  if(!sched) return 'Using company default';
+  const timeLabel = sched.time;
+  if(sched.type==='weekly'){
+    const day = DAYS_OF_WEEK.find(d=>d.id===(sched.days[0]||'sunday'));
+    return `Weekly, ${day?day.short:'Sun'} at ${timeLabel}`;
+  }
+  const days = sched.days||[];
+  let daysLabel;
+  if(days.length===7) daysLabel='every day';
+  else if(days.length===5 && !days.includes('saturday') && !days.includes('sunday')) daysLabel='weekdays';
+  else daysLabel = days.map(d=>DAYS_OF_WEEK.find(x=>x.id===d).short).join('/') || 'no days selected';
+  return `Daily (${daysLabel}) at ${timeLabel}`;
+}
+function generateDigestBody(forUser){
+  const items = smartListTodos('week').filter(td=>td.assignedTo===forUser.id);
+  const visible = items.filter(td=> !td.private || forUser.id===state.currentUser.id);
+  const hiddenCount = items.length - visible.length;
+  let body = `Hi ${forUser.name.split(' ')[0]},\n\nHere's what's due this week on Southwest Edge Portal:\n\n`;
+  if(!visible.length) body += 'Nothing due this week. Nice work.\n';
+  else visible.forEach(td=>{ body += `• ${td.title}${td.dueDate? ' — due '+fmtDate(td.dueDate):''}\n`; });
+  if(hiddenCount>0) body += `\n(${hiddenCount} private item${hiddenCount===1?'':'s'} not shown here.)\n`;
+  body += `\nLog in to see full details: [portal link]\n\n— Southwest Edge Portal`;
+  return body;
+}
+function sendDigestNow(forUser){
+  openEmailDraft(forUser, 'Your Weekly To-Do Digest — Southwest Edge', generateDigestBody(forUser));
+  flashToast(`Digest draft opened for ${forUser.name}.`);
+}
+function renderNotifSettingsModal(){
+  const u = state.currentUser;
+  const usingDefault = !u.notifPref;
+  const pref = u.notifPref || {type:adminDefaultSchedule.type, days:[...adminDefaultSchedule.days], time:adminDefaultSchedule.time};
+  const overlay = document.createElement('div');
+  overlay.className='modal-overlay'; overlay.style.zIndex=170;
+  const scheduleFields = (prefix, sched)=>`
+    <div class="type-toggle">
+      <button class="${sched.type==='weekly'?'active':''}" data-schedtype="${prefix}:weekly">Weekly digest</button>
+      <button class="${sched.type==='daily'?'active':''}" data-schedtype="${prefix}:daily">Daily reminder</button>
+    </div>
+    <div id="${prefix}DayPicker">
+    ${sched.type==='weekly' ? `
+      <div class="field"><label>Which day</label>
+        <select id="${prefix}WeeklyDay">${DAYS_OF_WEEK.map(d=>`<option value="${d.id}" ${sched.days[0]===d.id?'selected':''}>${d.short}</option>`).join('')}</select>
+      </div>` : `
+      <div class="field"><label>Which days</label>
+        <div class="quickdate-row" style="margin-bottom:8px;">
+          <button data-daypreset="${prefix}:weekdays">Weekdays</button>
+          <button data-daypreset="${prefix}:every">Every day</button>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          ${DAYS_OF_WEEK.map(d=>`
+            <label style="display:flex;align-items:center;gap:4px;font-size:12px;">
+              <input type="checkbox" class="${prefix}DayCheck" value="${d.id}" ${sched.days.includes(d.id)?'checked':''} style="width:auto;"> ${d.short}
+            </label>`).join('')}
+        </div>
+      </div>`}
+    </div>
+    <div class="field"><label>Time</label><input type="time" id="${prefix}Time" value="${sched.time}"></div>
+  `;
+  overlay.innerHTML = `
+  <div class="modal-card wide">
+    <div class="modal-head"><div class="modal-title">Notification Settings</div><button class="modal-close" data-action="closeNotifSettings">✕</button></div>
+    <div class="modal-body">
+      <div style="background:var(--edge-lighter);border:1px solid var(--edge-light);border-radius:10px;padding:11px 14px;margin-bottom:16px;font-size:12.5px;line-height:1.5;color:var(--ink-soft);">
+        <b style="color:var(--edge-darker);">How this works right now:</b> the schedule below is saved and will be honored once a server-side scheduler is connected in a later phase — this prototype has no server, so nothing fires on a timer yet. <b>"Send Now" buttons are real</b> — they open an actual email draft immediately, today.
+      </div>
+      <div class="section-label">My reminder schedule</div>
+      <div class="field" style="display:flex;align-items:center;gap:8px;">
+        <input type="checkbox" id="useDefaultToggle" style="width:auto;" ${usingDefault?'checked':''}>
+        <label style="margin:0;" for="useDefaultToggle">Use company default (${scheduleSummary(adminDefaultSchedule)})</label>
+      </div>
+      <div id="myScheduleFields" style="${usingDefault?'opacity:.4;pointer-events:none;':''}margin-top:10px;">
+        ${scheduleFields('my', pref)}
+      </div>
+      <button class="btn sm" data-action="saveMySchedule" style="margin-top:6px;">Save My Schedule</button>
+      <button class="btn secondary sm" data-action="sendMyDigestNow" style="margin-top:6px;margin-left:8px;">📨 Send Me My Digest Now</button>
+
+      ${u.role==='Admin' ? `
+      <div class="section-label" style="margin-top:26px;">Company default (Admin)</div>
+      <div id="adminScheduleFields">
+        ${scheduleFields('admin', adminDefaultSchedule)}
+      </div>
+      <button class="btn sm" data-action="saveAdminSchedule" style="margin-top:6px;">Save Company Default</button>
+
+      <div class="section-label" style="margin-top:26px;">Send a digest right now</div>
+      <div class="field-row">
+        <div class="field" style="flex:2;">
+          <select id="digestTargetUser">${USERS.map(uu=>`<option value="${uu.id}">${uu.name}${uu.id===state.currentUser.id?' (me)':''}</option>`).join('')}</select>
+        </div>
+        <button class="btn sm" data-action="sendDigestToPicked" style="flex:1;">Send Now</button>
+      </div>
+      ` : ''}
+    </div>
+    <div class="modal-foot"><button class="btn secondary" data-action="closeNotifSettings">Close</button></div>
+  </div>`;
+  document.getElementById('app').appendChild(overlay);
+
+  function wireScheduleControls(prefix, isAdmin){
+    overlay.querySelectorAll(`[data-schedtype^="${prefix}:"]`).forEach(b=>b.onclick=()=>{
+      const type=b.dataset.schedtype.split(':')[1];
+      if(isAdmin) adminDefaultSchedule.type=type; else { if(!u.notifPref) u.notifPref={type:adminDefaultSchedule.type,days:[...adminDefaultSchedule.days],time:adminDefaultSchedule.time}; u.notifPref.type=type; }
+      render();
+    });
+    overlay.querySelectorAll(`[data-daypreset^="${prefix}:"]`).forEach(b=>b.onclick=()=>{
+      const which=b.dataset.daypreset.split(':')[1];
+      const days = which==='weekdays' ? ['monday','tuesday','wednesday','thursday','friday'] : DAYS_OF_WEEK.map(d=>d.id);
+      if(isAdmin) adminDefaultSchedule.days=days; else { if(!u.notifPref) u.notifPref={type:'daily',days:[],time:pref.time}; u.notifPref.days=days; }
+      render();
+    });
+  }
+  wireScheduleControls('my', false);
+  wireScheduleControls('admin', true);
+
+  overlay.querySelectorAll('[data-action="closeNotifSettings"]').forEach(b=>b.onclick=()=>{ state.notifSettingsOpen=false; render(); });
+  const useDefaultToggle = document.getElementById('useDefaultToggle');
+  if(useDefaultToggle) useDefaultToggle.onchange=()=>{
+    if(useDefaultToggle.checked) u.notifPref=null; else u.notifPref={type:adminDefaultSchedule.type,days:[...adminDefaultSchedule.days],time:adminDefaultSchedule.time};
+    render();
+  };
+  const saveMy = overlay.querySelector('[data-action="saveMySchedule"]'); if(saveMy) saveMy.onclick=()=>{
+    if(document.getElementById('useDefaultToggle').checked){ u.notifPref=null; flashToast('Using company default schedule.'); render(); return; }
+    const type = u.notifPref && u.notifPref.type || 'weekly';
+    let days;
+    if(type==='weekly') days=[document.getElementById('myWeeklyDay').value];
+    else days = Array.from(overlay.querySelectorAll('.myDayCheck:checked')).map(c=>c.value);
+    const time = document.getElementById('myTime').value || '00:00';
+    u.notifPref = {type, days, time};
+    flashToast('Your reminder schedule is saved.');
+    render();
+  };
+  const sendMyNow = overlay.querySelector('[data-action="sendMyDigestNow"]'); if(sendMyNow) sendMyNow.onclick=()=>sendDigestNow(u);
+  const saveAdmin = overlay.querySelector('[data-action="saveAdminSchedule"]'); if(saveAdmin) saveAdmin.onclick=()=>{
+    const type = adminDefaultSchedule.type;
+    let days;
+    if(type==='weekly') days=[document.getElementById('adminWeeklyDay').value];
+    else days = Array.from(overlay.querySelectorAll('.adminDayCheck:checked')).map(c=>c.value);
+    const time = document.getElementById('adminTime').value || '00:00';
+    adminDefaultSchedule = {type, days, time};
+    flashToast('Company default schedule saved.');
+    render();
+  };
+  const sendPicked = overlay.querySelector('[data-action="sendDigestToPicked"]'); if(sendPicked) sendPicked.onclick=()=>{
+    const targetId = document.getElementById('digestTargetUser').value;
+    sendDigestNow(USERS.find(x=>x.id===targetId));
+  };
+}
+function openEmailDraft(toUser, subject, body){
+  const client = (state.currentUser && state.currentUser.emailClient) || 'other';
+  const enc = encodeURIComponent;
+  let url;
+  if(client==='outlookWeb'){
+    url = `https://outlook.office.com/mail/deeplink/compose?to=${enc(toUser.email)}&subject=${enc(subject)}&body=${enc(body)}`;
+  } else if(client==='gmail'){
+    url = `https://mail.google.com/mail/?view=cm&fs=1&to=${enc(toUser.email)}&su=${enc(subject)}&body=${enc(body)}`;
+  } else {
+    url = `mailto:${toUser.email}?subject=${enc(subject)}&body=${enc(body)}`;
+  }
+  const a = document.createElement('a');
+  a.href = url;
+  if(client==='outlookWeb' || client==='gmail') a.target='_blank';
+  document.body.appendChild(a); a.click(); a.remove();
+}
+
+function passwordIsStrong(pw){
+  return pw.length>=8 && /[0-9]/.test(pw) && /[^A-Za-z0-9]/.test(pw);
+}
+function attachLoginHandlers(){
+  document.querySelectorAll('[data-selectuser]').forEach(el=>el.onclick=()=>{
+    state.selectedLoginUser = el.dataset.selectuser; render();
+  });
+  const submit = document.getElementById('loginSubmitBtn');
+  if(submit) submit.onclick=()=>{
+    const u = USERS.find(x=>x.id===state.selectedLoginUser);
+    const pw = document.getElementById('loginPw').value;
+    let firstTime = false;
+    if(!u.passwordSet){
+      const pw2 = document.getElementById('loginPw2').value;
+      if(!passwordIsStrong(pw)){ flashToast('Password must be at least 8 characters, with a number and a special character.'); showToastNow(); return; }
+      if(pw!==pw2){ flashToast("Passwords don't match — try again."); showToastNow(); return; }
+      u.password=pw; u.passwordSet=true;
+      firstTime = true;
+    } else {
+      if(pw!==u.password){ flashToast('Incorrect password.'); showToastNow(); return; }
+    }
+    if(firstTime && !u.emailClient){
+      state.pendingLoginUser = u;
+      state.showEmailClientPicker = true;
+      render();
+      return;
+    }
+    state.currentUser=u; state.screen='app'; seedAll(); state.loginTarget=null;
+    render();
+  };
+  const showReg = document.getElementById('showRegisterBtn');
+  if(showReg) showReg.onclick=()=>{ state.showRegisterForm=true; render(); };
+  const regBtn = document.getElementById('regCreateBtn');
+  if(regBtn) regBtn.onclick=()=>{
+    const name = document.getElementById('regName').value.trim();
+    const email = document.getElementById('regEmail').value.trim();
+    if(!name || !email){ flashToast('Name and email are both required.'); render(); return; }
+    const request = {id:'pending'+uid(), name, email, requestedAt:new Date()};
+    pendingUsers.push(request);
+    state.showRegisterForm = false;
+    // Notify every admin — no one is logged in yet at this point, so this always
+    // goes out as a plain mailto: rather than through a chosen email client.
+    const admins = USERS.filter(x=>x.role==='Admin');
+    const toList = admins.map(a=>a.email).join(',');
+    const subject = 'New User Requesting Access to Southwest Edge Portal';
+    const body = `${name} (${email}) has requested access to the Southwest Edge Portal.\n\nLog in and open Admin > Pending User Requests to admit or deny this request.\n\n— Southwest Edge Portal`;
+    const a = document.createElement('a');
+    a.href = `mailto:${toList}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    document.body.appendChild(a); a.click(); a.remove();
+    flashToast(`Request sent to admins for approval. ${name} can sign in once admitted.`);
+    render();
+  };
+}
+
+/* ---------------- SHELL (sidebar + main) ---------------- */
+function countBadge(list, cls){
+  if(!list.length) return '';
+  return `<span class="nav-count ${cls||''}">${list.length}</span>`;
+}
+const PROTECTED_LIST_IDS = ['clients','listings','hotlist','hitlist'];
+function renderNavContextMenu(kind, id){
+  const canDelete = kind==='smart' ? !smartListsArr.find(s=>s.id===id).isDefault : !PROTECTED_LIST_IDS.includes(id);
+  return `
+  <div class="nav-context-menu">
+    <button data-navmove="up:${kind}:${id}">↑ Move Up</button>
+    <button data-navmove="down:${kind}:${id}">↓ Move Down</button>
+    ${canDelete? `<button class="danger" data-navdelete="${kind}:${id}">🗑️ Delete</button>` : `<button disabled style="opacity:.4;cursor:default;">Default — can't delete</button>`}
+  </div>`;
+}
+function moveArrayItem(arr, id, dir){
+  const idx = arr.findIndex(x=>x.id===id);
+  if(idx<0) return;
+  const swapIdx = dir==='up'? idx-1 : idx+1;
+  if(swapIdx<0 || swapIdx>=arr.length) return;
+  const tmp = arr[idx]; arr[idx]=arr[swapIdx]; arr[swapIdx]=tmp;
+}
+function renderSidebar(){
+  const cu = state.currentUser;
+  const showAll = state.showAllSmartLists;
+  const visibleSmarts = showAll ? smartListsArr : smartListsArr.slice(0,10);
+  const hiddenCount = smartListsArr.length - visibleSmarts.length;
+  const menu = state.navContextMenu;
+  return `
+  <div class="sidebar">
+    <div class="sidebar-header">
+      <div class="sidebar-avatar">${cu.initials}</div>
+      <div>
+        <div class="sidebar-user">${cu.name}</div>
+        <div class="sidebar-sub">${cu.role}</div>
+      </div>
+      <div class="sidebar-topicons">
+        ${cu.role==='Admin' ? `<button class="icon-btn" data-action="toggleAdmin" title="Admin menu">☰</button>` : ''}
+        <button class="icon-btn" data-action="openNotifSettings" title="Notification settings">⚙️</button>
+        <button class="icon-btn" data-action="logout" title="Sign out">⏻</button>
+      </div>
+    </div>
+    <div class="nav-section-label">Smart Lists <button class="nav-add" data-action="addSmartList">+</button></div>
+    <div class="nav-list">
+      ${visibleSmarts.map(sl=>{
+        const items = smartListTodos(sl.id) ? smartListTodos(sl.id).filter(visibleTodo) : [];
+        let cls='';
+        if(sl.id==='overdueMe'||sl.id==='overdueAll') cls='urgent';
+        else if(sl.id==='todayMe'||sl.id==='todayAll') cls='mild';
+        const active = state.mainView.type==='smart' && state.mainView.id===sl.id;
+        const menuOpen = menu && menu.kind==='smart' && menu.id===sl.id;
+        return `<div class="nav-row-wrap ${active?'active':''}">
+          <button class="nav-row" data-nav="smart:${sl.id}">
+            <span class="nav-icon">${sl.icon}</span><span class="nav-label">${escapeHtml(sl.name)}</span>
+            ${countBadge(items,cls)}
+          </button>
+          <button class="nav-ellipsis" data-ellipsis="smart:${sl.id}">⋯</button>
+          ${menuOpen ? renderNavContextMenu('smart', sl.id) : ''}
+        </div>`;
+      }).join('')}
+      ${smartListsArr.length>10 ? `
+      <button class="nav-row" data-action="toggleSmartCollapse" style="color:var(--edge-dark);">
+        <span class="nav-icon">${showAll?'▲':'▼'}</span><span class="nav-label">${showAll? 'Show fewer':'Show '+hiddenCount+' more'}</span>
+      </button>` : ''}
+    </div>
+    <div class="nav-section-label">Lists <button class="nav-add" data-action="addList">+</button></div>
+    <div class="nav-list">
+      ${db.lists.map(l=>{
+        const active = state.mainView.type==='list' && state.mainView.id===l.id;
+        let count = l.type==='deep' ? l.clients.length : l.entries.length;
+        const menuOpen = menu && menu.kind==='list' && menu.id===l.id;
+        return `<div class="nav-row-wrap ${active?'active':''}">
+          <button class="nav-row" data-nav="list:${l.id}">
+            <span class="nav-icon">${l.icon}</span><span class="nav-label">${escapeHtml(l.name)}</span>
+            <span class="nav-count gray" style="background:var(--line-soft);color:var(--ink-soft);">${count}</span>
+          </button>
+          <button class="nav-ellipsis" data-ellipsis="list:${l.id}">⋯</button>
+          ${menuOpen ? renderNavContextMenu('list', l.id) : ''}
+        </div>`;
+      }).join('')}
+      <div class="nav-row-wrap">
+        <button class="nav-row" data-nav="contacts">
+          <span class="nav-icon">👤</span><span class="nav-label">Contacts</span>
+          <span class="nav-count gray" style="background:var(--line-soft);color:var(--ink-soft);">${db.contacts.length}</span>
+        </button>
+      </div>
+    </div>
+    <div class="sidebar-footer">
+      <div style="font-size:11px;color:var(--ink-soft);line-height:1.5;">Southwest Edge Portal · prototype build</div>
+    </div>
+  </div>`;
+}
+
+function renderTopbar(){
+  let title='', eyebrow='';
+  if(state.mainView.type==='smart'){
+    const sl = smartListsArr.find(s=>s.id===state.mainView.id);
+    title = sl ? sl.name : '';
+    eyebrow = 'Smart List';
+  } else if(state.mainView.type==='list'){
+    const l = db.lists.find(x=>x.id===state.mainView.id);
+    title = l ? l.name : '';
+    eyebrow = l && l.type==='deep' ? 'List' : 'Prospecting List';
+  } else if(state.mainView.type==='contacts'){
+    title='Contacts';
+    eyebrow = 'Directory';
+  }
+  const teamCapableIds = ['week','month'];
+  const showTodoToggle = state.mainView.type==='smart' && teamCapableIds.includes(state.mainView.id);
+  const showBack = state.isMobile && state.mobileScreen==='main';
+  return `
+  <div class="topbar">
+    ${showBack ? `<button class="icon-btn" data-action="mobileBack" style="color:var(--ink);margin-right:2px;">←</button>` : ''}
+    <div>
+      <div class="topbar-eyebrow">${eyebrow}</div>
+      <div class="topbar-title">${title}</div>
+    </div>
+    <div class="topbar-spacer"></div>
+    ${showTodoToggle ? `
+    <div class="segmented">
+      <button class="${state.todoView==='mine'?'active':''}" data-action="todoViewMine">My To-Do's</button>
+      <button class="${state.todoView==='team'?'active':''}" data-action="todoViewTeam">Team</button>
+    </div>` : ''}
+  </div>`;
+}
+
+let weatherCache = null; // {tempF, code, fetchedAt} | {error:true, fetchedAt} | null
+function weatherEmoji(code){
+  if(code===0) return '☀️';
+  if([1,2,3].includes(code)) return '⛅';
+  if([45,48].includes(code)) return '🌫️';
+  if([51,53,55,56,57,61,63,65,66,67,80,81,82].includes(code)) return '🌧️';
+  if([71,73,75,77,85,86].includes(code)) return '❄️';
+  if([95,96,99].includes(code)) return '⛈️';
+  return '🌡️';
+}
+function weatherLabel(code){
+  if(code===0) return 'Clear';
+  if([1,2,3].includes(code)) return 'Partly cloudy';
+  if([45,48].includes(code)) return 'Foggy';
+  if([51,53,55,56,57,61,63,65,66,67,80,81,82].includes(code)) return 'Rain';
+  if([71,73,75,77,85,86].includes(code)) return 'Snow';
+  if([95,96,99].includes(code)) return 'Thunderstorms';
+  return 'Weather';
+}
+function fetchWeatherIfNeeded(){
+  if(weatherCache && (Date.now()-weatherCache.fetchedAt) < 30*60*1000) return;
+  weatherCache = {loading:true, fetchedAt:Date.now()};
+  fetch('https://api.open-meteo.com/v1/forecast?latitude=33.4484&longitude=-112.0740&current=temperature_2m,weather_code&temperature_unit=fahrenheit&timezone=America%2FPhoenix')
+    .then(r=>r.json())
+    .then(data=>{
+      weatherCache = {tempF:Math.round(data.current.temperature_2m), code:data.current.weather_code, fetchedAt:Date.now()};
+      render();
+    })
+    .catch(()=>{ weatherCache = {error:true, fetchedAt:Date.now()}; render(); });
+}
+function renderWeatherWidget(){
+  if(!weatherCache || weatherCache.loading) fetchWeatherIfNeeded();
+  return `
+  <div class="widget-card">
+    <div class="widget-head"><div class="widget-title">Weather · Phoenix, AZ</div></div>
+    ${!weatherCache || weatherCache.loading ? `<div style="font-size:12.5px;color:var(--ink-soft);">Loading…</div>` :
+      weatherCache.error ? `<div style="font-size:12.5px;color:var(--ink-soft);">Couldn't load weather right now.</div>` :
+      `<div class="weather-row">
+        <div class="weather-icon">${weatherEmoji(weatherCache.code)}</div>
+        <div><div class="weather-temp">${weatherCache.tempF}°F</div><div style="font-size:11.5px;color:var(--ink-soft);">${weatherLabel(weatherCache.code)}</div></div>
+      </div>`}
+  </div>`;
+}
+function renderCalendarWidget(){
+  const now = new Date();
+  const year = now.getFullYear(), month = now.getMonth();
+  const firstDay = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month+1, 0).getDate();
+  const monthName = now.toLocaleDateString('en-US', {month:'long', year:'numeric'});
+  const todosByDay = {};
+  db.todos.forEach(td=>{
+    if(!td.dueDate || !visibleTodo(td)) return;
+    if(td.dueDate.getFullYear()===year && td.dueDate.getMonth()===month){
+      todosByDay[td.dueDate.getDate()] = (todosByDay[td.dueDate.getDate()]||0)+1;
+    }
+  });
+  let cells = '';
+  for(let i=0;i<firstDay;i++) cells += `<div class="cal-day blank"></div>`;
+  for(let d=1; d<=daysInMonth; d++){
+    const isToday = d===now.getDate();
+    cells += `<div class="cal-day ${isToday?'today':''} ${todosByDay[d]?'has-todos':''}" title="${todosByDay[d]?todosByDay[d]+' due':''}">${d}</div>`;
+  }
+  return `
+  <div class="widget-card">
+    <div class="widget-head"><div class="widget-title">${monthName}</div></div>
+    <div class="cal-grid">
+      ${['S','M','T','W','T','F','S'].map(d=>`<div class="cal-dow">${d}</div>`).join('')}
+      ${cells}
+    </div>
+    <button class="btn secondary sm" style="width:100%;margin-top:12px;" data-action="connectOutlook">📅 Connect Outlook Calendar</button>
+  </div>`;
+}
+function renderSidePanel(){
+  if(state.isMobile) return ''; // widgets are desktop-only, full stop — no markup, no weather fetch
+  const w = state.sidePanelWidgets;
+  return `
+  <div class="side-panel">
+    <div style="display:flex;justify-content:flex-end;position:relative;">
+      <button class="widget-picker-toggle" data-action="toggleWidgetPicker" title="Choose widgets">⚙️ Widgets</button>
+      ${state.showWidgetPicker ? `
+      <div class="nav-context-menu" style="top:26px;">
+        <label style="display:flex;align-items:center;gap:8px;padding:8px 12px;font-size:12.5px;cursor:pointer;">
+          <input type="checkbox" data-widgettoggle="calendar" ${w.calendar?'checked':''} style="width:auto;"> Calendar
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;padding:8px 12px;font-size:12.5px;cursor:pointer;">
+          <input type="checkbox" data-widgettoggle="weather" ${w.weather?'checked':''} style="width:auto;"> Weather
+        </label>
+      </div>` : ''}
+    </div>
+    ${w.calendar ? renderCalendarWidget() : ''}
+    ${w.weather ? renderWeatherWidget() : ''}
+    ${(!w.calendar && !w.weather) ? `<div class="widget-card" style="text-align:center;color:var(--ink-soft);font-size:12.5px;">No widgets shown. Click "Widgets" above to add some.</div>` : ''}
+  </div>`;
+}
+function renderMainContent(){
+  if(state.mainView.type==='contacts') return renderContactsMain();
+  if(state.mainView.type==='list') return renderListMain(state.mainView.id);
+  // smart list
+  const id = state.mainView.id;
+  const teamCapable = (id==='week' || id==='month');
+  if(teamCapable && state.todoView==='team') return renderTeamTodos(id);
+  let list = smartListTodosVisible(id);
+  if(teamCapable){
+    // "Mine" for Due This Week / Due This Month means only to-do's assigned to me.
+    list = list.filter(td=>td.assignedTo===state.currentUser.id);
+  }
+  return renderBulkBar() + renderTodoList(list);
+}
+function renderBulkBar(){
+  if(!state.selectedTodoIds.length) return '';
+  return `
+  <div class="bulk-bar">
+    <span>${state.selectedTodoIds.length} selected</span>
+    <button class="btn secondary" data-action="bulkComplete">✓ Mark Complete</button>
+    <button class="btn danger" data-action="bulkDelete">🗑️ Delete</button>
+    <button class="btn ghost" data-action="bulkClear">Clear</button>
+  </div>`;
+}
+function smartListTodosVisible(id){ return smartListTodos(id).filter(visibleTodo); }
+
+function assigneeRank(td){
+  const me = state.currentUser.id;
+  if(td.assignedTo===me) return 0;
+  const others = USERS.filter(u=>u.id!==me).map(u=>u.id);
+  const idx = others.indexOf(td.assignedTo);
+  return idx>=0 ? idx+1 : 999;
+}
+const TODO_ROW_LEGEND = `
+  <div style="display:flex;gap:18px;font-size:11px;color:var(--ink-soft);margin-bottom:10px;padding:0 2px;align-items:center;">
+    <span><span style="display:inline-block;width:13px;height:13px;border:1.5px solid #B9B4AD;border-radius:3px;vertical-align:middle;margin-right:5px;"></span>Select (for bulk actions)</span>
+    <span><span style="display:inline-block;width:13px;height:13px;border:1.5px solid #B9B4AD;border-radius:50%;vertical-align:middle;margin-right:5px;"></span>Mark complete</span>
+  </div>`;
+function renderTodoList(list){
+  if(!list.length){
+    return `<div class="empty-state"><div class="big">All clear.</div><div class="tiny">Nothing here right now. Nice work. Take five.</div></div>`;
+  }
+  // Group by assignee — mine first, then each teammate in turn — and within each
+  // group, new/unseen assignments float up, then soonest due date first.
+  const sorted = list.slice().sort((a,b)=>{
+    const ra=assigneeRank(a), rb=assigneeRank(b);
+    if(ra!==rb) return ra-rb;
+    if(ra===0){
+      const aNew = a.isNew && a.assignedTo===state.currentUser.id;
+      const bNew = b.isNew && b.assignedTo===state.currentUser.id;
+      if(aNew && !bNew) return -1;
+      if(bNew && !aNew) return 1;
+    }
+    if(!a.dueDate && !b.dueDate) return 0;
+    if(!a.dueDate) return 1;
+    if(!b.dueDate) return -1;
+    return a.dueDate-b.dueDate;
+  });
+  const multiAssignee = new Set(list.map(t=>t.assignedTo)).size > 1;
+  if(!multiAssignee) return TODO_ROW_LEGEND + sorted.map(td=>renderTodoRow(td)).join('');
+  let html=TODO_ROW_LEGEND; let lastAssignee=undefined;
+  sorted.forEach(td=>{
+    if(td.assignedTo!==lastAssignee){
+      const isMine = td.assignedTo===state.currentUser.id;
+      const u = USERS.find(x=>x.id===td.assignedTo);
+      const label = isMine ? 'Mine' : (u? u.name : 'Unassigned');
+      html += `<div class="section-label" style="${lastAssignee===undefined?'margin-top:0;':'margin-top:18px;'}">${escapeHtml(label)}</div>`;
+      lastAssignee = td.assignedTo;
+    }
+    html += renderTodoRow(td);
+  });
+  return html;
+}
+function contextLabel(td){
+  const parts=[];
+  if(td.listId){
+    const l = db.lists.find(x=>x.id===td.listId);
+    if(l) parts.push(l.name);
+  }
+  if(td.category) parts.push(td.category);
+  return parts.join(' · ') || 'Personal';
+}
+function contactForClient(c){
+  if(!c || !c.primary) return null;
+  return db.contacts.find(x=>x.id===c.primary) || null;
+}
+function getTodoContact(td){
+  if(td.clientId){
+    for(const l of db.lists){ if(l.type==='deep'){ const c=l.clients.find(x=>x.id===td.clientId); if(c) return contactForClient(c); } }
+  }
+  if(td.dealId){
+    for(const l of db.lists){ if(l.type==='deep'){ for(const c of l.clients){ if(c.deals.some(d=>d.id===td.dealId)) return contactForClient(c); } } }
+  }
+  return null;
+}
+function telHref(num){ return 'tel:'+String(num).replace(/[^0-9+]/g,''); }
+function renderTodoRow(td){
+  const status = dueStatus(td.dueDate);
+  const dueLabel = td.dueDate ? fmtDate(td.dueDate) : 'No date';
+  const dueCls = status==='overdue' ? 'overdue' : (status==='today' ? 'today' : '');
+  const assignee = USERS.find(u=>u.id===td.assignedTo);
+  const contact = getTodoContact(td);
+  const selected = state.selectedTodoIds.includes(td.id);
+  return `
+  <div class="row-card" data-todo="${td.id}">
+    <input type="checkbox" class="row-select" data-select="${td.id}" ${selected?'checked':''} title="Select">
+    <div class="row-check ${td.completed?'done':''}" data-toggle="${td.id}" title="Mark complete">${td.completed?'✓':''}</div>
+    <div class="row-body">
+      <div class="row-title ${td.completed?'done':''}">${escapeHtml(td.title)}</div>
+      <div class="row-meta">
+        <span class="due ${dueCls}">${dueLabel}</span>
+        <span class="pill">${contextLabel(td)}</span>
+        ${td.private ? `<span class="pill private">Private</span>`:''}
+        ${td.type!=='task' ? `<span class="pill gray">${td.type}</span>`:''}
+        ${td.isNew && td.assignedTo===state.currentUser.id ? `<span class="pill" style="background:var(--edge);color:#fff;">New</span>`:''}
+      </div>
+    </div>
+    ${contact ? `
+    <div class="row-contact">
+      ${contact.email? `<a class="contact-link" href="mailto:${contact.email}" data-stopprop="1" title="Email ${escapeAttr(contact.first)}">✉️ ${escapeHtml(contact.email)}</a>`:''}
+      ${contact.mobile? `<a class="contact-link" href="${telHref(contact.mobile)}" data-stopprop="1" title="Call ${escapeAttr(contact.first)}">📱 ${escapeHtml(contact.mobile)}</a>`:''}
+    </div>` : ''}
+    <div class="row-right">
+      ${assignee ? `<div class="avatar-chip" title="${assignee.name}">${assignee.initials}</div>` : ''}
+      <button class="row-trash" data-delete="${td.id}" title="Delete to-do">🗑️</button>
+    </div>
+  </div>`;
+}
+
+function renderTeamTodos(smartId){
+  const others = USERS.filter(u=>u.id!==state.currentUser.id);
+  const label = smartId==='month' ? 'This Month' : 'This Week';
+  if(state.expandedTeamUser){
+    const u = USERS.find(x=>x.id===state.expandedTeamUser);
+    const list = smartListTodos(smartId).filter(td=>td.assignedTo===u.id).filter(visibleTodo);
+    return `
+    <button class="btn secondary sm" style="margin-bottom:12px;" data-action="collapseTeam">← Back to team</button>
+    <div class="section-label">${u.name}'s To-Do's — ${label}</div>
+    ${renderTodoList(list)}`;
+  }
+  return `<div class="section-label">To-Do's I've assigned — ${label}</div>` + others.map(u=>{
+    const count = smartListTodos(smartId).filter(td=>td.assignedTo===u.id && td.createdBy===state.currentUser.id).length;
+    return `
+    <div class="team-row" data-expandteam="${u.id}">
+      <div class="avatar-chip" style="width:34px;height:34px;font-size:13px;">${u.initials}</div>
+      <div>
+        <div style="font-weight:600;font-size:14px;">${u.name}</div>
+        <div style="font-size:11.5px;color:var(--ink-soft);">${u.role}</div>
+      </div>
+      <div class="team-stats">
+        <div class="team-stat"><div class="num">${count}</div><div class="lab">${label}</div></div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderListMain(listId){
+  const l = db.lists.find(x=>x.id===listId);
+  if(!l) return '';
+  const singular = l.name.endsWith('s') ? l.name.slice(0,-1) : l.name;
+  if(l.type==='deep'){
+    const addBtn = `<button class="btn sm" data-action="addClient" data-listid="${l.id}" style="margin-bottom:14px;">+ New ${singular}</button>`;
+    if(!l.clients.length) return addBtn + `<div class="empty-state"><div class="big">No ${l.name.toLowerCase()} yet.</div><div class="tiny">Add your first one to get moving.</div></div>`;
+    return addBtn + l.clients.map(c=>{
+      const dealCount = c.deals.length;
+      const openDeals = c.deals.filter(d=>!d.complete).length;
+      return `
+      <div class="row-card" data-openclient="${c.id}" data-listid="${l.id}">
+        <div class="nav-icon" style="font-size:20px;">🏷️</div>
+        <div class="row-body">
+          <div class="row-title">${escapeHtml(c.name)}</div>
+          <div class="row-meta"><span>${openDeals} active of ${dealCount} site${dealCount===1?'':'s'}</span></div>
+        </div>
+      </div>`;
+    }).join('');
+  } else {
+    const addBtn = `<button class="btn sm" data-action="addEntry" data-listid="${l.id}" style="margin-bottom:14px;">+ New Prospect</button>`;
+    if(!l.entries.length) return addBtn + `<div class="empty-state"><div class="big">Nothing here yet.</div><div class="tiny">Add a prospect to start tracking outreach.</div></div>`;
+    return addBtn + l.entries.map(e=>{
+      return `
+      <div class="row-card" data-openentry="${e.id}" data-listid="${l.id}">
+        <div class="nav-icon" style="font-size:20px;">🎯</div>
+        <div class="row-body">
+          <div class="row-title">${escapeHtml(e.name)}</div>
+          <div class="row-meta">
+            <span>Last call: ${e.lastCall? fmtDate(e.lastCall):'—'}</span>
+          </div>
+          <div class="row-meta" style="color:var(--ink-soft);">${escapeHtml(e.feedback||'')}</div>
+        </div>
+      </div>`;
+    }).join('');
+  }
+}
+
+function renderShell(){
+  // On a phone-width screen we show exactly one pane at a time: the nav list, or the
+  // main content for whatever was tapped. A modal (client/deal drill-down) always
+  // covers the full screen on top of either, so it doesn't need special-casing here.
+  const hideSidebar = state.isMobile && state.mobileScreen==='main';
+  const hideMain = state.isMobile && state.mobileScreen==='nav';
+  return `
+  <div class="shell">
+    <div style="${hideSidebar?'display:none;':''}">${renderSidebar()}</div>
+    <div class="main" style="${hideMain?'display:none;':''}position:relative;">
+      ${renderTopbar()}
+      <div class="content"><div class="content-flex"><div class="content-inner">${renderMainContent()}</div>${renderSidePanel()}</div></div>
+      ${(!state.isMobile || state.mobileScreen==='main') ? `<button class="fab" data-action="newTodo" title="New To-Do">+</button>` : ''}
+    </div>
+  </div>
+  ${state.isMobile ? renderMobileTabbar() : ''}
+  ${state.showAdminMenu ? renderAdminMenu() : ''}
+  `;
+}
+function renderMobileTabbar(){
+  const onNav = state.mobileScreen==='nav';
+  return `
+  <div class="mobile-tabbar">
+    <button class="${onNav?'active':''}" data-tab="home"><span class="mt-icon">🏠</span>Home</button>
+    <button class="${!onNav && state.mainView.type==='smart'?'active':''}" data-tab="tasks"><span class="mt-icon">✓</span>Tasks</button>
+    <button data-tab="calendar"><span class="mt-icon">📅</span>Calendar</button>
+    <button data-tab="settings"><span class="mt-icon">⚙️</span>Settings</button>
+  </div>`;
+}
+function renderAdminMenu(){
+  return `
+  <div class="admin-menu">
+    <div class="admin-item" data-action="adminPending">🆕 Pending User Requests ${pendingUsers.length? `<span class="nav-count urgent" style="margin-left:auto;">${pendingUsers.length}</span>`:''}</div>
+    <div class="admin-item" data-action="adminDigest">📨 Compose Weekly Digest</div>
+    <div class="admin-item" data-action="adminUsers">👥 Manage Users</div>
+    <div class="admin-item" data-action="adminTimes">⏱️ Email Send Times</div>
+    <div class="admin-item" data-action="adminReset">🔑 Reset a Password</div>
+  </div>`;
+}
+
+/* ---------------- SHELL HANDLERS ---------------- */
+function attachShellHandlers(){
+  document.querySelectorAll('[data-nav]').forEach(el=>el.onclick=()=>{
+    const [type,id]=el.dataset.nav.split(':');
+    if(type==='smart'){ state.mainView={type:'smart',id}; }
+    else if(type==='list'){ state.mainView={type:'list',id}; }
+    else if(el.dataset.nav==='contacts'){ state.mainView={type:'contacts'}; }
+    state.expandedTeamUser=null;
+    state.todoView='mine';
+    state.selectedTodoIds=[];
+    if(state.isMobile) state.mobileScreen='main';
+    render();
+  });
+  const mBack=document.querySelector('[data-action="mobileBack"]'); if(mBack) mBack.onclick=()=>{ state.mobileScreen='nav'; render(); };
+  document.querySelectorAll('[data-tab]').forEach(el=>el.onclick=()=>{
+    const tab = el.dataset.tab;
+    if(tab==='home'){ state.mobileScreen='nav'; state.modalStack=[]; }
+    else if(tab==='tasks'){ state.mainView={type:'smart', id:'todayMe'}; state.mobileScreen='main'; }
+    else { flashToast('This section is coming soon.'); }
+    render();
+  });
+  document.querySelectorAll('[data-openclient]').forEach(el=>el.onclick=()=>{
+    openClientModal(el.dataset.listid, el.dataset.openclient); render();
+  });
+  document.querySelectorAll('[data-openentry]').forEach(el=>el.onclick=()=>{
+    openEntryModal(el.dataset.listid, el.dataset.openentry); render();
+  });
+  document.querySelectorAll('[data-expandteam]').forEach(el=>el.onclick=()=>{
+    state.expandedTeamUser=el.dataset.expandteam; render();
+  });
+  const back=document.querySelector('[data-action="collapseTeam"]'); if(back) back.onclick=()=>{state.expandedTeamUser=null; render();};
+  const mine=document.querySelector('[data-action="todoViewMine"]'); if(mine) mine.onclick=()=>{state.todoView='mine'; render();};
+  const team=document.querySelector('[data-action="todoViewTeam"]'); if(team) team.onclick=()=>{state.todoView='team'; render();};
+  const fab=document.querySelector('[data-action="newTodo"]'); if(fab) fab.onclick=()=>{ openNewTodoModal({}); render(); };
+  const admin=document.querySelector('[data-action="toggleAdmin"]'); if(admin) admin.onclick=()=>{ state.showAdminMenu=!state.showAdminMenu; render(); };
+  const logout=document.querySelector('[data-action="logout"]'); if(logout) logout.onclick=()=>{ state.screen='login'; state.currentUser=null; state.mainView={type:'smart',id:'todayMe'}; state.modalStack=[]; state.mobileScreen='nav'; render(); };
+  document.querySelectorAll('[data-action="addSmartList"]').forEach(el=>el.onclick=()=>promptAddSmartList());
+  document.querySelectorAll('[data-action="addList"]').forEach(el=>el.onclick=()=>promptAddList());
+  document.querySelectorAll('[data-ellipsis]').forEach(el=>el.onclick=(ev)=>{
+    ev.stopPropagation();
+    const [kind,id]=el.dataset.ellipsis.split(':');
+    state.navContextMenu = (state.navContextMenu && state.navContextMenu.id===id) ? null : {kind,id};
+    render();
+  });
+  document.querySelectorAll('[data-navmove]').forEach(el=>el.onclick=(ev)=>{
+    ev.stopPropagation();
+    const [dir,kind,id]=el.dataset.navmove.split(':');
+    if(kind==='smart') moveArrayItem(smartListsArr, id, dir);
+    else moveArrayItem(db.lists, id, dir);
+    state.navContextMenu=null;
+    render();
+  });
+  document.querySelectorAll('[data-navdelete]').forEach(el=>el.onclick=(ev)=>{
+    ev.stopPropagation();
+    const [kind,id]=el.dataset.navdelete.split(':');
+    const label = kind==='smart' ? smartListsArr.find(s=>s.id===id).name : db.lists.find(l=>l.id===id).name;
+    if(confirm(`Delete "${label}"? This can't be undone.`)){
+      if(kind==='smart') smartListsArr = smartListsArr.filter(s=>s.id!==id);
+      else db.lists = db.lists.filter(l=>l.id!==id);
+      if(state.mainView.type===kind && state.mainView.id===id) state.mainView={type:'smart', id:'todayMe'};
+    }
+    state.navContextMenu=null;
+    render();
+  });
+  const collapseBtn=document.querySelector('[data-action="toggleSmartCollapse"]'); if(collapseBtn) collapseBtn.onclick=()=>{
+    state.showAllSmartLists=!state.showAllSmartLists; render();
+  };
+  const notifBtn=document.querySelector('[data-action="openNotifSettings"]'); if(notifBtn) notifBtn.onclick=()=>{
+    state.notifSettingsOpen=true; render();
+  };
+  const widgetPickerBtn=document.querySelector('[data-action="toggleWidgetPicker"]'); if(widgetPickerBtn) widgetPickerBtn.onclick=(ev)=>{
+    ev.stopPropagation();
+    state.showWidgetPicker=!state.showWidgetPicker; render();
+  };
+  document.querySelectorAll('[data-widgettoggle]').forEach(el=>el.onclick=(ev)=>{
+    ev.stopPropagation();
+    state.sidePanelWidgets[el.dataset.widgettoggle] = el.checked;
+    render();
+  });
+  const outlookBtn=document.querySelector('[data-action="connectOutlook"]'); if(outlookBtn) outlookBtn.onclick=()=>{
+    alert("Real Outlook sync needs a Microsoft-registered app and a backend to securely handle sign-in — that can't run from a plain web page like this one safely. That's next-phase work once we add a server. For now this calendar reflects your portal's own due dates.");
+  };
+  const addClientBtn=document.querySelector('[data-action="addClient"]'); if(addClientBtn) addClientBtn.onclick=()=>{
+    const name = prompt('Name this client:');
+    if(!name) return;
+    const l = db.lists.find(x=>x.id===addClientBtn.dataset.listid);
+    const newClient = {id:'client'+uid(), name, primary:null, secondary:[], deals:[]};
+    l.clients.push(newClient);
+    flashToast(`${name} added. Open it to attach a contact and add sites.`);
+    render();
+  };
+  const addEntryBtn=document.querySelector('[data-action="addEntry"]'); if(addEntryBtn) addEntryBtn.onclick=()=>{
+    const name = prompt('Name this prospect:');
+    if(!name) return;
+    const l = db.lists.find(x=>x.id===addEntryBtn.dataset.listid);
+    l.entries.push({id:'entry'+uid(), name, lastCall:null, feedback:''});
+    flashToast(`${name} added to ${l.name}.`);
+    render();
+  };
+  ['adminPending','adminDigest','adminUsers','adminTimes','adminReset'].forEach(a=>{
+    const e=document.querySelector(`[data-action="${a}"]`);
+    if(e) e.onclick=()=>{ state.showAdminMenu=false; handleAdminAction(a); };
+  });
+}
+
+function renderPendingUsersModal(){
+  const overlay = document.createElement('div');
+  overlay.className='modal-overlay'; overlay.style.zIndex=175;
+  overlay.innerHTML = `
+  <div class="modal-card">
+    <div class="modal-head"><div class="modal-title">Pending User Requests</div><button class="modal-close" data-action="closePendingModal">✕</button></div>
+    <div class="modal-body">
+      ${!pendingUsers.length? `<div class="empty-state"><div class="big">No pending requests.</div><div class="tiny">New sign-up requests will show up here for admins to admit.</div></div>` :
+      pendingUsers.map(p=>`
+        <div class="row-card" style="cursor:default;">
+          <div class="row-body">
+            <div class="row-title">${escapeHtml(p.name)}</div>
+            <div class="row-meta"><span>${escapeHtml(p.email)}</span></div>
+          </div>
+          <div class="row-right" style="flex-direction:row;gap:6px;">
+            <button class="btn sm" data-admit="${p.id}">Admit</button>
+            <button class="btn secondary sm" data-deny="${p.id}">Deny</button>
+          </div>
+        </div>`).join('')}
+    </div>
+    <div class="modal-foot"><button class="btn secondary" data-action="closePendingModal">Close</button></div>
+  </div>`;
+  document.getElementById('app').appendChild(overlay);
+  overlay.querySelectorAll('[data-action="closePendingModal"]').forEach(b=>b.onclick=()=>{ state.pendingUsersModalOpen=false; render(); });
+  overlay.querySelectorAll('[data-admit]').forEach(b=>b.onclick=()=>{
+    const p = pendingUsers.find(x=>x.id===b.dataset.admit);
+    const initials = p.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
+    USERS.push({id:'user'+uid(), name:p.name, email:p.email, role:'User', initials, passwordSet:false, password:null, emailClient:null, notifPref:null});
+    pendingUsers = pendingUsers.filter(x=>x.id!==p.id);
+    flashToast(`${p.name} admitted — they can now sign in and set a password.`);
+    render();
+  });
+  overlay.querySelectorAll('[data-deny]').forEach(b=>b.onclick=()=>{
+    const p = pendingUsers.find(x=>x.id===b.dataset.deny);
+    pendingUsers = pendingUsers.filter(x=>x.id!==p.id);
+    flashToast(`Request from ${p.name} denied.`);
+    render();
+  });
+}
+function handleAdminAction(a){
+  if(a==='adminPending'){ state.pendingUsersModalOpen=true; }
+  if(a==='adminDigest'){ state.notifSettingsOpen=true; }
+  if(a==='adminUsers'){ flashToast('User management: ' + USERS.map(u=>u.name).join(', ')); }
+  if(a==='adminTimes'){ state.notifSettingsOpen=true; }
+  if(a==='adminReset'){ flashToast('Password reset flow would open here.'); }
+  render();
+}
+function promptAddSmartList(){
+  state.newSmartListModal = {name:'', dateRule:'any', exactDate:'', assignee:'any', status:'any', category:'', clientId:'', clientQuery:''};
+  render();
+}
+function allClientsFlat(){
+  const out = [];
+  db.lists.filter(l=>l.type==='deep').forEach(l=>l.clients.forEach(c=>out.push({id:c.id, name:c.name, listName:l.name})));
+  return out;
+}
+function renderNewSmartListModal(){
+  const m = state.newSmartListModal;
+  const overlay = document.createElement('div');
+  overlay.className='modal-overlay'; overlay.style.zIndex=185;
+  const clientMatches = m.clientQuery ? allClientsFlat().filter(c=>c.name.toLowerCase().includes(m.clientQuery.toLowerCase())) : [];
+  const selectedClient = m.clientId ? allClientsFlat().find(c=>c.id===m.clientId) : null;
+  overlay.innerHTML = `
+  <div class="modal-card">
+    <div class="modal-head"><div class="modal-title">New Smart List</div><button class="modal-close" data-action="closeSmartListModal">✕</button></div>
+    <div class="modal-body">
+      <div class="field"><label>Name</label><input id="slName" placeholder="e.g., My Personal Overdue" value="${escapeAttr(m.name)}"></div>
+      <div class="field">
+        <label>Due date</label>
+        <select id="slDateRule">
+          <option value="any" ${m.dateRule==='any'?'selected':''}>Any date</option>
+          <option value="today" ${m.dateRule==='today'?'selected':''}>Due today</option>
+          <option value="week" ${m.dateRule==='week'?'selected':''}>Due this week (incl. overdue)</option>
+          <option value="month" ${m.dateRule==='month'?'selected':''}>Due this month (incl. overdue)</option>
+          <option value="overdue" ${m.dateRule==='overdue'?'selected':''}>Overdue only</option>
+          <option value="nodate" ${m.dateRule==='nodate'?'selected':''}>No date set</option>
+          <option value="exact" ${m.dateRule==='exact'?'selected':''}>On this exact date…</option>
+        </select>
+        ${m.dateRule==='exact' ? `<input type="date" id="slExactDate" value="${escapeAttr(m.exactDate)}" style="margin-top:8px;">` : ''}
+      </div>
+      <div class="field">
+        <label>Assigned to</label>
+        <select id="slAssignee">
+          <option value="any" ${m.assignee==='any'?'selected':''}>Anyone</option>
+          <option value="me" ${m.assignee==='me'?'selected':''}>Just me</option>
+          ${USERS.map(u=>`<option value="${u.id}" ${m.assignee===u.id?'selected':''}>${u.name}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field">
+        <label>Status</label>
+        <select id="slStatus">
+          <option value="any" ${m.status==='any'?'selected':''}>Either</option>
+          <option value="open" ${m.status==='open'?'selected':''}>Open (not completed)</option>
+          <option value="completed" ${m.status==='completed'?'selected':''}>Completed</option>
+        </select>
+      </div>
+      <div class="field"><label>Category (optional)</label><input id="slCategory" placeholder="e.g., Personal" value="${escapeAttr(m.category)}"></div>
+      <div class="field autocomplete-box">
+        <label>Client (optional)</label>
+        ${selectedClient ? `
+          <div style="display:flex;align-items:center;gap:8px;">
+            <div class="pill">${escapeHtml(selectedClient.name)}</div>
+            <button class="btn secondary sm" id="slClearClient">Change</button>
+          </div>
+        ` : `
+          <input id="slClientQuery" placeholder="Start typing a client name…" value="${escapeAttr(m.clientQuery)}">
+          ${clientMatches.length? `<div class="suggest-list">${clientMatches.map(c=>`
+            <div class="suggest-item" data-selectslclient="${c.id}"><b>${escapeHtml(c.name)}</b><div class="sub">${escapeHtml(c.listName)}</div></div>
+          `).join('')}</div>` : ''}
+        `}
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn secondary" data-action="closeSmartListModal">Cancel</button>
+      <button class="btn" data-action="saveSmartList">Create Smart List</button>
+    </div>
+  </div>`;
+  document.getElementById('app').appendChild(overlay);
+  overlay.querySelector('[data-action="closeSmartListModal"]').onclick=()=>{ state.newSmartListModal=null; render(); };
+  const dateSel = document.getElementById('slDateRule');
+  if(dateSel) dateSel.onchange=()=>{ m.dateRule=dateSel.value; render(); };
+  const clientQueryInput = document.getElementById('slClientQuery');
+  if(clientQueryInput){
+    clientQueryInput.focus();
+    clientQueryInput.oninput=()=>{ m.clientQuery=clientQueryInput.value; render(); };
+  }
+  overlay.querySelectorAll('[data-selectslclient]').forEach(el=>el.onclick=()=>{
+    m.clientId = el.dataset.selectslclient; render();
+  });
+  const clearClientBtn = document.getElementById('slClearClient');
+  if(clearClientBtn) clearClientBtn.onclick=()=>{ m.clientId=''; m.clientQuery=''; render(); };
+  overlay.querySelector('[data-action="saveSmartList"]').onclick=()=>{
+    const name = document.getElementById('slName').value.trim();
+    if(!name){ flashToast('Give the smart list a name.'); return; }
+    smartListsArr.push({
+      id:'custom'+uid(), name, icon:'📌', isDefault:false,
+      filter:{
+        dateRule: document.getElementById('slDateRule').value,
+        exactDate: document.getElementById('slExactDate') ? document.getElementById('slExactDate').value : '',
+        assignee: document.getElementById('slAssignee').value,
+        status: document.getElementById('slStatus').value,
+        category: document.getElementById('slCategory').value.trim(),
+        clientId: m.clientId || '',
+      }
+    });
+    state.newSmartListModal=null;
+    flashToast(`"${name}" smart list created.`);
+    render();
+  };
+}
+function promptAddList(){
+  const name = prompt('Name your new list (e.g. a client name or event name like "RFDC"):');
+  if(!name) return;
+  db.lists.push({id:'list'+uid(), name, icon:'🗂️', type:'flat', entries:[]});
+  flashToast(`"${name}" created. Add entries, then add to-do's underneath.`);
+  render();
+}
+
+/* ---------------- TODO ACTIONS ---------------- */
+function toggleComplete(id){
+  const td = db.todos.find(x=>x.id===id);
+  if(td) td.completed = !td.completed;
+}
+function takeTodo(id){
+  const td = db.todos.find(x=>x.id===id);
+  if(td){ td.assignedTo = state.currentUser.id; flashToast('Task taken — now yours.'); }
+}
+function assignTodo(id, userId){
+  const td = db.todos.find(x=>x.id===id);
+  if(td){
+    td.assignedTo = userId;
+    const u = USERS.find(x=>x.id===userId);
+    flashToast(`Assigned to ${u.name}. Email sent: "You Have a New To Do on Southwest Edge."`);
+  }
+}
+function togglePrivate(id){
+  const td = db.todos.find(x=>x.id===id);
+  if(td) td.private = !td.private;
+}
+function deleteTodo(id){
+  db.todos = db.todos.filter(x=>x.id!==id);
+  state.selectedTodoIds = state.selectedTodoIds.filter(x=>x!==id);
+  if(state.todoDetailModal && state.todoDetailModal.id===id) state.todoDetailModal=null;
+  flashToast('To-do deleted.');
+}
+function toggleSelectTodo(id){
+  if(state.selectedTodoIds.includes(id)) state.selectedTodoIds = state.selectedTodoIds.filter(x=>x!==id);
+  else state.selectedTodoIds.push(id);
+}
+function bulkDeleteSelected(){
+  const n = state.selectedTodoIds.length;
+  db.todos = db.todos.filter(x=>!state.selectedTodoIds.includes(x.id));
+  state.selectedTodoIds=[];
+  flashToast(`Deleted ${n} to-do${n===1?'':'s'}.`);
+}
+function bulkCompleteSelected(){
+  db.todos.forEach(td=>{ if(state.selectedTodoIds.includes(td.id)) td.completed=true; });
+  const n = state.selectedTodoIds.length;
+  state.selectedTodoIds=[];
+  flashToast(`Marked ${n} to-do${n===1?'':'s'} complete.`);
+}
+
+/* ---------------- TODO DETAIL / EDIT MODAL ---------------- */
+function openTodoDetail(id){
+  state.todoDetailModal = {id};
+  const td = db.todos.find(x=>x.id===id);
+  if(td && td.isNew && td.assignedTo===state.currentUser.id) td.isNew=false;
+}
+function renderTodoDetailModal(){
+  const td = db.todos.find(x=>x.id===state.todoDetailModal.id);
+  if(!td){ state.todoDetailModal=null; return; }
+  const overlay = document.createElement('div');
+  overlay.className='modal-overlay'; overlay.style.zIndex=190;
+  const cats = allCategories();
+  const contact = getTodoContact(td);
+  overlay.innerHTML = `
+  <div class="modal-card">
+    <div class="modal-head">
+      <div class="modal-title">To-Do Details</div>
+      <button class="modal-close" data-action="closeTodoDetail">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="type-toggle">
+        <button class="${td.type==='task'?'active':''}" data-dettype="task">Task</button>
+        <button class="${td.type==='project'?'active':''}" data-dettype="project">Project</button>
+        <button class="${td.type==='checklist'?'active':''}" data-dettype="checklist">Checklist</button>
+      </div>
+      <div class="field"><label>What needs to happen?</label><input id="detTitle" value="${escapeAttr(td.title)}"></div>
+      <div class="field autocomplete-box">
+        <label>Category</label>
+        <input id="detCategory" value="${escapeAttr(td.category)}" list="detCategoryList">
+        <datalist id="detCategoryList">${cats.map(c=>`<option value="${escapeAttr(c)}">`).join('')}</datalist>
+      </div>
+      <div class="field">
+        <label>Due date</label>
+        <input id="detDue" placeholder="today, tomorrow, 7/20/26…" value="${td.dueDate? td.dueDate.toISOString().slice(0,10):''}">
+        <div class="quickdate-row">
+          <button data-detquickdate="today">Today</button>
+          <button data-detquickdate="tomorrow">Tomorrow</button>
+          <button data-detquickdate="next week">Next Week</button>
+          <button data-detquickdate="">No date</button>
+        </div>
+      </div>
+      ${contact ? `
+      <div class="contact-card">
+        <div class="label">Contact</div>
+        ${contactRow(contact.id)}
+      </div>` : ''}
+      <div class="field">
+        <label>Assigned to</label>
+        <select id="detAssign">${USERS.map(u=>`<option value="${u.id}" ${td.assignedTo===u.id?'selected':''}>${u.name}</option>`).join('')}</select>
+        <button class="btn secondary sm" style="margin-top:8px;" data-action="detTakeIt">Take It (assign to me)</button>
+      </div>
+      <div class="field" style="display:flex;align-items:center;gap:8px;">
+        <input type="checkbox" id="detPrivate" style="width:auto;" ${td.private?'checked':''}>
+        <label style="margin:0;" for="detPrivate">Private (only I can see the details)</label>
+      </div>
+    </div>
+    <div class="modal-foot" style="justify-content:space-between;">
+      <button class="btn danger" data-action="detDelete">🗑️ Delete</button>
+      <div style="display:flex;gap:8px;">
+        <button class="btn secondary" data-action="detToggleComplete">${td.completed? 'Mark Incomplete':'✓ Mark Complete'}</button>
+        <button class="btn" data-action="detSave">Save Changes</button>
+      </div>
+    </div>
+  </div>`;
+  document.getElementById('app').appendChild(overlay);
+  overlay.querySelectorAll('[data-dettype]').forEach(b=>b.onclick=()=>{ td.type=b.dataset.dettype; render(); });
+  overlay.querySelectorAll('[data-detquickdate]').forEach(b=>b.onclick=()=>{ document.getElementById('detDue').value=b.dataset.detquickdate; });
+  overlay.querySelector('[data-action="closeTodoDetail"]').onclick=()=>{ state.todoDetailModal=null; render(); };
+  overlay.querySelector('[data-action="detTakeIt"]').onclick=()=>{ document.getElementById('detAssign').value=state.currentUser.id; };
+  overlay.querySelector('[data-action="detDelete"]').onclick=()=>{
+    if(confirm(`Delete "${td.title}"? This can't be undone.`)){ deleteTodo(td.id); render(); }
+  };
+  overlay.querySelector('[data-action="detToggleComplete"]').onclick=()=>{ td.completed=!td.completed; render(); };
+  overlay.querySelector('[data-action="detSave"]').onclick=()=>{
+    td.title=document.getElementById('detTitle').value.trim()||td.title;
+    td.category=document.getElementById('detCategory').value.trim();
+    td.dueDate=parseNaturalDate(document.getElementById('detDue').value.trim());
+    const newAssign=document.getElementById('detAssign').value;
+    if(newAssign!==td.assignedTo){
+      td.assignedTo=newAssign;
+      const u=USERS.find(x=>x.id===newAssign);
+      if(newAssign!==state.currentUser.id){
+        td.isNew=true;
+        const subject = 'You Have a New To Do on Southwest Edge';
+        const body = `Hi ${u.name.split(' ')[0]},\n\n${state.currentUser.name} assigned you a to-do:\n\n"${td.title}"${td.category?` (${td.category})`:''}${td.dueDate?`\nDue: ${fmtDate(td.dueDate)}`:''}\n\nLog in to Southwest Edge Portal to view it: [portal link]\n\n— Sent from Southwest Edge Portal`;
+        openEmailDraft(u, subject, body);
+        flashToast(`Email draft opened for ${u.name}.`);
+      }
+    }
+    td.private=document.getElementById('detPrivate').checked;
+    state.todoDetailModal=null;
+    flashToast('Changes saved.');
+    render();
+  };
+}
+
+/* ---------------- CENTRALIZED TODO ROW WIRING ---------------- */
+function wireTodoRowHandlers(root){
+  root.querySelectorAll('[data-todo]').forEach(el=>{
+    el.onclick=(ev)=>{
+      if(ev.target.closest('[data-toggle],[data-select],[data-delete],[data-stopprop]')) return;
+      openTodoDetail(el.dataset.todo); render();
+    };
+  });
+  root.querySelectorAll('[data-toggle]').forEach(el=>el.onclick=(ev)=>{ ev.stopPropagation(); toggleComplete(el.dataset.toggle); render(); });
+  root.querySelectorAll('[data-select]').forEach(el=>el.onclick=(ev)=>{ ev.stopPropagation(); toggleSelectTodo(el.dataset.select); render(); });
+  root.querySelectorAll('[data-delete]').forEach(el=>el.onclick=(ev)=>{
+    ev.stopPropagation();
+    const td = db.todos.find(x=>x.id===el.dataset.delete);
+    if(td && confirm(`Delete "${td.title}"? This can't be undone.`)){ deleteTodo(el.dataset.delete); render(); }
+  });
+  root.querySelectorAll('[data-stopprop]').forEach(el=>el.onclick=(ev)=>ev.stopPropagation());
+  const bc=root.querySelector('[data-action="bulkComplete"]'); if(bc) bc.onclick=()=>{ bulkCompleteSelected(); render(); };
+  const bd=root.querySelector('[data-action="bulkDelete"]'); if(bd) bd.onclick=()=>{
+    if(confirm(`Delete ${state.selectedTodoIds.length} selected to-do(s)? This can't be undone.`)){ bulkDeleteSelected(); render(); }
+  };
+  const bx=root.querySelector('[data-action="bulkClear"]'); if(bx) bx.onclick=()=>{ state.selectedTodoIds=[]; render(); };
+}
+
+/* ---------------- MODAL STACK: Client / Deal / FlatEntry ---------------- */
+function openClientModal(listId, clientId){
+  state.modalStack=[{kind:'client', listId, clientId}];
+}
+function openDealModal(listId, clientId, dealId){
+  state.modalStack.push({kind:'deal', listId, clientId, dealId});
+}
+function openEntryModal(listId, entryId){
+  state.modalStack=[{kind:'entry', listId, entryId}];
+}
+function closeModalStack(){ state.modalStack=[]; render(); }
+function popModalTo(index){ state.modalStack = state.modalStack.slice(0, index+1); render(); }
+
+function breadcrumbFor(stack){
+  const crumbs=[{label:'Home', idx:-1}];
+  stack.forEach((frame,i)=>{
+    if(frame.kind==='client'){
+      const l=db.lists.find(x=>x.id===frame.listId); const c=l.clients.find(x=>x.id===frame.clientId);
+      crumbs.push({label:c.name, idx:i});
+    } else if(frame.kind==='deal'){
+      const l=db.lists.find(x=>x.id===frame.listId); const c=l.clients.find(x=>x.id===frame.clientId);
+      const d=c.deals.find(x=>x.id===frame.dealId);
+      crumbs.push({label:d.name, idx:i});
+    } else if(frame.kind==='entry'){
+      const l=db.lists.find(x=>x.id===frame.listId); const e=l.entries.find(x=>x.id===frame.entryId);
+      crumbs.push({label:e.name, idx:i});
+    }
+  });
+  return crumbs;
+}
+
+function renderModalStack(){
+  const overlay = document.createElement('div');
+  overlay.className='modal-overlay';
+  overlay.innerHTML = renderTopModalCard();
+  document.getElementById('app').appendChild(overlay);
+  overlay.addEventListener('mousedown', (ev)=>{ if(ev.target===overlay) closeModalStack(); });
+  attachModalHandlers(overlay);
+}
+function guessDomain(name){
+  const compact = (name||'').toLowerCase().replace(/[^a-z0-9]/g,'');
+  return compact + '.com';
+}
+function brandLogoImg(name){
+  if(!name) return '';
+  return `<img src="https://logo.clearbit.com/${guessDomain(name)}" alt="" style="width:26px;height:26px;border-radius:6px;background:#fff;object-fit:contain;margin-right:9px;flex-shrink:0;" onerror="this.style.display='none'">`;
+}
+function renderTopModalCard(){
+  const frame = state.modalStack[state.modalStack.length-1];
+  const crumbs = breadcrumbFor(state.modalStack);
+  let bodyHtml='', titleText='', brandName='';
+  if(frame.kind==='client'){
+    const l=db.lists.find(x=>x.id===frame.listId); const c=l.clients.find(x=>x.id===frame.clientId);
+    titleText=c.name; brandName=c.name;
+    bodyHtml = renderClientModalBody(l,c);
+  } else if(frame.kind==='deal'){
+    const l=db.lists.find(x=>x.id===frame.listId); const c=l.clients.find(x=>x.id===frame.clientId);
+    const d=c.deals.find(x=>x.id===frame.dealId);
+    titleText=d.name; brandName=c.name;
+    bodyHtml = renderDealModalBody(l,c,d);
+  } else if(frame.kind==='entry'){
+    const l=db.lists.find(x=>x.id===frame.listId); const e=l.entries.find(x=>x.id===frame.entryId);
+    titleText=e.name; brandName=e.name;
+    bodyHtml = renderEntryModalBody(l,e);
+  }
+  return `
+  <div class="modal-card wide">
+    <div class="modal-head">
+      <div style="flex:1;">
+        <div class="modal-breadcrumb">
+          ${crumbs.map(cr=>`<span data-crumb="${cr.idx}">${escapeHtml(cr.label)}</span>`).join('<span style="opacity:.6;"> / </span>')}
+        </div>
+        <div class="modal-title-row">${brandLogoImg(brandName)}<div class="modal-title">${escapeHtml(titleText)}</div></div>
+      </div>
+      <button class="modal-close" data-action="closeModal">✕ Done</button>
+    </div>
+    <div class="modal-body">${bodyHtml}</div>
+  </div>`;
+}
+function contactRow(contactId){
+  const c = db.contacts.find(x=>x.id===contactId);
+  if(!c) return `<div class="tiny" style="color:var(--ink-soft);font-size:12px;">No contact attached.</div>`;
+  return `
+  <div class="contact-line"><span>Name</span><b>${c.first} ${c.last}</b></div>
+  <div class="contact-line"><span>Email</span><b>${c.email||'—'}</b></div>
+  <div class="contact-line"><span>Mobile</span><b>${c.mobile||'—'}</b></div>
+  <div class="contact-line"><span>Phone</span><b>${c.phone||'—'}</b></div>`;
+}
+function renderClientModalBody(l,c){
+  const openDeals = c.deals.filter(d=>!d.complete);
+  const doneDeals = c.deals.filter(d=>d.complete);
+  return `
+  <button class="btn sm" data-action="addDeal" data-client="${c.id}" style="margin-bottom:14px;">+ Add site / deal</button>
+  <div class="contact-card">
+    <div class="label">Primary Contact</div>
+    ${contactRow(c.primary)}
+    <button class="btn secondary sm" style="margin-top:10px;" data-action="pickContact" data-client="${c.id}" data-slot="primary">${c.primary? 'Change contact':'Attach contact'}</button>
+  </div>
+  <div class="section-label">Sites / Deals</div>
+  ${openDeals.map(d=>renderDealRowInClient(l,c,d)).join('')}
+  ${doneDeals.length? `<div class="section-label">Completed</div>${doneDeals.map(d=>renderDealRowInClient(l,c,d)).join('')}`:''}
+  `;
+}
+function renderDealRowInClient(l,c,d){
+  const status = dueStatus(d.dueDate);
+  const cls = status==='overdue'?'overdue':(status==='today'?'today':'');
+  const todoCount = db.todos.filter(t=>t.dealId===d.id && !t.completed).length;
+  return `
+  <div class="row-card" data-opendeal="${d.id}" data-client="${c.id}" data-listid="${l.id}">
+    <div class="row-check ${d.complete?'done':''}" data-toggledeal="${d.id}">${d.complete?'✓':''}</div>
+    <div class="row-body">
+      <div class="row-title ${d.complete?'done':''}">${escapeHtml(d.name)}</div>
+      <div class="row-meta">
+        <span class="due ${cls}">${d.dueDate?fmtDate(d.dueDate):'No date'}</span>
+        <span class="pill gray">${todoCount} open to-do${todoCount===1?'':'s'}</span>
+      </div>
+    </div>
+  </div>`;
+}
+function renderDealModalBody(l,c,d){
+  const todos = db.todos.filter(t=>t.dealId===d.id).filter(visibleTodo);
+  return `
+  <button class="btn sm" data-action="newTodoInDeal" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}" style="margin-bottom:14px;">+ New To-Do</button>
+  <div class="contact-card">
+    <div class="label">Site / Deal Contact</div>
+    ${contactRow(c.primary)}
+  </div>
+  <div class="section-label">To-Do's</div>
+  ${todos.length? renderTodoList(todos) : `<div class="empty-state" style="padding:26px;"><div class="big">No to-do's yet.</div><div class="tiny">Add the first action item for this site.</div></div>`}
+  `;
+}
+function renderEntryModalBody(l,e){
+  const todos = db.todos.filter(t=>t.entryId===e.id).filter(visibleTodo);
+  return `
+  <div style="margin-bottom:14px;display:flex;gap:8px;">
+    <button class="btn sm" data-action="newTodoInEntry" data-listid="${l.id}" data-entry="${e.id}">+ New To-Do</button>
+    <button class="btn ghost sm" data-action="convertToDeal" data-listid="${l.id}" data-entry="${e.id}">Convert to Deal →</button>
+  </div>
+  <div class="contact-card">
+    <div class="label">Prospect Details</div>
+    <div class="field" style="margin-top:8px;"><label>Client Name</label><input value="${escapeAttr(e.name)}" data-edit="name" data-entry="${e.id}" data-listid="${l.id}"></div>
+    <div class="field"><label>Last Call</label><input value="${e.lastCall?e.lastCall.toISOString().slice(0,10):''}" placeholder="e.g. today" data-edit="lastCall" data-entry="${e.id}" data-listid="${l.id}"></div>
+    <div class="field"><label>Latest Feedback / Notes</label><textarea rows="2" data-edit="feedback" data-entry="${e.id}" data-listid="${l.id}">${escapeHtml(e.feedback||'')}</textarea></div>
+  </div>
+  <div class="section-label">To-Do's</div>
+  ${todos.length? renderTodoList(todos) : `<div class="empty-state" style="padding:26px;"><div class="big">No follow-up set.</div><div class="tiny">Add a to-do to keep this prospect moving.</div></div>`}
+  `;
+}
+
+function attachModalHandlers(root){
+  root.querySelectorAll('[data-crumb]').forEach(el=>el.onclick=()=>{
+    const idx=parseInt(el.dataset.crumb);
+    if(idx===-1) closeModalStack(); else popModalTo(idx);
+  });
+  const closeBtn = root.querySelector('[data-action="closeModal"]'); if(closeBtn) closeBtn.onclick=()=>closeModalStack();
+  root.querySelectorAll('[data-opendeal]').forEach(el=>el.onclick=()=>{
+    openDealModal(el.dataset.listid, el.dataset.client, el.dataset.opendeal); render();
+  });
+  root.querySelectorAll('[data-toggledeal]').forEach(el=>el.onclick=(ev)=>{
+    ev.stopPropagation();
+    const frame = state.modalStack[0];
+    const l=db.lists.find(x=>x.id===frame.listId); const c=l.clients.find(x=>x.id===frame.clientId);
+    const d=c.deals.find(x=>x.id===el.dataset.toggledeal);
+    d.complete=!d.complete; render();
+  });
+  const pick = root.querySelector('[data-action="pickContact"]'); if(pick) pick.onclick=()=>{
+    openNewTodoContext(); // no-op guard
+    openContactPicker(pick.dataset.client, pick.dataset.slot); render();
+  };
+  const addDeal = root.querySelector('[data-action="addDeal"]'); if(addDeal) addDeal.onclick=()=>{
+    const name = prompt('Site / deal name (e.g. an intersection or address):');
+    if(!name) return;
+    const l=db.lists.find(x=>x.id===addDeal.dataset.client && false); // unused
+    const frame = state.modalStack[state.modalStack.length-1];
+    const list=db.lists.find(x=>x.id===frame.listId); const c=list.clients.find(x=>x.id===addDeal.dataset.client);
+    c.deals.push({id:'deal'+uid(), name, complete:false, dueDate:null});
+    render();
+  };
+  const ntDeal = root.querySelector('[data-action="newTodoInDeal"]'); if(ntDeal) ntDeal.onclick=()=>{
+    openNewTodoModal({listId:ntDeal.dataset.listid, clientId:ntDeal.dataset.client, dealId:ntDeal.dataset.deal}); render();
+  };
+  const ntEntry = root.querySelector('[data-action="newTodoInEntry"]'); if(ntEntry) ntEntry.onclick=()=>{
+    openNewTodoModal({listId:ntEntry.dataset.listid, entryId:ntEntry.dataset.entry}); render();
+  };
+  const conv = root.querySelector('[data-action="convertToDeal"]'); if(conv) conv.onclick=()=>{
+    convertEntryToDeal(conv.dataset.listid, conv.dataset.entry); render();
+  };
+  root.querySelectorAll('[data-edit]').forEach(el=>{
+    el.onchange=()=>{
+      const l=db.lists.find(x=>x.id===el.dataset.listid); const e=l.entries.find(x=>x.id===el.dataset.entry);
+      if(el.dataset.edit==='name') e.name=el.value;
+      if(el.dataset.edit==='feedback') e.feedback=el.value;
+      if(el.dataset.edit==='lastCall') e.lastCall=parseNaturalDate(el.value);
+      render();
+    };
+  });
+  if(state.contactPickerOpen) attachContactPickerHandlers(root);
+}
+function openNewTodoContext(){} // placeholder no-op used above safely
+
+function convertEntryToDeal(listId, entryId){
+  const flatList = db.lists.find(x=>x.id===listId);
+  const entry = flatList.entries.find(x=>x.id===entryId);
+  let clientsList = db.lists.find(x=>x.id==='clients');
+  const newClient = {id:'client'+uid(), name:entry.name, primary:null, secondary:[], deals:[]};
+  clientsList.clients.push(newClient);
+  // move todos
+  db.todos.forEach(t=>{ if(t.entryId===entryId){ t.entryId=null; t.clientId=newClient.id; t.listId='clients'; } });
+  flatList.entries = flatList.entries.filter(x=>x.id!==entryId);
+  state.modalStack=[];
+  flashToast(`${entry.name} converted to a Client. Add sites to start tracking deals.`);
+}
+
+/* ---------------- CONTACT PICKER (inline typeahead within modal) ---------------- */
+function openContactPicker(clientId, slot){
+  state.contactPickerOpen={clientId, slot}; state.contactPickerQuery='';
+}
+function attachContactPickerHandlers(root){
+  // rendered separately as an overlay panel appended after modal renders; handled in renderContactPickerPanel
+}
+function renderContactPickerPanel(){
+  if(!state.contactPickerOpen) return '';
+  const standalone = !!state.contactPickerOpen.standalone;
+  const q = state.contactPickerQuery.toLowerCase();
+  const matches = q ? db.contacts.filter(c=>(`${c.last} ${c.first}`).toLowerCase().includes(q) || (`${c.first} ${c.last}`).toLowerCase().includes(q)) : [];
+  return `
+  <div class="modal-overlay" style="z-index:200;" id="contactPickerOverlay">
+    <div class="modal-card">
+      <div class="modal-head"><div class="modal-title">${standalone?'New Contact':'Attach Contact'}</div><button class="modal-close" data-action="closeContactPicker">✕</button></div>
+      <div class="modal-body">
+        ${standalone? '' : `
+        <div class="field autocomplete-box">
+          <label>Search by name</label>
+          <input id="contactSearchInput" placeholder="Start typing a last or first name…" value="${escapeAttr(state.contactPickerQuery)}">
+          ${matches.length? `<div class="suggest-list">${matches.map(c=>`
+            <div class="suggest-item" data-selectcontact="${c.id}">
+              <b>${c.last}, ${c.first}</b>
+              <div class="sub">${c.company||'No company'} · ${c.mobile||c.phone||'No number'}</div>
+            </div>`).join('')}</div>` : ''}
+        </div>`}
+        <div style="${standalone?'':'margin-top:14px;border-top:1px solid var(--line);padding-top:14px;'}">
+          ${standalone? '' : `<div style="font-size:12px;font-weight:600;color:var(--ink-soft);margin-bottom:8px;">Or create a new contact</div>`}
+          <div class="field-row">
+            <div class="field"><label>First Name</label><input id="newContactFirst"></div>
+            <div class="field"><label>Last Name</label><input id="newContactLast"></div>
+          </div>
+          <div class="field"><label>Company</label><input id="newContactCompany"></div>
+          <div class="field-row">
+            <div class="field"><label>Email</label><input id="newContactEmail"></div>
+            <div class="field"><label>Mobile</label><input id="newContactMobile"></div>
+          </div>
+          <button class="btn sm" data-action="createNewContact">Create Contact</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+function renderDuplicatePrompt(){
+  const dp = state.duplicatePrompt;
+  const overlay = document.createElement('div');
+  overlay.className='modal-overlay'; overlay.style.zIndex=250;
+  overlay.innerHTML = `
+    <div class="modal-card" style="width:420px;">
+      <div class="modal-head"><div class="modal-title">Possible Duplicate</div></div>
+      <div class="modal-body">
+        <p style="font-size:13.5px;line-height:1.5;">A contact matching <b>${escapeHtml(dp.pending.first)} ${escapeHtml(dp.pending.last)}</b> already exists:</p>
+        <div class="contact-card">${contactRow(dp.match.id)}</div>
+        <p style="font-size:12.5px;color:var(--ink-soft);">Is this the same person, or a different one with the same name?</p>
+      </div>
+      <div class="modal-foot">
+        <button class="btn secondary" id="dupCreateNew">Create Duplicate Contact</button>
+        <button class="btn" id="dupUpdate">Update This Contact</button>
+      </div>
+    </div>`;
+  document.getElementById('app').appendChild(overlay);
+  document.getElementById('dupUpdate').onclick=()=>{
+    Object.assign(dp.match, dp.pending);
+    finishContactPick(dp.match.id);
+  };
+  document.getElementById('dupCreateNew').onclick=()=>{
+    const c = Object.assign({id:'contact'+uid()}, dp.pending);
+    db.contacts.push(c);
+    finishContactPick(c.id);
+  };
+}
+function finishContactPick(contactId){
+  state.duplicatePrompt=null;
+  if(state.contactPickerOpen && state.contactPickerOpen.clientId){
+    const {clientId, slot} = state.contactPickerOpen;
+    const clientsList = db.lists.find(l=>l.type==='deep' && l.clients.some(c=>c.id===clientId));
+    const client = clientsList.clients.find(c=>c.id===clientId);
+    if(slot==='primary') client.primary=contactId; else client.secondary.push(contactId);
+  } else if(state.contactPickerOpen && state.contactPickerOpen.standalone){
+    flashToast('Contact created.');
+  }
+  state.contactPickerOpen=null;
+  render();
+}
+
+/* ---------------- NEW TODO MODAL ---------------- */
+function openNewTodoModal(context){
+  state.newTodoModal={ context, title:'', category: context.category||'', dueInput:'', type:'task', assignTo:state.currentUser.id, mode:'assign' };
+}
+function allCategories(){
+  const set = new Set();
+  db.todos.forEach(t=>{ if(t.category) set.add(t.category); });
+  return Array.from(set);
+}
+function renderNewTodoModal(){
+  const m = state.newTodoModal;
+  const overlay = document.createElement('div');
+  overlay.className='modal-overlay'; overlay.style.zIndex=180;
+  const cats = allCategories();
+  overlay.innerHTML = `
+  <div class="modal-card">
+    <div class="modal-head"><div class="modal-title">New To-Do</div><button class="modal-close" data-action="closeNewTodo">✕</button></div>
+    <div class="modal-body">
+      <div class="type-toggle">
+        <button class="${m.type==='task'?'active':''}" data-settype="task">Task</button>
+        <button class="${m.type==='project'?'active':''}" data-settype="project">Project</button>
+        <button class="${m.type==='checklist'?'active':''}" data-settype="checklist">Checklist</button>
+      </div>
+      <div class="field">
+        <label>What needs to happen?</label>
+        <input id="ntTitle" placeholder="e.g., Send LOI redline to Dana" value="${escapeAttr(m.title)}">
+      </div>
+      <div class="field autocomplete-box">
+        <label>Category</label>
+        <input id="ntCategory" placeholder="e.g., Freddy's, Personal, Dutch Bros" value="${escapeAttr(m.category)}" list="categoryList">
+        <datalist id="categoryList">${cats.map(c=>`<option value="${escapeAttr(c)}">`).join('')}</datalist>
+      </div>
+      <div class="field">
+        <label>Due date</label>
+        <input id="ntDue" placeholder="type: today, tomorrow, 7/20, 7/20/26…" value="${escapeAttr(m.dueInput)}">
+        <div class="quickdate-row">
+          <button data-quickdate="today">Today</button>
+          <button data-quickdate="tomorrow">Tomorrow</button>
+          <button data-quickdate="next week">Next Week</button>
+          <button data-quickdate="">No date</button>
+        </div>
+      </div>
+      <div class="field">
+        <label>Assign</label>
+        <div class="assign-toggle">
+          <button class="btn ${m.mode==='take'?'':'secondary'}" data-action="takeIt">Take It (assign to me)</button>
+        </div>
+        <select id="ntAssignSelect" style="margin-top:8px;">
+          ${USERS.map(u=>`<option value="${u.id}" ${m.assignTo===u.id?'selected':''}>${u.name}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field" style="display:flex;align-items:center;gap:8px;">
+        <input type="checkbox" id="ntPrivate" style="width:auto;"> <label style="margin:0;" for="ntPrivate">Private (only I can see the details)</label>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn secondary" data-action="closeNewTodo">Cancel</button>
+      <button class="btn" data-action="saveTodo">Save To-Do</button>
+    </div>
+  </div>`;
+  document.getElementById('app').appendChild(overlay);
+  overlay.querySelectorAll('[data-settype]').forEach(b=>b.onclick=()=>{ m.type=b.dataset.settype; render(); });
+  overlay.querySelectorAll('[data-quickdate]').forEach(b=>b.onclick=()=>{
+    document.getElementById('ntDue').value = b.dataset.quickdate;
+  });
+  overlay.querySelector('[data-action="closeNewTodo"]').onclick=()=>{ state.newTodoModal=null; render(); };
+  const takeBtn = overlay.querySelector('[data-action="takeIt"]');
+  if(takeBtn) takeBtn.onclick=()=>{ m.assignTo=state.currentUser.id; m.mode='take'; render(); };
+  overlay.querySelector('[data-action="saveTodo"]').onclick=()=>{
+    const title=document.getElementById('ntTitle').value.trim();
+    if(!title){ flashToast('Give the to-do a title first.'); return; }
+    const category=document.getElementById('ntCategory').value.trim();
+    const dueStr=document.getElementById('ntDue').value.trim();
+    const assignTo=document.getElementById('ntAssignSelect').value;
+    const priv=document.getElementById('ntPrivate').checked;
+    const ctx=m.context||{};
+    const newTd = {
+      id:uid(), title, category, dueDate: parseNaturalDate(dueStr), assignedTo:assignTo, createdBy:state.currentUser.id,
+      type:m.type, private:priv, completed:false, notes:'', isNew:false,
+      listId: ctx.listId||null, clientId: ctx.clientId||null, dealId: ctx.dealId||null, entryId: ctx.entryId||null
+    };
+    db.todos.push(newTd);
+    state.newTodoModal=null;
+    if(assignTo!==state.currentUser.id){
+      newTd.isNew = true;
+      const u=USERS.find(x=>x.id===assignTo);
+      const subject = 'You Have a New To Do on Southwest Edge';
+      const body = `Hi ${u.name.split(' ')[0]},\n\n${state.currentUser.name} assigned you a new to-do:\n\n"${title}"${category?` (${category})`:''}${newTd.dueDate?`\nDue: ${fmtDate(newTd.dueDate)}`:''}\n\nLog in to Southwest Edge Portal to view it: [portal link]\n\n— Sent from Southwest Edge Portal`;
+      openEmailDraft(u, subject, body);
+      flashToast(`Email draft opened for ${u.name}.`);
+    } else {
+      flashToast('To-do saved.');
+    }
+    render();
+  };
+}
+
+/* ---------------- CONTACTS MODULE ---------------- */
+function renderContactsMain(){
+  return `
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+    <div style="font-size:12.5px;color:var(--ink-soft);">${db.contacts.length} contacts</div>
+    <div style="display:flex;gap:8px;">
+      <button class="btn sm" id="newContactBtn">+ New Contact</button>
+      <label class="btn secondary sm" style="display:inline-block;">Import CSV<input type="file" id="csvImportInput" accept=".csv" style="display:none;"></label>
+      <button class="btn sm" id="exportVcardBtn" ${state.selectedContactIds.length? '' : 'disabled'}>Export vCard (${state.selectedContactIds.length})</button>
+    </div>
+  </div>
+  <div style="max-height:calc(100vh - 200px);overflow-y:auto;border:1px solid var(--line);border-radius:10px;">
+  <table class="contacts-table">
+    <thead><tr>
+      <th class="checkbox-cell"><input type="checkbox" id="selectAllContacts"></th>
+      <th>Last Name</th><th>First Name</th><th>Company</th><th>Email</th><th>Mobile</th><th>Phone</th>
+    </tr></thead>
+    <tbody>
+      ${db.contacts.slice().sort((a,b)=>a.last.localeCompare(b.last)||a.first.localeCompare(b.first)).map(c=>`
+        <tr data-contactrow="${c.id}">
+          <td class="checkbox-cell"><input type="checkbox" data-contactcheck="${c.id}" ${state.selectedContactIds.includes(c.id)?'checked':''}></td>
+          <td>${escapeHtml(c.last)}</td><td>${escapeHtml(c.first)}</td><td>${escapeHtml(c.company||'')}</td>
+          <td>${escapeHtml(c.email||'')}</td><td>${escapeHtml(c.mobile||'')}</td><td>${escapeHtml(c.phone||'')}</td>
+        </tr>`).join('')}
+    </tbody>
+  </table>
+  </div>`;
+}
+function attachContactsHandlers(){
+  const csvInput = document.getElementById('csvImportInput');
+  if(csvInput) csvInput.onchange=(e)=>{ if(e.target.files[0]) importCSV(e.target.files[0]); };
+  const newContactBtn = document.getElementById('newContactBtn');
+  if(newContactBtn) newContactBtn.onclick=()=>{ state.contactPickerOpen={standalone:true}; state.contactPickerQuery=''; render(); };
+  document.querySelectorAll('[data-contactcheck]').forEach(el=>el.onclick=(ev)=>{
+    ev.stopPropagation();
+    const id=el.dataset.contactcheck;
+    if(state.selectedContactIds.includes(id)) state.selectedContactIds=state.selectedContactIds.filter(x=>x!==id);
+    else state.selectedContactIds.push(id);
+    render();
+  });
+  const selAll = document.getElementById('selectAllContacts');
+  if(selAll) selAll.onclick=()=>{
+    if(selAll.checked) state.selectedContactIds = db.contacts.map(c=>c.id);
+    else state.selectedContactIds=[];
+    render();
+  };
+  const exportBtn = document.getElementById('exportVcardBtn');
+  if(exportBtn) exportBtn.onclick=()=>exportVCards(state.selectedContactIds);
+}
+function importCSV(file){
+  const reader = new FileReader();
+  reader.onload = (e)=>{
+    const text = e.target.result;
+    const rows = parseCSV(text);
+    if(!rows.length){ flashToast('No rows found in that file.'); return; }
+    const header = rows[0].map(h=>h.trim());
+    const idx = (name)=>header.indexOf(name);
+    const iFirst=idx('First Name'), iLast=idx('Last Name'), iCompany=idx('Company'),
+          iEmail=idx('E-mail Address'), iMobile=idx('Mobile Phone'), iPhone=idx('Business Phone');
+    let added=0;
+    for(let r=1;r<rows.length;r++){
+      const row=rows[r]; if(!row || row.length<2) continue;
+      const first=(row[iFirst]||'').trim(), last=(row[iLast]||'').trim();
+      if(!first && !last) continue;
+      db.contacts.push({
+        id:'contact'+uid(), first, last,
+        company:(row[iCompany]||'').trim(),
+        email:(row[iEmail]||'').trim(),
+        mobile:(row[iMobile]||'').trim(),
+        phone:(row[iPhone]||'').trim(),
+      });
+      added++;
+    }
+    flashToast(`Imported ${added} contacts.`);
+    render();
+  };
+  reader.readAsText(file);
+}
+function parseCSV(text){
+  // basic CSV parser handling quoted fields
+  const rows=[]; let row=[]; let field=''; let inQuotes=false;
+  for(let i=0;i<text.length;i++){
+    const c=text[i];
+    if(inQuotes){
+      if(c==='"'){ if(text[i+1]==='"'){ field+='"'; i++; } else inQuotes=false; }
+      else field+=c;
+    } else {
+      if(c==='"') inQuotes=true;
+      else if(c===','){ row.push(field); field=''; }
+      else if(c==='\r'){ /* skip */ }
+      else if(c==='\n'){ row.push(field); rows.push(row); row=[]; field=''; }
+      else field+=c;
+    }
+  }
+  if(field.length || row.length){ row.push(field); rows.push(row); }
+  return rows.filter(r=>r.length>1 || (r[0]&&r[0].trim()!==''));
+}
+function exportVCards(ids){
+  if(!ids.length) return;
+  ids.forEach((id,i)=>{
+    const c = db.contacts.find(x=>x.id===id);
+    if(!c) return;
+    const vcf = [
+      'BEGIN:VCARD','VERSION:3.0',
+      `N:${c.last};${c.first};;;`,
+      `FN:${c.first} ${c.last}`,
+      c.company?`ORG:${c.company}`:'',
+      c.email?`EMAIL;TYPE=INTERNET:${c.email}`:'',
+      c.mobile?`TEL;TYPE=CELL:${c.mobile}`:'',
+      c.phone?`TEL;TYPE=WORK:${c.phone}`:'',
+      'END:VCARD'
+    ].filter(Boolean).join('\r\n');
+    setTimeout(()=>{
+      const blob = new Blob([vcf], {type:'text/vcard'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href=url; a.download=`${c.first}_${c.last}.vcf`;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+    }, i*150);
+  });
+  flashToast(`Exporting ${ids.length} vCard file${ids.length===1?'':'s'} to Downloads…`);
+}
+
+/* ---------------- TOAST ---------------- */
+function flashToast(msg){ state.toast = msg; }
+function showToastNow(){
+  const el = document.createElement('div');
+  el.className='toast'; el.textContent=state.toast;
+  document.getElementById('app').appendChild(el);
+  setTimeout(()=>{ el.remove(); }, 3200);
+  state.toast=null;
+}
+
+/* ---------------- UTIL ---------------- */
+function escapeHtml(str){
+  if(str===undefined||str===null) return '';
+  return String(str).replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+}
+function escapeAttr(str){ return escapeHtml(str); }
+
+/* ---------------- POST-RENDER WIRING (contact picker / contacts page need extra wiring since injected after main render) ---------------- */
+const _origRender = render;
+render = function(){
+  _origRender();
+  if(state.mainView.type==='contacts') attachContactsHandlers();
+  if(state.contactPickerOpen){
+    const panelHost = document.createElement('div');
+    panelHost.innerHTML = renderContactPickerPanel();
+    document.getElementById('app').appendChild(panelHost.firstElementChild);
+    const input = document.getElementById('contactSearchInput');
+    if(input){
+      input.focus();
+      input.oninput=()=>{ state.contactPickerQuery=input.value; render(); };
+    }
+    document.querySelectorAll('[data-selectcontact]').forEach(el=>el.onclick=()=>{
+      finishContactPick(el.dataset.selectcontact);
+    });
+    const closeCP = document.getElementById('contactPickerOverlay')?.querySelector('[data-action="closeContactPicker"]');
+    if(closeCP) closeCP.onclick=()=>{ state.contactPickerOpen=null; render(); };
+    const createBtn = document.querySelector('[data-action="createNewContact"]');
+    if(createBtn) createBtn.onclick=()=>{
+      const first=document.getElementById('newContactFirst').value.trim();
+      const last=document.getElementById('newContactLast').value.trim();
+      const company=document.getElementById('newContactCompany').value.trim();
+      const email=document.getElementById('newContactEmail').value.trim();
+      const mobile=document.getElementById('newContactMobile').value.trim();
+      if(!first||!last){ flashToast('First and last name are required.'); return; }
+      const pending={first,last,company,email,mobile,phone:''};
+      const match = db.contacts.find(c=>
+        (c.first.toLowerCase()===first.toLowerCase() && c.last.toLowerCase()===last.toLowerCase()) ||
+        (mobile && c.mobile && c.mobile===mobile)
+      );
+      if(match){ state.duplicatePrompt={match, pending}; render(); }
+      else {
+        const c=Object.assign({id:'contact'+uid()}, pending);
+        db.contacts.push(c);
+        finishContactPick(c.id);
+      }
+    };
+  }
+};
+
+window.addEventListener('resize', ()=>{ state.isMobile = window.innerWidth<=820; render(); });
+
+// One persistent listener for the whole app's lifetime (rather than re-registering per
+// render) so the hamburger menu and nav ellipsis menus reliably close on outside click
+// or Escape — not just by clicking their own toggle button again.
+document.addEventListener('click', (ev)=>{
+  let changed=false;
+  if(state.showAdminMenu && !ev.target.closest('.admin-menu') && !ev.target.closest('[data-action="toggleAdmin"]')){
+    state.showAdminMenu=false; changed=true;
+  }
+  if(state.navContextMenu && !ev.target.closest('.nav-context-menu') && !ev.target.closest('[data-ellipsis]')){
+    state.navContextMenu=null; changed=true;
+  }
+  if(state.showWidgetPicker && !ev.target.closest('[data-action="toggleWidgetPicker"]') && !ev.target.closest('[data-widgettoggle]')){
+    state.showWidgetPicker=false; changed=true;
+  }
+  if(changed) render();
+});
+document.addEventListener('keydown', (ev)=>{
+  if(ev.key!=='Escape') return;
+  let changed=false;
+  if(state.showAdminMenu){ state.showAdminMenu=false; changed=true; }
+  if(state.navContextMenu){ state.navContextMenu=null; changed=true; }
+  if(state.showWidgetPicker){ state.showWidgetPicker=false; changed=true; }
+  if(changed) render();
+});
+
+render();
+</script>
+</body>
+</html>
