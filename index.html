@@ -494,6 +494,7 @@ let state = {
   toast:null,
   showAdminMenu:false,
   showUserMenu:false,
+  addUsersPrompt:null,          // {listId, clientId} — shown right after creating a new Client/Listing
   newTodoModal:null,            // {context:{...}} when open
   contactModal:null,            // 'master' | {id} for detail
   selectedContactIds:[],
@@ -571,6 +572,343 @@ async function fetchAllProfilesIntoUsers(){
     if(!u){ u = {id:p.id, email:p.email}; USERS.push(u); }
     Object.assign(u, {authId:p.id, name:p.name, role:p.role, initials:p.initials, emailClient:p.email_client});
   });
+}
+
+/* ---------------- CONTACTS (Phase 2, domain 1 — the first real shared-data table) ----------------
+   Pattern used for every domain from here on: fetch the real table on login (so
+   everyone starts from the same live data), then every local create/edit/delete
+   updates the on-screen array immediately (so the UI never feels slow) while a
+   matching Supabase call fires in the background. If that background call fails,
+   we log it and toast an error rather than silently losing the change. */
+function contactRowToLocal(r){
+  return {id:r.id, first:r.first_name, last:r.last_name, company:r.company||'', website:r.website||'',
+          email:r.email||'', mobile:r.mobile||'', phone:r.phone||'', address:r.address||'',
+          city:r.city||'', state:r.state||'', zip:r.zip||''};
+}
+function contactLocalToRow(c){
+  return {id:c.id, first_name:c.first, last_name:c.last, company:c.company||null, website:c.website||null,
+          email:c.email||null, mobile:c.mobile||null, phone:c.phone||null, address:c.address||null,
+          city:c.city||null, state:c.state||null, zip:c.zip||null,
+          created_by: (state.currentUser && state.currentUser.authId) || null};
+}
+async function fetchContactsFromSupabase(){
+  const { data, error } = await supabaseClient.from('contacts').select('*');
+  if(error){ console.error('fetchContactsFromSupabase error:', error); return; }
+  db.contacts = data.map(contactRowToLocal);
+}
+async function supaCreateContact(c){
+  const { error } = await supabaseClient.from('contacts').insert(contactLocalToRow(c));
+  if(error){ console.error('supaCreateContact error:', error); flashToast('Saved here, but syncing to the server failed — check your connection.'); render(); }
+}
+async function supaUpdateContact(c){
+  const { error } = await supabaseClient.from('contacts').update(contactLocalToRow(c)).eq('id', c.id);
+  if(error){ console.error('supaUpdateContact error:', error); flashToast('Saved here, but syncing to the server failed — check your connection.'); render(); }
+}
+async function supaDeleteContact(id){
+  const { error } = await supabaseClient.from('contacts').delete().eq('id', id);
+  if(error){ console.error('supaDeleteContact error:', error); flashToast('Deleted here, but syncing to the server failed — check your connection.'); render(); }
+}
+
+/* ---------------- SHARED USER-ID MAPPING ----------------
+   Local code everywhere uses short ids like 'mclark'/'nault'/'lkhoudary'. The
+   database needs real Supabase Auth UUIDs for any foreign key pointing at a
+   person (edge_tracker, owner_id, assigned_to, created_by). These two helpers
+   convert between the two. If someone hasn't ever logged in on Supabase yet,
+   there's no UUID for them — the write is skipped rather than crashing. */
+function localUserIdToAuthId(localId){
+  const u = USERS.find(x=>x.id===localId);
+  return (u && u.authId) || null;
+}
+function authIdToLocalUserId(authId){
+  const u = USERS.find(x=>x.authId===authId);
+  return u ? u.id : null;
+}
+
+/* ---------------- BROKERS (Phoenix Broker List) ---------------- */
+function brokerRowToLocal(r){ return {id:r.id, name:r.name, company:r.company||'', email:r.email||'', mobile:r.mobile||'', phone:r.phone||''}; }
+function brokerLocalToRow(b){ return {id:b.id, name:b.name, company:b.company||null, email:b.email||null, mobile:b.mobile||null, phone:b.phone||null}; }
+async function fetchBrokersFromSupabase(){
+  const { data, error } = await supabaseClient.from('brokers').select('*');
+  if(error){ console.error('fetchBrokersFromSupabase error:', error); return; }
+  if(data.length) PHOENIX_BROKER_LIST = data.map(brokerRowToLocal);
+}
+async function supaCreateBroker(b){
+  const { error } = await supabaseClient.from('brokers').insert(brokerLocalToRow(b));
+  if(error){ console.error('supaCreateBroker error:', error); flashToast('Saved here, but syncing to the server failed.'); render(); }
+}
+async function supaUpdateBroker(b){
+  const { error } = await supabaseClient.from('brokers').update(brokerLocalToRow(b)).eq('id', b.id);
+  if(error){ console.error('supaUpdateBroker error:', error); flashToast('Saved here, but syncing to the server failed.'); render(); }
+}
+async function supaDeleteBroker(id){
+  const { error } = await supabaseClient.from('brokers').delete().eq('id', id);
+  if(error){ console.error('supaDeleteBroker error:', error); flashToast('Deleted here, but syncing to the server failed.'); render(); }
+}
+
+/* ---------------- TENANT ROSTER ---------------- */
+function rosterRowToLocal(r){ return {id:r.id, name:r.name, categoryId:r.category_id, tenantType:r.tenant_type||'', notes:r.notes||''}; }
+function rosterLocalToRow(r){ return {id:r.id, name:r.name, category_id:r.categoryId||null, tenant_type:r.tenantType||null, notes:r.notes||null}; }
+async function fetchTenantRosterFromSupabase(){
+  const { data, error } = await supabaseClient.from('tenant_roster').select('*');
+  if(error){ console.error('fetchTenantRosterFromSupabase error:', error); return; }
+  if(data.length){ TENANT_ROSTER.length=0; data.forEach(r=>TENANT_ROSTER.push(rosterRowToLocal(r))); }
+}
+async function supaCreateRosterEntry(r){
+  const { error } = await supabaseClient.from('tenant_roster').insert(rosterLocalToRow(r));
+  if(error){ console.error('supaCreateRosterEntry error:', error); flashToast('Saved here, but syncing to the server failed.'); render(); }
+}
+
+/* ---------------- PROPERTY CATEGORIES (defaults + per-listing custom) ---------------- */
+async function fetchPropertyCategoriesFromSupabase(){
+  const { data, error } = await supabaseClient.from('property_categories').select('*');
+  if(error){ console.error('fetchPropertyCategoriesFromSupabase error:', error); return; }
+  return data; // caller assembles into each listing's categoryConfig.custom
+}
+async function supaCreateCategory(id, name, listingAuthId){
+  const { error } = await supabaseClient.from('property_categories').insert({id, name, listing_id: listingAuthId||null});
+  if(error){ console.error('supaCreateCategory error:', error); flashToast('Saved here, but syncing to the server failed.'); render(); }
+}
+async function supaSaveListingCategorySettings(listingId, categoryConfig){
+  await supabaseClient.from('listing_category_settings').delete().eq('listing_id', listingId);
+  const rows = categoryConfig.order.map((catId, i)=>({
+    listing_id: listingId, category_id: catId, display_order: i, is_hidden: categoryConfig.hidden.includes(catId)
+  }));
+  if(rows.length){
+    const { error } = await supabaseClient.from('listing_category_settings').insert(rows);
+    if(error) console.error('supaSaveListingCategorySettings error:', error);
+  }
+}
+
+/* ---------------- LISTS / CLIENTS / DEALS ---------------- */
+function clientRowToLocal(r){
+  return {id:r.id, name:r.name, primary:r.primary_contact_id, secondary:[], deals:[],
+          propertyType:r.property_type, squareFootage:r.square_footage, askingRate:r.asking_rate,
+          createdBy: authIdToLocalUserId(r.created_by) || r.created_by, authorizedUserIds:[]};
+}
+function clientLocalToRow(c, listId){
+  return {id:c.id, list_id:listId, name:c.name, primary_contact_id:c.primary||null, created_by: localUserIdToAuthId(c.createdBy)};
+}
+function dealRowToLocal(r){ return {id:r.id, name:r.name, complete:r.complete, activeDeal:r.active_deal, caExecuted:r.ca_executed, dueDate: r.due_date? new Date(r.due_date+'T00:00:00'):null}; }
+function dealLocalToRow(d, clientId){
+  return {id:d.id, client_id:clientId, name:d.name, complete:!!d.complete, active_deal:!!d.activeDeal,
+          ca_executed:!!d.caExecuted, due_date: d.dueDate? d.dueDate.toISOString().slice(0,10) : null};
+}
+async function fetchListsClientsDealsFromSupabase(){
+  const [{data:lists,error:e1}, {data:clients,error:e2}, {data:secConts,error:e3}, {data:deals,error:e4}, {data:authUsers,error:e5}] = await Promise.all([
+    supabaseClient.from('lists').select('*'),
+    supabaseClient.from('clients').select('*'),
+    supabaseClient.from('client_secondary_contacts').select('*'),
+    supabaseClient.from('deals').select('*'),
+    supabaseClient.from('client_authorized_users').select('*'),
+  ]);
+  if(e1||e2||e3||e4){ console.error('fetchListsClientsDealsFromSupabase error:', e1||e2||e3||e4); return; }
+  if(!lists.length) return; // nothing seeded server-side yet — keep local defaults as the starting point
+  const newLists = lists.slice().sort((a,b)=>a.display_order-b.display_order).map(l=>({
+    id:l.id, name:l.name, icon:l.icon, type:l.type, isDefault:l.is_default,
+    clients: l.type==='deep' ? [] : undefined,
+    entries: l.type==='flat' ? [] : undefined,
+  }));
+  clients.forEach(cr=>{
+    const list = newLists.find(l=>l.id===cr.list_id);
+    if(!list) return;
+    const c = clientRowToLocal(cr);
+    c.secondary = secConts.filter(sc=>sc.client_id===cr.id).map(sc=>sc.contact_id);
+    c.deals = deals.filter(d=>d.client_id===cr.id).map(dealRowToLocal);
+    if(authUsers) c.authorizedUserIds = authUsers.filter(a=>a.client_id===cr.id).map(a=>authIdToLocalUserId(a.user_id)).filter(Boolean);
+    if(list.id==='listings'){ c.prospects=[]; c.categoryConfig=newLSRCategoryConfig(); }
+    list.clients.push(c);
+  });
+  db.lists = newLists;
+}
+async function supaCreateList(list){
+  const { error } = await supabaseClient.from('lists').insert({id:list.id, name:list.name, icon:list.icon, type:list.type, is_default:!!list.isDefault});
+  if(error){ console.error('supaCreateList error:', error); flashToast('Saved here, but syncing to the server failed.'); render(); }
+}
+async function supaCreateClient(c, listId){
+  if(!c.createdBy) c.createdBy = state.currentUser.id;
+  const { error } = await supabaseClient.from('clients').insert(clientLocalToRow(c, listId));
+  if(error){ console.error('supaCreateClient error:', error); flashToast('Saved here, but syncing to the server failed.'); render(); }
+}
+async function supaUpdateClientContact(c, listId){
+  const { error } = await supabaseClient.from('clients').update(clientLocalToRow(c, listId)).eq('id', c.id);
+  if(error) console.error('supaUpdateClientContact error:', error);
+}
+async function supaAddAuthorizedUser(clientId, localUserId){
+  const authId = localUserIdToAuthId(localUserId);
+  if(!authId){ flashToast('That person needs to sign in at least once before they can be added.'); render(); return; }
+  const { error } = await supabaseClient.from('client_authorized_users').insert({client_id:clientId, user_id:authId});
+  if(error){ console.error('supaAddAuthorizedUser error:', error); flashToast('Saved here, but syncing to the server failed.'); render(); }
+}
+async function supaRemoveAuthorizedUser(clientId, localUserId){
+  const authId = localUserIdToAuthId(localUserId);
+  if(!authId) return;
+  const { error } = await supabaseClient.from('client_authorized_users').delete().eq('client_id', clientId).eq('user_id', authId);
+  if(error) console.error('supaRemoveAuthorizedUser error:', error);
+}
+function renderAddUsersPrompt(){
+  const {listId, clientId} = state.addUsersPrompt;
+  const l = db.lists.find(x=>x.id===listId);
+  const c = l && l.clients.find(x=>x.id===clientId);
+  if(!c){ state.addUsersPrompt=null; return; }
+  const others = USERS.filter(u=>u.id!==c.createdBy);
+  const overlay = document.createElement('div');
+  overlay.className='modal-overlay'; overlay.style.zIndex=210;
+  overlay.innerHTML = `
+  <div class="modal-card">
+    <div class="modal-head"><div class="modal-title">Include other users on ${escapeHtml(c.name)}?</div></div>
+    <div class="modal-body">
+      <p style="font-size:12.5px;color:var(--ink-soft);margin-top:0;">
+        Right now, only you can see this ${l.id==='listings'?'listing':'client'} (Admins can always see everything, regardless). Check anyone else who should have access — you can always change this later from the record itself.
+      </p>
+      ${others.length ? others.map(u=>`
+        <label style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line-soft);font-size:13.5px;${u.role==='Admin'?'color:var(--ink-soft);':''}">
+          <input type="checkbox" class="addUsersCheck" value="${u.id}" style="width:auto;" ${u.role==='Admin'?'checked disabled':''}>
+          ${escapeHtml(u.name)}${u.role==='Admin'? ' <span class="tiny">(Admin — always has access)</span>':''}
+        </label>`).join('') : `<div class="tiny" style="color:var(--ink-soft);">No other teammates yet.</div>`}
+    </div>
+    <div class="modal-foot">
+      <button class="btn secondary" data-action="skipAddUsers">No, just me for now</button>
+      <button class="btn" data-action="confirmAddUsers">Save</button>
+    </div>
+  </div>`;
+  document.getElementById('app').appendChild(overlay);
+  overlay.querySelector('[data-action="skipAddUsers"]').onclick=()=>{ state.addUsersPrompt=null; render(); };
+  overlay.querySelector('[data-action="confirmAddUsers"]').onclick=()=>{
+    const checked = Array.from(overlay.querySelectorAll('.addUsersCheck:checked:not(:disabled)')).map(el=>el.value);
+    if(!c.authorizedUserIds) c.authorizedUserIds=[];
+    checked.forEach(userId=>{
+      if(!c.authorizedUserIds.includes(userId)){
+        c.authorizedUserIds.push(userId);
+        supaAddAuthorizedUser(c.id, userId);
+      }
+    });
+    state.addUsersPrompt=null;
+    if(checked.length) flashToast(`Added ${checked.length} teammate${checked.length===1?'':'s'} to ${c.name}.`);
+    render();
+  };
+}
+async function supaCreateDeal(d, clientId){
+  const { error } = await supabaseClient.from('deals').insert(dealLocalToRow(d, clientId));
+  if(error){ console.error('supaCreateDeal error:', error); flashToast('Saved here, but syncing to the server failed.'); render(); }
+}
+async function supaUpdateDeal(d, clientId){
+  const { error } = await supabaseClient.from('deals').update(dealLocalToRow(d, clientId)).eq('id', d.id);
+  if(error) console.error('supaUpdateDeal error:', error);
+}
+
+/* ---------------- PROSPECTS (Leasing / Prospecting Report) ---------------- */
+function prospectRowToLocal(r){
+  return {id:r.id, tenantName:r.tenant_name, contactId:r.contact_id, brokerId:r.broker_id, categoryId:r.category_id,
+    stage:r.stage, dealType:r.deal_type, dateOfContact:r.date_of_contact? new Date(r.date_of_contact+'T00:00:00'):null,
+    notes:r.notes||'', edgeTracker: authIdToLocalUserId(r.edge_tracker) || r.edge_tracker,
+    deadDate:r.dead_date? new Date(r.dead_date):null, building:r.building||'', spaceNum:r.space_num||'', size:r.size||'',
+    rent:r.rent||'', price:r.price||'', term:r.term||'', tiAllowance:r.ti_allowance||'',
+    commission1Paid:r.commission1_paid, commission2Paid:r.commission2_paid, inTradeArea:r.in_trade_area, attachments:[]};
+}
+function prospectLocalToRow(p, listingId){
+  return {id:p.id, listing_id:listingId, tenant_name:p.tenantName, contact_id:p.contactId||null, broker_id:p.brokerId||null,
+    category_id:p.categoryId||null, stage:p.stage, deal_type:p.dealType||null,
+    date_of_contact:p.dateOfContact? p.dateOfContact.toISOString().slice(0,10):null, notes:p.notes||null,
+    edge_tracker: localUserIdToAuthId(p.edgeTracker), dead_date:p.deadDate? p.deadDate.toISOString():null,
+    building:p.building||null, space_num:p.spaceNum||null, size:p.size||null, rent:p.rent||null, price:p.price||null,
+    term:p.term||null, ti_allowance:p.tiAllowance||null, commission1_paid:!!p.commission1Paid,
+    commission2_paid:!!p.commission2Paid, in_trade_area:!!p.inTradeArea};
+}
+async function fetchProspectsFromSupabase(){
+  const { data, error } = await supabaseClient.from('prospects').select('*');
+  if(error){ console.error('fetchProspectsFromSupabase error:', error); return; }
+  const listingsList = db.lists.find(l=>l.id==='listings');
+  if(!listingsList) return;
+  listingsList.clients.forEach(c=>{
+    const rows = data.filter(r=>r.listing_id===c.id);
+    if(rows.length) c.prospects = rows.map(prospectRowToLocal);
+  });
+}
+async function supaCreateProspect(p, listingId){
+  const { error } = await supabaseClient.from('prospects').insert(prospectLocalToRow(p, listingId));
+  if(error){ console.error('supaCreateProspect error:', error); flashToast('Saved here, but syncing to the server failed.'); render(); }
+}
+async function supaUpdateProspect(p, listingId){
+  const { error } = await supabaseClient.from('prospects').update(prospectLocalToRow(p, listingId)).eq('id', p.id);
+  if(error){ console.error('supaUpdateProspect error:', error); flashToast('Saved here, but syncing to the server failed.'); render(); }
+}
+async function supaDeleteProspect(id){
+  const { error } = await supabaseClient.from('prospects').delete().eq('id', id);
+  if(error){ console.error('supaDeleteProspect error:', error); flashToast('Deleted here, but syncing to the server failed.'); render(); }
+}
+
+/* ---------------- ENTRIES (Hot List / Hit List) ---------------- */
+function entryRowToLocal(r){
+  return {id:r.id, name:r.name, lastCall:r.last_call? new Date(r.last_call+'T00:00:00'):null, feedback:r.feedback||'',
+          contactId:r.contact_id, ownerId: authIdToLocalUserId(r.owner_id) || r.owner_id};
+}
+function entryLocalToRow(e, listId){
+  return {id:e.id, list_id:listId, name:e.name, last_call:e.lastCall? e.lastCall.toISOString().slice(0,10):null,
+          feedback:e.feedback||null, contact_id:e.contactId||null, owner_id: localUserIdToAuthId(e.ownerId)};
+}
+async function fetchEntriesFromSupabase(){
+  const { data, error } = await supabaseClient.from('entries').select('*');
+  if(error){ console.error('fetchEntriesFromSupabase error:', error); return; }
+  db.lists.filter(l=>l.type==='flat').forEach(l=>{
+    const rows = data.filter(r=>r.list_id===l.id);
+    if(rows.length) l.entries = rows.map(entryRowToLocal);
+  });
+}
+async function supaCreateEntry(e, listId){
+  const { error } = await supabaseClient.from('entries').insert(entryLocalToRow(e, listId));
+  if(error){ console.error('supaCreateEntry error:', error); flashToast('Saved here, but syncing to the server failed (only you can see this lead until it does).'); render(); }
+}
+async function supaUpdateEntry(e, listId){
+  const { error } = await supabaseClient.from('entries').update(entryLocalToRow(e, listId)).eq('id', e.id);
+  if(error) console.error('supaUpdateEntry error:', error);
+}
+async function supaDeleteEntry(id){
+  const { error } = await supabaseClient.from('entries').delete().eq('id', id);
+  if(error) console.error('supaDeleteEntry error:', error);
+}
+
+/* ---------------- TO-DO'S ---------------- */
+function todoRowToLocal(r){
+  return {id:r.id, title:r.title, category:r.category||'', dueDate:r.due_date? new Date(r.due_date+'T00:00:00'):null,
+    assignedTo: authIdToLocalUserId(r.assigned_to) || r.assigned_to, createdBy: authIdToLocalUserId(r.created_by) || r.created_by,
+    type:r.type, private:r.is_private, completed:r.is_completed, isNew:r.is_new, notes:r.notes||'',
+    listId:r.list_id, clientId:r.client_id, dealId:r.deal_id, entryId:r.entry_id, attachments:[],
+    archivedAt: r.archived_at ? new Date(r.archived_at) : undefined};
+}
+function todoLocalToRow(t){
+  return {id:t.id, title:t.title, category:t.category||null, due_date:t.dueDate? t.dueDate.toISOString().slice(0,10):null,
+    assigned_to: localUserIdToAuthId(t.assignedTo), created_by: localUserIdToAuthId(t.createdBy),
+    type:t.type||'task', is_private:!!t.private, is_completed:!!t.completed, is_new:!!t.isNew, notes:t.notes||null,
+    list_id:t.listId||null, client_id:t.clientId||null, deal_id:t.dealId||null, entry_id:t.entryId||null,
+    archived_at: t.archivedAt ? t.archivedAt.toISOString() : null};
+}
+async function fetchTodosFromSupabase(){
+  const { data, error } = await supabaseClient.from('todos').select('*');
+  if(error){ console.error('fetchTodosFromSupabase error:', error); return; }
+  if(!data.length) return; // nothing on the server yet — keep local demo data as the starting point
+  db.todos = data.filter(r=>!r.archived_at).map(todoRowToLocal);
+  db.archivedTodos = data.filter(r=>r.archived_at).map(todoRowToLocal);
+}
+async function supaCreateTodo(t){
+  const { error } = await supabaseClient.from('todos').insert(todoLocalToRow(t));
+  if(error){ console.error('supaCreateTodo error:', error); flashToast('Saved here, but syncing to the server failed.'); render(); }
+}
+async function supaUpdateTodo(t){
+  const { error } = await supabaseClient.from('todos').update(todoLocalToRow(t)).eq('id', t.id);
+  if(error) console.error('supaUpdateTodo error:', error);
+}
+async function supaDeleteTodo(id){
+  const { error } = await supabaseClient.from('todos').delete().eq('id', id);
+  if(error) console.error('supaDeleteTodo error:', error);
+}
+async function fetchAllAppDataFromSupabase(){
+  await fetchContactsFromSupabase();
+  await fetchBrokersFromSupabase();
+  await fetchTenantRosterFromSupabase();
+  await fetchListsClientsDealsFromSupabase(); // must run before prospects/entries below
+  await fetchProspectsFromSupabase();
+  await fetchEntriesFromSupabase();
+  await fetchTodosFromSupabase();
 }
 
 
@@ -1509,6 +1847,7 @@ function render(){
   if(state.lsrCategoryManagerOpen) renderLSRCategoryManagerModal();
   if(state.calendarViewOpen && !state.isMobile) renderCalendarViewModal();
   if(state.marketingListWizard) renderMarketingListWizard();
+  if(state.addUsersPrompt) renderAddUsersPrompt();
   if(state.newSmartListModal) renderNewSmartListModal();
   if(state.notifSettingsOpen) renderNotifSettingsModal();
   if(state.pendingUsersModalOpen) renderPendingUsersModal();
@@ -1528,7 +1867,7 @@ function renderLogin(){
     <div class="login-logo"><img src="${EDGE_LOGO_DATA_URI}" alt="Edge"></div>
     <div class="login-title">Southwest Edge</div>
     <div class="login-title-sub">Portal</div>
-    <div class="login-tag">Built by brokers, for brokers</div>
+    <div class="login-tag">Built by Brokers, for Brokers</div>
     <div class="login-card">
       <div class="login-card-title">Sign in</div>
       ${USERS.map(u=>`
@@ -1595,6 +1934,7 @@ function renderEmailClientPicker(){
     state.showEmailClientPicker=false;
     state.pendingLoginUser=null;
     state.currentUser=u; state.screen='app'; if(!appStateWasLoaded) seedAll();
+    await fetchAllAppDataFromSupabase();
     render();
   });
 }
@@ -1906,6 +2246,7 @@ function attachLoginHandlers(){
       return;
     }
     state.currentUser=u; state.screen='app'; if(!appStateWasLoaded) seedAll(); state.loginTarget=null;
+    await fetchAllAppDataFromSupabase();
     render();
   };
   const showReg = document.getElementById('showRegisterBtn');
@@ -2348,6 +2689,7 @@ function wireCalendarViewHandlers(overlay){
       if(!td) return;
       const [y,m,d] = cell.dataset.cvdate.split('-').map(Number);
       td.dueDate = new Date(y,m,d);
+      supaUpdateTodo(td);
       flashToast(`"${td.title}" moved to ${fmtDate(td.dueDate)}.`);
       render();
     };
@@ -2480,8 +2822,9 @@ function wireMarketingListWizard(overlay, listing, allCats){
         return;
       }
       errBox.style.display = 'none';
-      const newRoster = {id:'roster'+uid(), name, categoryId, tenantType:'', notes:''};
+      const newRoster = {id:crypto.randomUUID(), name, categoryId, tenantType:'', notes:''};
       TENANT_ROSTER.push(newRoster); // added to the permanent, cross-listing roster
+      supaCreateRosterEntry(newRoster);
       if(!m.selectedCategoryIds.includes(categoryId)) m.selectedCategoryIds.push(categoryId);
       const alreadyOnListing = listing.prospects.some(p=>p.tenantName.toLowerCase().trim()===name.toLowerCase().trim());
       m.reviewItems.push({rosterId:newRoster.id, name, categoryId, tenantType:'', notes:'', keep:true, tradeArea:false, prohibited:false, alreadyOnListing});
@@ -2491,22 +2834,29 @@ function wireMarketingListWizard(overlay, listing, allCats){
     overlay.querySelector('[data-action="mlwSave"]').onclick=()=>{
       const existingNames = new Set(listing.prospects.map(p=>p.tenantName.toLowerCase().trim()));
       let added=0, skippedDup=0, discarded=0;
+      const toSync = [];
       m.reviewItems.forEach(item=>{
         if(!item.keep || item.prohibited){ discarded++; return; }
         const key = item.name.toLowerCase().trim();
         if(existingNames.has(key)){ skippedDup++; return; }
-        listing.prospects.push({
-          id:'prospect'+uid(), tenantName:item.name, contactId:null, brokerId:null, categoryId:item.categoryId,
+        const newP = {
+          id:crypto.randomUUID(), tenantName:item.name, contactId:null, brokerId:null, categoryId:item.categoryId,
           stage:'contacted', dealType:null, dateOfContact:null,
           notes: [item.tenantType, item.notes].filter(Boolean).join(' — '),
           edgeTracker: state.currentUser.id, deadDate:null,
           building:'', spaceNum:'', size:'', rent:'', price:'', term:'', tiAllowance:'', dealNotes:'',
           commission1Paid:false, commission2Paid:false, attachments:[],
           inTradeArea: item.tradeArea
-        });
+        };
+        listing.prospects.push(newP);
+        toSync.push(newP);
         existingNames.add(key);
         added++;
       });
+      if(toSync.length){
+        supabaseClient.from('prospects').insert(toSync.map(p=>prospectLocalToRow(p, listing.id)))
+          .then(({error})=>{ if(error){ console.error('marketing list bulk sync error:', error); flashToast('Added here, but syncing some to the server failed.'); render(); } });
+      }
       state.marketingListWizard = null;
       let msg = `Added ${added} tenant${added===1?'':'s'} to ${listing.name}.`;
       if(skippedDup) msg += ` Skipped ${skippedDup} already on this listing.`;
@@ -2999,16 +3349,21 @@ function attachShellHandlers(){
     const name = prompt('Name this client:');
     if(!name) return;
     const l = db.lists.find(x=>x.id===addClientBtn.dataset.listid);
-    const newClient = {id:'client'+uid(), name, primary:null, secondary:[], deals:[]};
+    const newClient = {id:crypto.randomUUID(), name, primary:null, secondary:[], deals:[], createdBy:state.currentUser.id, authorizedUserIds:[]};
+    if(l.id==='listings'){ newClient.prospects=[]; newClient.categoryConfig=newLSRCategoryConfig(); }
     l.clients.push(newClient);
+    supaCreateClient(newClient, l.id);
     flashToast(`${name} added. Open it to attach a contact and add sites.`);
+    state.addUsersPrompt = {listId:l.id, clientId:newClient.id};
     render();
   };
   const addEntryBtn=document.querySelector('[data-action="addEntry"]'); if(addEntryBtn) addEntryBtn.onclick=()=>{
     const name = prompt('Name this prospect:');
     if(!name) return;
     const l = db.lists.find(x=>x.id===addEntryBtn.dataset.listid);
-    l.entries.push({id:'entry'+uid(), name, lastCall:null, feedback:'', contactId:null, ownerId:state.currentUser.id});
+    const newEntry = {id:crypto.randomUUID(), name, lastCall:null, feedback:'', contactId:null, ownerId:state.currentUser.id};
+    l.entries.push(newEntry);
+    supaCreateEntry(newEntry, l.id);
     flashToast(`${name} added to ${l.name}.`);
     render();
   };
@@ -3172,7 +3527,9 @@ function renderNewSmartListModal(){
 function promptAddList(){
   const name = prompt('Name your new list (e.g. a client name or event name like "RFDC"):');
   if(!name) return;
-  db.lists.push({id:'list'+uid(), name, icon:'🗂️', type:'flat', entries:[]});
+  const newList = {id:'list'+uid(), name, icon:'🗂️', type:'flat', entries:[]};
+  db.lists.push(newList);
+  supaCreateList(newList);
   flashToast(`"${name}" created. Add entries, then add to-do's underneath.`);
   render();
 }
@@ -3183,6 +3540,7 @@ function toggleComplete(id){
   if(!td) return;
   const wasComplete = td.completed;
   td.completed = !td.completed;
+  supaUpdateTodo(td);
   if(!wasComplete && td.completed){
     // Just marked complete: keep it visible in the current view (don't let it vanish
     // out from under someone), and offer an undo window in case it was a mis-click.
@@ -3205,7 +3563,7 @@ function renderUndoToast(){
 function undoLastComplete(){
   if(!state.undoToast) return;
   const td = db.todos.find(x=>x.id===state.undoToast.id);
-  if(td) td.completed=false;
+  if(td){ td.completed=false; supaUpdateTodo(td); }
   state.recentlyCompletedIds = state.recentlyCompletedIds.filter(x=>x!==state.undoToast.id);
   state.undoToast=null;
 }
@@ -3215,10 +3573,11 @@ function archiveTodo(id){
   const [td] = db.todos.splice(idx,1);
   td.archivedAt = new Date();
   db.archivedTodos.push(td);
+  supaUpdateTodo(td);
 }
 function archiveAllCompleted(){
   const completed = db.todos.filter(t=>t.completed);
-  completed.forEach(t=>{ t.archivedAt=new Date(); db.archivedTodos.push(t); });
+  completed.forEach(t=>{ t.archivedAt=new Date(); db.archivedTodos.push(t); supaUpdateTodo(t); });
   db.todos = db.todos.filter(t=>!t.completed);
   return completed.length;
 }
@@ -3228,27 +3587,30 @@ function restoreArchivedTodo(id){
   const [td] = db.archivedTodos.splice(idx,1);
   delete td.archivedAt;
   db.todos.push(td);
+  supaUpdateTodo(td);
 }
 function takeTodo(id){
   const td = db.todos.find(x=>x.id===id);
-  if(td){ td.assignedTo = state.currentUser.id; flashToast('Task taken — now yours.'); }
+  if(td){ td.assignedTo = state.currentUser.id; supaUpdateTodo(td); flashToast('Task taken — now yours.'); }
 }
 function assignTodo(id, userId){
   const td = db.todos.find(x=>x.id===id);
   if(td){
     td.assignedTo = userId;
+    supaUpdateTodo(td);
     const u = USERS.find(x=>x.id===userId);
     flashToast(`Assigned to ${u.name}. Email sent: "You Have a New To Do on Southwest Edge."`);
   }
 }
 function togglePrivate(id){
   const td = db.todos.find(x=>x.id===id);
-  if(td) td.private = !td.private;
+  if(td){ td.private = !td.private; supaUpdateTodo(td); }
 }
 function deleteTodo(id){
   db.todos = db.todos.filter(x=>x.id!==id);
   state.selectedTodoIds = state.selectedTodoIds.filter(x=>x!==id);
   if(state.todoDetailModal && state.todoDetailModal.id===id) state.todoDetailModal=null;
+  supaDeleteTodo(id);
   flashToast('To-do deleted.');
 }
 function toggleSelectTodo(id){
@@ -3257,12 +3619,14 @@ function toggleSelectTodo(id){
 }
 function bulkDeleteSelected(){
   const n = state.selectedTodoIds.length;
-  db.todos = db.todos.filter(x=>!state.selectedTodoIds.includes(x.id));
+  const idsToDelete = state.selectedTodoIds.slice();
+  db.todos = db.todos.filter(x=>!idsToDelete.includes(x.id));
   state.selectedTodoIds=[];
+  idsToDelete.forEach(id=>supaDeleteTodo(id));
   flashToast(`Deleted ${n} to-do${n===1?'':'s'}.`);
 }
 function bulkCompleteSelected(){
-  db.todos.forEach(td=>{ if(state.selectedTodoIds.includes(td.id)) td.completed=true; });
+  db.todos.forEach(td=>{ if(state.selectedTodoIds.includes(td.id)){ td.completed=true; supaUpdateTodo(td); } });
   const n = state.selectedTodoIds.length;
   state.selectedTodoIds=[];
   flashToast(`Marked ${n} to-do${n===1?'':'s'} complete.`);
@@ -3358,7 +3722,7 @@ function renderTodoDetailModal(){
   overlay.querySelector('[data-action="detDelete"]').onclick=()=>{
     if(confirm(`Delete "${td.title}"? This can't be undone.`)){ deleteTodo(td.id); render(); }
   };
-  overlay.querySelector('[data-action="detToggleComplete"]').onclick=()=>{ td.completed=!td.completed; render(); };
+  overlay.querySelector('[data-action="detToggleComplete"]').onclick=()=>{ td.completed=!td.completed; supaUpdateTodo(td); render(); };
   overlay.querySelector('[data-action="detSave"]').onclick=()=>{
     td.title=document.getElementById('detTitle').value.trim()||td.title;
     td.category=document.getElementById('detCategory').value.trim();
@@ -3378,6 +3742,7 @@ function renderTodoDetailModal(){
     }
     td.private=document.getElementById('detPrivate').checked;
     state.todoDetailModal=null;
+    supaUpdateTodo(td);
     flashToast('Changes saved.');
     render();
   };
@@ -3532,6 +3897,10 @@ function renderClientModalBody(l,c,viewMode){
   const doneDeals = c.deals.filter(d=>d.complete);
   const showDeals = viewMode!=='prospecting';
   const showProspecting = l.id==='listings' && !state.isMobile;
+  const canManageAccess = state.currentUser.role==='Admin' || c.createdBy===state.currentUser.id;
+  const creator = USERS.find(u=>u.id===c.createdBy);
+  const authorizedUsers = (c.authorizedUserIds||[]).map(id=>USERS.find(u=>u.id===id)).filter(Boolean);
+  const notYetAuthorized = USERS.filter(u=>u.id!==c.createdBy && u.role!=='Admin' && !(c.authorizedUserIds||[]).includes(u.id));
   return `
   ${showDeals ? `
   <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
@@ -3541,6 +3910,24 @@ function renderClientModalBody(l,c,viewMode){
     <div class="label">Primary Contact</div>
     ${contactRow(c.primary)}
     <button class="btn secondary sm" style="margin-top:10px;" data-action="pickContact" data-client="${c.id}" data-slot="primary">${c.primary? 'Change contact':'Attach contact'}</button>
+  </div>
+  <div class="contact-card" style="background:#EFF6FA;border-color:#CBE0EE;">
+    <div class="label" style="color:#2C6E9E;">🔒 Access${creator? ` — created by ${escapeHtml(creator.name)}`:''}</div>
+    <div style="font-size:12.5px;color:var(--ink-soft);margin:4px 0 8px;">
+      Admins always see everything. ${creator?escapeHtml(creator.name.split(' ')[0]):'The creator'} plus anyone listed below can see this ${l.id==='listings'?'listing':'client'} — everyone else can't.
+    </div>
+    ${authorizedUsers.length ? authorizedUsers.map(u=>`
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:5px 0;font-size:13px;">
+        <span>${escapeHtml(u.name)}</span>
+        ${canManageAccess ? `<button class="btn secondary sm" data-removeauth="${u.id}" data-client="${c.id}">Remove</button>`:''}
+      </div>`).join('') : `<div class="tiny" style="color:var(--ink-soft);">No one else has been added yet.</div>`}
+    ${canManageAccess && notYetAuthorized.length ? `
+    <div style="display:flex;gap:8px;margin-top:10px;">
+      <select id="addAuthUserSelect" style="flex:1;">
+        ${notYetAuthorized.map(u=>`<option value="${u.id}">${escapeHtml(u.name)}</option>`).join('')}
+      </select>
+      <button class="btn sm" data-action="addAuthUser" data-client="${c.id}">+ Add</button>
+    </div>` : ''}
   </div>
   <div class="section-label">Sites / Deals</div>
   ${openDeals.map(d=>renderDealRowInClient(l,c,d)).join('')}
@@ -3908,7 +4295,7 @@ function renderLSRNewProspectModal(){
     const notes = document.getElementById('npNotes').value.trim();
     const edgeTracker = document.getElementById('npTracker').value;
     const newProspect = {
-      id:'prospect'+uid(), tenantName:name, contactId:null, brokerId:null, categoryId,
+      id:crypto.randomUUID(), tenantName:name, contactId:null, brokerId:null, categoryId,
       stage: m.directToLOI? 'loi' : 'interested',
       dealType: m.directToLOI? m.dealType : null,
       dateOfContact: m.directToLOI? new Date() : parseNaturalDate(document.getElementById('npDate').value.trim()),
@@ -3925,15 +4312,18 @@ function renderLSRNewProspectModal(){
       newProspect.tiAllowance = document.getElementById('npTI').value.trim();
     }
     listing.prospects.push(newProspect);
+    supaCreateProspect(newProspect, listing.id);
     const otherChecks = Array.from(overlay.querySelectorAll('.npOtherListing:checked')).map(c=>c.value);
     otherChecks.forEach(olid=>{
       const ol = db.lists.find(x=>x.id==='listings').clients.find(c=>c.id===olid);
       lsrEnsureListing(ol);
-      ol.prospects.push({
-        id:'prospect'+uid(), tenantName:name, contactId:newProspect.contactId, categoryId:null,
+      const stub = {
+        id:crypto.randomUUID(), tenantName:name, contactId:newProspect.contactId, categoryId:null,
         stage:'contacted', dealType:null, dateOfContact:new Date(), notes:'(stubbed from '+listing.name+' — fill in details)',
         edgeTracker, deadDate:null, building:'',spaceNum:'',size:'',rent:'',price:'',term:'',tiAllowance:'',dealNotes:''
-      });
+      };
+      ol.prospects.push(stub);
+      supaCreateProspect(stub, ol.id);
     });
     state.lsrNewProspectModal=null;
     if(edgeTracker !== state.currentUser.id){
@@ -3996,6 +4386,7 @@ function renderLSRConvertModal(){
     p.term = document.getElementById('cvTerm').value.trim();
     p.tiAllowance = document.getElementById('cvTI').value.trim();
     state.lsrConvertModal=null;
+    supaUpdateProspect(p, listing.id);
     flashToast(`${p.tenantName} converted to an LOI (${m.dealType==='sale'?'Sale':'Lease'}).`);
     render();
   };
@@ -4043,12 +4434,14 @@ function renderLSRCategoryManagerModal(){
     const swap = dir==='up'? idx-1 : idx+1;
     if(swap<0||swap>=cfg.order.length) return;
     const tmp=cfg.order[idx]; cfg.order[idx]=cfg.order[swap]; cfg.order[swap]=tmp;
+    supaSaveListingCategorySettings(listing.id, cfg);
     render();
   });
   overlay.querySelectorAll('[data-cattogglehide]').forEach(el=>el.onclick=()=>{
     const id = el.dataset.cattogglehide;
     if(cfg.hidden.includes(id)) cfg.hidden = cfg.hidden.filter(x=>x!==id);
     else cfg.hidden.push(id);
+    supaSaveListingCategorySettings(listing.id, cfg);
     render();
   });
   overlay.querySelector('[data-action="lsrAddCategory"]').onclick=()=>{
@@ -4057,6 +4450,8 @@ function renderLSRCategoryManagerModal(){
     const id = 'custom'+uid();
     cfg.custom.push({id, name});
     cfg.order.push(id);
+    supaCreateCategory(id, name, listing.id);
+    supaSaveListingCategorySettings(listing.id, cfg);
     flashToast(`"${name}" category added.`);
     render();
   };
@@ -4074,6 +4469,8 @@ function wireCategoryCreateOption(selectEl, listing){
       const id = 'custom'+uid();
       listing.categoryConfig.custom.push({id, name});
       listing.categoryConfig.order.push(id);
+      supaCreateCategory(id, name, listing.id);
+      supaSaveListingCategorySettings(listing.id, listing.categoryConfig);
       const opt = document.createElement('option');
       opt.value = id; opt.textContent = name;
       const newCatOption = Array.from(selectEl.options).find(o=>o.value==='__new__');
@@ -4112,6 +4509,7 @@ function wireLSRInlineHandlers(root){
     const listing = db.lists.find(x=>x.id==='listings').clients.find(c=>c.id===el.dataset.client);
     const p = listing.prospects.find(x=>x.id===el.dataset.lsrcomm1);
     p.commission1Paid = el.checked;
+    supaUpdateProspect(p, listing.id);
     render();
   });
   root.querySelectorAll('[data-lsrcomm2]').forEach(el=>el.onclick=(ev)=>{
@@ -4119,6 +4517,7 @@ function wireLSRInlineHandlers(root){
     const listing = db.lists.find(x=>x.id==='listings').clients.find(c=>c.id===el.dataset.client);
     const p = listing.prospects.find(x=>x.id===el.dataset.lsrcomm2);
     p.commission2Paid = !p.commission2Paid;
+    supaUpdateProspect(p, listing.id);
     if(!lsrDealIsActive(p)) flashToast(`${p.tenantName} — both commission halves paid. No longer an active deal.`);
     render();
   });
@@ -4142,13 +4541,15 @@ function notifyNewLSRTracker(newTrackerId, p, listing){
   if(!u) return;
   // A real to-do, assigned to them and marked "new" — reuses the existing float-to-top +
   // email mechanism to-do's already use, rather than inventing a second notification system.
-  db.todos.push({
-    id:uid(), title:`Review lead: ${p.tenantName} (${listing.name})`, category:listing.name,
+  const newTodo = {
+    id:crypto.randomUUID(), title:`Review lead: ${p.tenantName} (${listing.name})`, category:listing.name,
     dueDate: addDays(todayDate(),1), assignedTo:newTrackerId, createdBy:state.currentUser.id,
     type:'task', private:false, completed:false, isNew:true,
     notes:`You're now the Edge Tracker for ${p.tenantName} at ${listing.name}.`,
     listId:'listings', clientId:listing.id, dealId:null, entryId:null, attachments:[]
-  });
+  };
+  db.todos.push(newTodo);
+  supaCreateTodo(newTodo);
   const subject = 'You Have a New Lead Assigned on Southwest Edge';
   const body = `Hi ${u.name.split(' ')[0]},\n\n${state.currentUser.name} made you the Edge Tracker for:\n\n"${p.tenantName}" — ${listing.name}\n\nA to-do has been added to your list to follow up — it'll be marked New until you open it.\n\nLog in to view it: ${portalUrl()}\n\n— Sent from Southwest Edge Portal`;
   openEmailDraft(u, subject, body);
@@ -4166,17 +4567,18 @@ function wireLSRProspectBodyHandlers(root, l, listing, p){
   const delBtn = root.querySelector('[data-action="lsrDeleteProspect"]'); if(delBtn) delBtn.onclick=()=>{
     if(confirm(`Delete ${p.tenantName}? This can't be undone.`)){
       listing.prospects = listing.prospects.filter(x=>x.id!==p.id);
+      supaDeleteProspect(p.id);
       state.modalStack.pop(); render();
     }
   };
   const markDeadBtn = root.querySelector('[data-action="lsrMarkDead"]'); if(markDeadBtn) markDeadBtn.onclick=()=>{
-    p.stage='dead'; p.deadDate=new Date(); state.modalStack.pop(); flashToast(`${p.tenantName} marked Dead.`); render();
+    p.stage='dead'; p.deadDate=new Date(); supaUpdateProspect(p, listing.id); state.modalStack.pop(); flashToast(`${p.tenantName} marked Dead.`); render();
   };
   const markNI = root.querySelector('[data-action="lsrMarkNotInterested"]'); if(markNI) markNI.onclick=()=>{
-    p.stage='notInterested'; p.deadDate=new Date(); state.modalStack.pop(); flashToast(`${p.tenantName} marked Not Interested.`); render();
+    p.stage='notInterested'; p.deadDate=new Date(); supaUpdateProspect(p, listing.id); state.modalStack.pop(); flashToast(`${p.tenantName} marked Not Interested.`); render();
   };
   const reviveBtn = root.querySelector('[data-action="lsrRevive"]'); if(reviveBtn) reviveBtn.onclick=()=>{
-    p.stage='interested'; p.deadDate=null; flashToast(`${p.tenantName} revived to Interested Prospect.`); render();
+    p.stage='interested'; p.deadDate=null; supaUpdateProspect(p, listing.id); flashToast(`${p.tenantName} revived to Interested Prospect.`); render();
   };
   const todoBtn = root.querySelector('[data-action="lsrCreateTodo"]'); if(todoBtn) todoBtn.onclick=()=>{
     state.modalStack.pop();
@@ -4200,6 +4602,7 @@ function wireLSRProspectBodyHandlers(root, l, listing, p){
       p.tiAllowance = document.getElementById('lpTI').value.trim();
       p.stage = document.getElementById('lpStage').value;
     }
+    supaUpdateProspect(p, listing.id);
     if(p.edgeTracker !== prevTracker) notifyNewLSRTracker(p.edgeTracker, p, listing);
     flashToast('Saved.');
     render();
@@ -4244,7 +4647,7 @@ function attachModalHandlers(root){
     const frame = state.modalStack[0];
     const l=db.lists.find(x=>x.id===frame.listId); const c=l.clients.find(x=>x.id===frame.clientId);
     const d=c.deals.find(x=>x.id===el.dataset.toggledeal);
-    d.complete=!d.complete; render();
+    d.complete=!d.complete; supaUpdateDeal(d, c.id); render();
   });
   root.querySelectorAll('[data-toggleactive]').forEach(el=>el.onclick=(ev)=>{
     ev.stopPropagation();
@@ -4252,6 +4655,7 @@ function attachModalHandlers(root){
     const l=db.lists.find(x=>x.id===frame.listId); const c=l.clients.find(x=>x.id===frame.clientId);
     const d=c.deals.find(x=>x.id===el.dataset.toggleactive);
     d.activeDeal = el.checked;
+    supaUpdateDeal(d, c.id);
     flashToast(d.activeDeal ? `${d.name} marked as an Active Deal.` : `${d.name} removed from Active Deals.`);
     render();
   });
@@ -4260,22 +4664,43 @@ function attachModalHandlers(root){
     const l=db.lists.find(x=>x.id===el.dataset.listid); const c=l.clients.find(x=>x.id===el.dataset.client);
     const d=c.deals.find(x=>x.id===el.dataset.togglecaexec);
     d.caExecuted = el.checked;
+    supaUpdateDeal(d, c.id);
     flashToast(d.caExecuted ? `CA marked executed for ${d.name}.` : `CA marked outstanding for ${d.name}.`);
     render();
   });
   const pick = root.querySelector('[data-action="pickContact"]'); if(pick) pick.onclick=()=>{
     openContactPicker({clientId: pick.dataset.client, slot: pick.dataset.slot}); render();
   };
+  const addAuthBtn = root.querySelector('[data-action="addAuthUser"]'); if(addAuthBtn) addAuthBtn.onclick=()=>{
+    const sel = document.getElementById('addAuthUserSelect');
+    const userId = sel.value;
+    const frame = state.modalStack[0];
+    const l=db.lists.find(x=>x.id===frame.listId); const c=l.clients.find(x=>x.id===addAuthBtn.dataset.client);
+    if(!c.authorizedUserIds) c.authorizedUserIds=[];
+    c.authorizedUserIds.push(userId);
+    supaAddAuthorizedUser(c.id, userId);
+    flashToast(`${USERS.find(u=>u.id===userId).name} can now see this ${l.id==='listings'?'listing':'client'}.`);
+    render();
+  };
+  root.querySelectorAll('[data-removeauth]').forEach(el=>el.onclick=()=>{
+    const userId = el.dataset.removeauth;
+    const frame = state.modalStack[0];
+    const l=db.lists.find(x=>x.id===frame.listId); const c=l.clients.find(x=>x.id===el.dataset.client);
+    c.authorizedUserIds = (c.authorizedUserIds||[]).filter(id=>id!==userId);
+    supaRemoveAuthorizedUser(c.id, userId);
+    render();
+  });
   const pickEntry = root.querySelector('[data-action="pickEntryContact"]'); if(pickEntry) pickEntry.onclick=()=>{
     openContactPicker({listId: pickEntry.dataset.listid, entryId: pickEntry.dataset.entry}); render();
   };
   const addDeal = root.querySelector('[data-action="addDeal"]'); if(addDeal) addDeal.onclick=()=>{
     const name = prompt('Site / deal name (e.g. an intersection or address):');
     if(!name) return;
-    const l=db.lists.find(x=>x.id===addDeal.dataset.client && false); // unused
     const frame = state.modalStack[state.modalStack.length-1];
     const list=db.lists.find(x=>x.id===frame.listId); const c=list.clients.find(x=>x.id===addDeal.dataset.client);
-    c.deals.push({id:'deal'+uid(), name, complete:false, activeDeal:false, dueDate:null, caExecuted: list.id==='listings'});
+    const newDeal = {id:crypto.randomUUID(), name, complete:false, activeDeal:false, dueDate:null, caExecuted: list.id==='listings'};
+    c.deals.push(newDeal);
+    supaCreateDeal(newDeal, c.id);
     render();
   };
   const ntDeal = root.querySelector('[data-action="newTodoInDeal"]'); if(ntDeal) ntDeal.onclick=()=>{
@@ -4293,6 +4718,7 @@ function attachModalHandlers(root){
       if(el.dataset.edit==='name') e.name=el.value;
       if(el.dataset.edit==='feedback') e.feedback=el.value;
       if(el.dataset.edit==='lastCall') e.lastCall=parseNaturalDate(el.value);
+      supaUpdateEntry(e, l.id);
       render();
     };
   });
@@ -4311,13 +4737,16 @@ function convertEntryToDeal(listId, entryId){
   const flatList = db.lists.find(x=>x.id===listId);
   const entry = flatList.entries.find(x=>x.id===entryId);
   let clientsList = db.lists.find(x=>x.id==='clients');
-  const newClient = {id:'client'+uid(), name:entry.name, primary:entry.contactId||null, secondary:[], deals:[]};
+  const newClient = {id:crypto.randomUUID(), name:entry.name, primary:entry.contactId||null, secondary:[], deals:[], createdBy:state.currentUser.id, authorizedUserIds:[]};
   clientsList.clients.push(newClient);
+  supaCreateClient(newClient, 'clients');
   // move todos
-  db.todos.forEach(t=>{ if(t.entryId===entryId){ t.entryId=null; t.clientId=newClient.id; t.listId='clients'; } });
+  db.todos.forEach(t=>{ if(t.entryId===entryId){ t.entryId=null; t.clientId=newClient.id; t.listId='clients'; supaUpdateTodo(t); } });
   flatList.entries = flatList.entries.filter(x=>x.id!==entryId);
+  supaDeleteEntry(entryId);
   state.modalStack=[];
   flashToast(`${entry.name} converted to a Client. Add sites to start tracking deals.`);
+  state.addUsersPrompt = {listId:'clients', clientId:newClient.id};
 }
 
 /* ---------------- CONTACT PICKER (inline typeahead within modal) ---------------- */
@@ -4438,11 +4867,13 @@ function renderDuplicatePrompt(){
   document.getElementById('app').appendChild(overlay);
   document.getElementById('dupUpdate').onclick=()=>{
     Object.assign(dp.match, dp.pending);
+    supaUpdateContact(dp.match);
     finishContactPick(dp.match.id);
   };
   document.getElementById('dupCreateNew').onclick=()=>{
-    const c = Object.assign({id:'contact'+uid()}, dp.pending);
+    const c = Object.assign({id:crypto.randomUUID()}, dp.pending);
     db.contacts.push(c);
+    supaCreateContact(c);
     finishContactPick(c.id);
   };
 }
@@ -4453,16 +4884,25 @@ function finishContactPick(contactId){
     const listing = db.lists.find(x=>x.id==='listings').clients.find(c=>c.id===lsrClientId);
     const p = listing.prospects.find(x=>x.id===lsrProspectId);
     p.contactId = contactId;
+    supaUpdateProspect(p, listing.id);
   } else if(state.contactPickerOpen && state.contactPickerOpen.clientId){
     const {clientId, slot} = state.contactPickerOpen;
     const clientsList = db.lists.find(l=>l.type==='deep' && l.clients.some(c=>c.id===clientId));
     const client = clientsList.clients.find(c=>c.id===clientId);
-    if(slot==='primary') client.primary=contactId; else client.secondary.push(contactId);
+    if(slot==='primary'){
+      client.primary=contactId;
+      supaUpdateClientContact(client, clientsList.id);
+    } else {
+      client.secondary.push(contactId);
+      supabaseClient.from('client_secondary_contacts').insert({client_id:client.id, contact_id:contactId})
+        .then(({error})=>{ if(error) console.error('secondary contact sync error:', error); });
+    }
   } else if(state.contactPickerOpen && state.contactPickerOpen.entryId){
     const {listId, entryId} = state.contactPickerOpen;
     const l = db.lists.find(x=>x.id===listId);
     const entry = l.entries.find(x=>x.id===entryId);
     entry.contactId = contactId;
+    supaUpdateEntry(entry, l.id);
   } else if(state.contactPickerOpen && state.contactPickerOpen.standalone){
     flashToast('Contact created.');
   }
@@ -4590,7 +5030,7 @@ function renderNewTodoModal(){
     const priv=document.getElementById('ntPrivate').checked;
     const ctx=m.context||{};
     const newTd = {
-      id:uid(), title, category, dueDate: parseNaturalDate(dueStr), assignedTo:assignTo, createdBy:state.currentUser.id,
+      id:crypto.randomUUID(), title, category, dueDate: parseNaturalDate(dueStr), assignedTo:assignTo, createdBy:state.currentUser.id,
       type:m.type, private:priv, completed:false, notes, isNew:false, attachments: m.attachments,
       listId: ctx.listId||null, clientId: ctx.clientId||null, dealId: ctx.dealId||null, entryId: ctx.entryId||null
     };
@@ -4606,6 +5046,7 @@ function renderNewTodoModal(){
     } else {
       flashToast('To-do saved.');
     }
+    supaCreateTodo(newTd);
     render();
   };
 }
@@ -4663,6 +5104,7 @@ function renderEditContactModal(){
     c.state=document.getElementById('ecState').value.trim();
     c.zip=document.getElementById('ecZip').value.trim();
     state.editContactModal=null;
+    supaUpdateContact(c);
     flashToast('Contact updated everywhere it appears.');
     render();
   };
@@ -4670,6 +5112,7 @@ function renderEditContactModal(){
     if(confirm(`Delete ${c.first} ${c.last}? This can't be undone.`)){
       db.contacts = db.contacts.filter(x=>x.id!==c.id);
       state.editContactModal=null;
+      supaDeleteContact(c.id);
       flashToast('Contact deleted.');
       render();
     }
@@ -4753,8 +5196,10 @@ function attachContactsHandlers(){
     const n = state.selectedContactIds.length;
     if(!n) return;
     if(confirm(`Delete ${n} contact${n===1?'':'s'}? This can't be undone.`)){
-      db.contacts = db.contacts.filter(c=>!state.selectedContactIds.includes(c.id));
+      const idsToDelete = state.selectedContactIds.slice();
+      db.contacts = db.contacts.filter(c=>!idsToDelete.includes(c.id));
       state.selectedContactIds=[];
+      idsToDelete.forEach(id=>supaDeleteContact(id));
       flashToast(`Deleted ${n} contact${n===1?'':'s'}.`);
       render();
     }
@@ -4837,6 +5282,7 @@ function renderEditBrokerModal(){
   if(delBtn) delBtn.onclick=()=>{
     if(confirm(`Delete ${b.name}? This can't be undone.`)){
       PHOENIX_BROKER_LIST = PHOENIX_BROKER_LIST.filter(x=>x.id!==b.id);
+      supaDeleteBroker(b.id);
       state.editBrokerModal=null;
       flashToast('Broker deleted.');
       render();
@@ -4850,10 +5296,13 @@ function renderEditBrokerModal(){
     const mobile = document.getElementById('ebMobile').value.trim();
     const phone = document.getElementById('ebPhone').value.trim();
     if(isNew){
-      PHOENIX_BROKER_LIST.push({id:'broker'+uid(), name, company, email, mobile, phone});
+      const newB = {id:crypto.randomUUID(), name, company, email, mobile, phone};
+      PHOENIX_BROKER_LIST.push(newB);
+      supaCreateBroker(newB);
       flashToast(`${name} added to the Phoenix Broker List.`);
     } else {
       Object.assign(b, {name, company, email, mobile, phone});
+      supaUpdateBroker(b);
       flashToast('Broker updated everywhere it appears.');
     }
     state.editBrokerModal=null;
@@ -4862,7 +5311,7 @@ function renderEditBrokerModal(){
 }
 function importCSV(file){
   const reader = new FileReader();
-  reader.onload = (e)=>{
+  reader.onload = async (e)=>{
     const text = e.target.result;
     const rows = parseCSV(text);
     if(!rows.length){ flashToast('No rows found in that file.'); return; }
@@ -4870,22 +5319,27 @@ function importCSV(file){
     const idx = (name)=>header.indexOf(name);
     const iFirst=idx('First Name'), iLast=idx('Last Name'), iCompany=idx('Company'),
           iEmail=idx('E-mail Address'), iMobile=idx('Mobile Phone'), iPhone=idx('Business Phone');
-    let added=0;
+    const newContacts = [];
     for(let r=1;r<rows.length;r++){
       const row=rows[r]; if(!row || row.length<2) continue;
       const first=(row[iFirst]||'').trim(), last=(row[iLast]||'').trim();
       if(!first && !last) continue;
-      db.contacts.push({
-        id:'contact'+uid(), first, last,
+      newContacts.push({
+        id:crypto.randomUUID(), first, last,
         company:(row[iCompany]||'').trim(),
         email:(row[iEmail]||'').trim(),
         mobile:(row[iMobile]||'').trim(),
         phone:(row[iPhone]||'').trim(),
       });
-      added++;
     }
-    flashToast(`Imported ${added} contacts.`);
+    db.contacts.push(...newContacts);
+    flashToast(`Imported ${newContacts.length} contacts.`);
     render();
+    // One batch call instead of one-per-row — matters a lot at CSV scale (thousands of rows).
+    if(newContacts.length){
+      const { error } = await supabaseClient.from('contacts').insert(newContacts.map(contactLocalToRow));
+      if(error){ console.error('CSV bulk sync error:', error); flashToast('Imported here, but syncing to the server failed — check your connection and try again.'); render(); }
+    }
   };
   reader.readAsText(file);
 }
@@ -4964,12 +5418,12 @@ function renderImportTodosModal(){
     m.mapping[sel.dataset.maptarget] = sel.value;
   });
   const confirmBtn = overlay.querySelector('[data-action="confirmImportTodos"]');
-  if(confirmBtn) confirmBtn.onclick=()=>{
+  if(confirmBtn) confirmBtn.onclick=async ()=>{
     const headers = m.headers;
     const idx = (colName)=> colName ? headers.indexOf(colName) : -1;
     const iTitle=idx(m.mapping.title), iCat=idx(m.mapping.category), iDue=idx(m.mapping.due),
           iAssignee=idx(m.mapping.assignee), iDone=idx(m.mapping.completed), iNotes=idx(m.mapping.notes);
-    let added=0;
+    const newTodos = [];
     m.rows.forEach(row=>{
       if(!row || row.length<1) return;
       const title = iTitle>=0 ? (row[iTitle]||'').trim() : '';
@@ -4982,16 +5436,20 @@ function renderImportTodosModal(){
       }
       const doneText = iDone>=0 ? (row[iDone]||'').trim().toLowerCase() : '';
       const completed = ['yes','done','true','1','complete','completed'].includes(doneText);
-      db.todos.push({
-        id:uid(), title, category: iCat>=0?(row[iCat]||'').trim():'', dueDate: iDue>=0?parseNaturalDate((row[iDue]||'').trim()):null,
+      newTodos.push({
+        id:crypto.randomUUID(), title, category: iCat>=0?(row[iCat]||'').trim():'', dueDate: iDue>=0?parseNaturalDate((row[iDue]||'').trim()):null,
         assignedTo, createdBy:state.currentUser.id, type:'task', private:false, completed, isNew:false,
         notes: iNotes>=0?(row[iNotes]||'').trim():'', listId:null, clientId:null, dealId:null, entryId:null
       });
-      added++;
     });
+    db.todos.push(...newTodos);
     state.importTodosModal=null;
-    flashToast(`Imported ${added} to-do${added===1?'':'s'}.`);
+    flashToast(`Imported ${newTodos.length} to-do${newTodos.length===1?'':'s'}.`);
     render();
+    if(newTodos.length){
+      const { error } = await supabaseClient.from('todos').insert(newTodos.map(todoLocalToRow));
+      if(error){ console.error('Todo CSV bulk sync error:', error); flashToast('Imported here, but syncing to the server failed.'); render(); }
+    }
   };
 }
 function parseCSV(text){
@@ -5106,8 +5564,9 @@ render = function(){
       );
       if(match){ state.duplicatePrompt={match, pending}; render(); }
       else {
-        const c=Object.assign({id:'contact'+uid()}, pending);
+        const c=Object.assign({id:crypto.randomUUID()}, pending);
         db.contacts.push(c);
+        supaCreateContact(c);
         finishContactPick(c.id);
       }
     };
@@ -5137,11 +5596,13 @@ render = function(){
       const existing = PHOENIX_BROKER_LIST.find(b=>b.name.toLowerCase().trim()===name.toLowerCase().trim());
       if(existing){
         Object.assign(existing, {company: company||existing.company, email: email||existing.email, mobile: mobile||existing.mobile, phone: phone||existing.phone});
+        supaUpdateBroker(existing);
         flashToast(`Updated existing broker "${name}".`);
         finishBrokerPick(existing.id);
       } else {
-        const b = {id:'broker'+uid(), name, company, email, mobile, phone};
+        const b = {id:crypto.randomUUID(), name, company, email, mobile, phone};
         PHOENIX_BROKER_LIST.push(b);
+        supaCreateBroker(b);
         flashToast(`"${name}" added to the Phoenix Broker List.`);
         finishBrokerPick(b.id);
       }
@@ -5266,6 +5727,7 @@ render();
             state.currentUser = u;
             state.screen = 'app';
             if(!appStateWasLoaded) seedAll();
+            await fetchAllAppDataFromSupabase();
             render();
           }
         }
