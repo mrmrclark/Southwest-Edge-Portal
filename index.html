@@ -598,15 +598,15 @@ async function fetchContactsFromSupabase(){
 }
 async function supaCreateContact(c){
   const { error } = await supabaseClient.from('contacts').insert(contactLocalToRow(c));
-  if(error){ console.error('supaCreateContact error:', error); flashToast('Saved here, but syncing to the server failed — check your connection.'); render(); }
+  if(error){ console.error('supaCreateContact error:', error); flashToast('Saved here, but syncing to the server failed — check your connection. (' + error.message + ')'); render(); }
 }
 async function supaUpdateContact(c){
   const { error } = await supabaseClient.from('contacts').update(contactLocalToRow(c)).eq('id', c.id);
-  if(error){ console.error('supaUpdateContact error:', error); flashToast('Saved here, but syncing to the server failed — check your connection.'); render(); }
+  if(error){ console.error('supaUpdateContact error:', error); flashToast('Saved here, but syncing to the server failed — check your connection. (' + error.message + ')'); render(); }
 }
 async function supaDeleteContact(id){
   const { error } = await supabaseClient.from('contacts').delete().eq('id', id);
-  if(error){ console.error('supaDeleteContact error:', error); flashToast('Deleted here, but syncing to the server failed — check your connection.'); render(); }
+  if(error){ console.error('supaDeleteContact error:', error); flashToast('Deleted here, but syncing to the server failed — check your connection. (' + error.message + ')'); render(); }
 }
 
 /* ---------------- SHARED USER-ID MAPPING ----------------
@@ -634,15 +634,15 @@ async function fetchBrokersFromSupabase(){
 }
 async function supaCreateBroker(b){
   const { error } = await supabaseClient.from('brokers').insert(brokerLocalToRow(b));
-  if(error){ console.error('supaCreateBroker error:', error); flashToast('Saved here, but syncing to the server failed.'); render(); }
+  if(error){ console.error('supaCreateBroker error:', error); flashToast('Saved here, but syncing to the server failed. (' + error.message + ')'); render(); }
 }
 async function supaUpdateBroker(b){
   const { error } = await supabaseClient.from('brokers').update(brokerLocalToRow(b)).eq('id', b.id);
-  if(error){ console.error('supaUpdateBroker error:', error); flashToast('Saved here, but syncing to the server failed.'); render(); }
+  if(error){ console.error('supaUpdateBroker error:', error); flashToast('Saved here, but syncing to the server failed. (' + error.message + ')'); render(); }
 }
 async function supaDeleteBroker(id){
   const { error } = await supabaseClient.from('brokers').delete().eq('id', id);
-  if(error){ console.error('supaDeleteBroker error:', error); flashToast('Deleted here, but syncing to the server failed.'); render(); }
+  if(error){ console.error('supaDeleteBroker error:', error); flashToast('Deleted here, but syncing to the server failed. (' + error.message + ')'); render(); }
 }
 
 /* ---------------- TENANT ROSTER ---------------- */
@@ -655,7 +655,7 @@ async function fetchTenantRosterFromSupabase(){
 }
 async function supaCreateRosterEntry(r){
   const { error } = await supabaseClient.from('tenant_roster').insert(rosterLocalToRow(r));
-  if(error){ console.error('supaCreateRosterEntry error:', error); flashToast('Saved here, but syncing to the server failed.'); render(); }
+  if(error){ console.error('supaCreateRosterEntry error:', error); flashToast('Saved here, but syncing to the server failed. (' + error.message + ')'); render(); }
 }
 
 /* ---------------- PROPERTY CATEGORIES (defaults + per-listing custom) ---------------- */
@@ -666,7 +666,7 @@ async function fetchPropertyCategoriesFromSupabase(){
 }
 async function supaCreateCategory(id, name, listingAuthId){
   const { error } = await supabaseClient.from('property_categories').insert({id, name, listing_id: listingAuthId||null});
-  if(error){ console.error('supaCreateCategory error:', error); flashToast('Saved here, but syncing to the server failed.'); render(); }
+  if(error){ console.error('supaCreateCategory error:', error); flashToast('Saved here, but syncing to the server failed. (' + error.message + ')'); render(); }
 }
 async function supaSaveListingCategorySettings(listingId, categoryConfig){
   await supabaseClient.from('listing_category_settings').delete().eq('listing_id', listingId);
@@ -722,12 +722,12 @@ async function fetchListsClientsDealsFromSupabase(){
 }
 async function supaCreateList(list){
   const { error } = await supabaseClient.from('lists').insert({id:list.id, name:list.name, icon:list.icon, type:list.type, is_default:!!list.isDefault});
-  if(error){ console.error('supaCreateList error:', error); flashToast('Saved here, but syncing to the server failed.'); render(); }
+  if(error){ console.error('supaCreateList error:', error); flashToast('Saved here, but syncing to the server failed. (' + error.message + ')'); render(); }
 }
 async function supaCreateClient(c, listId){
   if(!c.createdBy) c.createdBy = state.currentUser.id;
   const { error } = await supabaseClient.from('clients').insert(clientLocalToRow(c, listId));
-  if(error){ console.error('supaCreateClient error:', error); flashToast('Saved here, but syncing to the server failed.'); render(); }
+  if(error){ console.error('supaCreateClient error:', error); flashToast('Saved here, but syncing to the server failed. (' + error.message + ')'); render(); }
 }
 async function supaUpdateClientContact(c, listId){
   const { error } = await supabaseClient.from('clients').update(clientLocalToRow(c, listId)).eq('id', c.id);
@@ -737,7 +737,7 @@ async function supaAddAuthorizedUser(clientId, localUserId){
   const authId = localUserIdToAuthId(localUserId);
   if(!authId){ flashToast('That person needs to sign in at least once before they can be added.'); render(); return; }
   const { error } = await supabaseClient.from('client_authorized_users').insert({client_id:clientId, user_id:authId});
-  if(error){ console.error('supaAddAuthorizedUser error:', error); flashToast('Saved here, but syncing to the server failed.'); render(); }
+  if(error){ console.error('supaAddAuthorizedUser error:', error); flashToast('Saved here, but syncing to the server failed. (' + error.message + ')'); render(); }
 }
 async function supaRemoveAuthorizedUser(clientId, localUserId){
   const authId = localUserIdToAuthId(localUserId);
@@ -789,7 +789,7 @@ function renderAddUsersPrompt(){
 }
 async function supaCreateDeal(d, clientId){
   const { error } = await supabaseClient.from('deals').insert(dealLocalToRow(d, clientId));
-  if(error){ console.error('supaCreateDeal error:', error); flashToast('Saved here, but syncing to the server failed.'); render(); }
+  if(error){ console.error('supaCreateDeal error:', error); flashToast('Saved here, but syncing to the server failed. (' + error.message + ')'); render(); }
 }
 async function supaUpdateDeal(d, clientId){
   const { error } = await supabaseClient.from('deals').update(dealLocalToRow(d, clientId)).eq('id', d.id);
@@ -826,15 +826,15 @@ async function fetchProspectsFromSupabase(){
 }
 async function supaCreateProspect(p, listingId){
   const { error } = await supabaseClient.from('prospects').insert(prospectLocalToRow(p, listingId));
-  if(error){ console.error('supaCreateProspect error:', error); flashToast('Saved here, but syncing to the server failed.'); render(); }
+  if(error){ console.error('supaCreateProspect error:', error); flashToast('Saved here, but syncing to the server failed. (' + error.message + ')'); render(); }
 }
 async function supaUpdateProspect(p, listingId){
   const { error } = await supabaseClient.from('prospects').update(prospectLocalToRow(p, listingId)).eq('id', p.id);
-  if(error){ console.error('supaUpdateProspect error:', error); flashToast('Saved here, but syncing to the server failed.'); render(); }
+  if(error){ console.error('supaUpdateProspect error:', error); flashToast('Saved here, but syncing to the server failed. (' + error.message + ')'); render(); }
 }
 async function supaDeleteProspect(id){
   const { error } = await supabaseClient.from('prospects').delete().eq('id', id);
-  if(error){ console.error('supaDeleteProspect error:', error); flashToast('Deleted here, but syncing to the server failed.'); render(); }
+  if(error){ console.error('supaDeleteProspect error:', error); flashToast('Deleted here, but syncing to the server failed. (' + error.message + ')'); render(); }
 }
 
 /* ---------------- ENTRIES (Hot List / Hit List) ---------------- */
@@ -856,7 +856,7 @@ async function fetchEntriesFromSupabase(){
 }
 async function supaCreateEntry(e, listId){
   const { error } = await supabaseClient.from('entries').insert(entryLocalToRow(e, listId));
-  if(error){ console.error('supaCreateEntry error:', error); flashToast('Saved here, but syncing to the server failed (only you can see this lead until it does).'); render(); }
+  if(error){ console.error('supaCreateEntry error:', error); flashToast('Saved here, but syncing to the server failed (only you can see this lead until it does). (' + error.message + ')'); render(); }
 }
 async function supaUpdateEntry(e, listId){
   const { error } = await supabaseClient.from('entries').update(entryLocalToRow(e, listId)).eq('id', e.id);
@@ -891,7 +891,7 @@ async function fetchTodosFromSupabase(){
 }
 async function supaCreateTodo(t){
   const { error } = await supabaseClient.from('todos').insert(todoLocalToRow(t));
-  if(error){ console.error('supaCreateTodo error:', error); flashToast('Saved here, but syncing to the server failed.'); render(); }
+  if(error){ console.error('supaCreateTodo error:', error); flashToast('Saved here, but syncing to the server failed. (' + error.message + ')'); render(); }
 }
 async function supaUpdateTodo(t){
   const { error } = await supabaseClient.from('todos').update(todoLocalToRow(t)).eq('id', t.id);
@@ -2114,7 +2114,7 @@ function renderNotifSettingsModal(){
     u.emailClient = document.getElementById('emailClientSelect').value;
     if(u.authId){
       const { error } = await supabaseClient.from('profiles').update({ email_client: u.emailClient }).eq('id', u.authId);
-      if(error){ console.error('Saving email_client failed:', error); flashToast('Saved locally, but syncing to the server failed — try again.'); return; }
+      if(error){ console.error('Saving email_client failed:', error); flashToast('Saved locally, but syncing to the server failed — try again. (' + error.message + ')'); return; }
     }
     flashToast('Email preference saved.');
   };
@@ -5338,7 +5338,7 @@ function importCSV(file){
     // One batch call instead of one-per-row — matters a lot at CSV scale (thousands of rows).
     if(newContacts.length){
       const { error } = await supabaseClient.from('contacts').insert(newContacts.map(contactLocalToRow));
-      if(error){ console.error('CSV bulk sync error:', error); flashToast('Imported here, but syncing to the server failed — check your connection and try again.'); render(); }
+      if(error){ console.error('CSV bulk sync error:', error); flashToast('Imported here, but syncing to the server failed — check your connection and try again. (' + error.message + ')'); render(); }
     }
   };
   reader.readAsText(file);
@@ -5448,7 +5448,7 @@ function renderImportTodosModal(){
     render();
     if(newTodos.length){
       const { error } = await supabaseClient.from('todos').insert(newTodos.map(todoLocalToRow));
-      if(error){ console.error('Todo CSV bulk sync error:', error); flashToast('Imported here, but syncing to the server failed.'); render(); }
+      if(error){ console.error('Todo CSV bulk sync error:', error); flashToast('Imported here, but syncing to the server failed. (' + error.message + ')'); render(); }
     }
   };
 }
