@@ -4,6 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>Southwest Edge Portal</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#E1531A">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="SW Edge">
 <style>
   :root{
     --edge:#E1531A;
@@ -105,6 +111,54 @@
   .btn.sm{padding:6px 11px;font-size:12px;}
   .btn.danger{background:var(--bad);}
   .btn:disabled{opacity:.45;cursor:not-allowed;}
+
+  /* ---------- LEASING REPORT (LSR) ---------- */
+  .lsr-dead-date{font-size:11px;color:var(--bad);font-weight:600;}
+  .print-only{display:none;}
+  @media print{
+    body *{visibility:hidden;}
+    #lsrPrintArea, #lsrPrintArea *{visibility:visible;}
+    .no-print{display:none !important;}
+    .print-only{display:block !important;}
+    /* Release every ancestor's scroll/height/overflow clipping so the report can
+       flow across as many pages as it needs, instead of being cut to what fit
+       on screen inside the modal's own scrollable viewport. */
+    .modal-overlay, .modal-card, .modal-body{
+      position:static !important; overflow:visible !important; max-height:none !important;
+      height:auto !important; width:auto !important; box-shadow:none !important; background:none !important;
+    }
+    #lsrPrintArea{position:static;width:100%;}
+    @page{size:landscape;margin:12mm;}
+  }
+
+  /* ---------- CALENDAR VIEW ---------- */
+  .cv-overlay{position:fixed;inset:0;background:rgba(20,14,8,0.5);z-index:150;display:flex;align-items:center;justify-content:center;}
+  .cv-card{background:var(--canvas);width:96vw;height:92vh;border-radius:14px;box-shadow:var(--shadow);display:flex;flex-direction:column;overflow:hidden;}
+  .cv-head{background:var(--edge);color:#fff;padding:14px 22px;display:flex;align-items:center;gap:14px;}
+  .cv-head-title{font-size:19px;font-weight:700;flex:1;}
+  .cv-nav-btn{background:rgba(255,255,255,.18);border:none;color:#fff;width:32px;height:32px;border-radius:8px;font-size:15px;}
+  .cv-nav-btn:hover{background:rgba(255,255,255,.32);}
+  .cv-legend{display:flex;gap:16px;padding:10px 22px;background:var(--paper);border-bottom:1px solid var(--line);font-size:12px;color:var(--ink-soft);align-items:center;}
+  .cv-legend-dot{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px;vertical-align:middle;}
+  .cv-grid{flex:1;overflow-y:auto;display:grid;grid-template-columns:repeat(7,1fr);grid-auto-rows:minmax(110px,1fr);padding:10px;gap:6px;}
+  .cv-dow{grid-row:1;text-align:center;font-size:11px;font-weight:700;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.04em;padding:4px 0;}
+  .cv-day{
+    background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:6px;overflow-y:auto;
+    display:flex;flex-direction:column;gap:4px;
+  }
+  .cv-day.other-month{background:var(--canvas);opacity:.55;}
+  .cv-day.is-today{border-color:var(--edge);box-shadow:0 0 0 2px rgba(225,83,26,.18) inset;}
+  .cv-day-num{font-size:12px;font-weight:700;color:var(--ink-soft);margin-bottom:2px;}
+  .cv-day.is-today .cv-day-num{color:var(--edge-dark);}
+  .cv-day.drag-over{background:var(--edge-lighter);border-color:var(--edge);}
+  .cv-card-note{
+    font-size:11px;padding:4px 6px;border-radius:5px;cursor:grab;line-height:1.3;
+    background:var(--edge-light);color:var(--edge-darker);border-left:3px solid var(--edge);
+  }
+  .cv-card-note.assigned-other{
+    background:#E6F0FA;color:#1D5A99;border-left-color:#3B82C4;
+  }
+  .cv-card-note:active{cursor:grabbing;}
 
   /* ---------- SHELL ---------- */
   .shell{display:flex;height:100vh;width:100vw;}
@@ -281,9 +335,9 @@
   .team-stat .lab{font-size:10px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.04em;}
 
   .fab{
-    position:absolute;bottom:26px;left:30px;width:52px;height:52px;border-radius:50%;background:var(--edge);
+    position:fixed;bottom:26px;left:30px;width:52px;height:52px;border-radius:50%;background:var(--edge);
     color:#fff;font-size:24px;border:none;box-shadow:0 8px 22px rgba(225,83,26,0.45);display:flex;
-    align-items:center;justify-content:center;
+    align-items:center;justify-content:center;z-index:80;
   }
   .fab:hover{background:var(--edge-dark);}
 
@@ -297,7 +351,7 @@
     background:var(--paper);border-radius:16px;width:560px;max-width:92vw;max-height:86vh;display:flex;flex-direction:column;
     box-shadow:var(--shadow);overflow:hidden;
   }
-  .modal-card.wide{width:660px;}
+  .modal-card.wide{width:1320px;max-height:90vh;}
   .modal-head{
     background:var(--edge);color:#fff;padding:16px 20px;display:flex;align-items:center;gap:10px;
   }
@@ -453,6 +507,17 @@ let state = {
   recentlyCompletedIds:[],
   undoToast:null,
   importTodosModal:null,
+  lsrCollapsed:{},            // sectionKey -> true if collapsed
+  lsrSearch:'',
+  lsrTrackerFilter:'all',
+  lsrCategoryManagerOpen:null, // clientId of the listing being managed, or null
+  calendarViewOpen:false,
+  calendarCursor:null,        // {year, month} — used in Month mode
+  calendarViewMode:'month',   // 'month' | 'week' | '2week'
+  calendarWeekStart:null,     // Date (always a Sunday) — anchor for Week/2 Week modes
+  lsrNewProspectModal:null,   // creation state
+  lsrConvertModal:null,       // {clientId, prospectId} — Lease/Sale conversion in progress
+  lsrSearchFocused:false,
   contactPickerOpen:null,       // {clientId, slot:'primary'|'secondary1'|'secondary2'} while searching
   contactPickerQuery:'',
   duplicatePrompt:null,         // {match, pending} when a possible duplicate is found
@@ -521,6 +586,58 @@ let idCounter = 1000;
 function uid(){ return 'id'+(idCounter++); }
 let adminDefaultSchedule = {type:'weekly', days:['sunday'], time:'00:00'};
 
+/* ---------------- LEASING / PROSPECTING REPORT (LSR) MODEL ---------------- */
+const DEFAULT_PROPERTY_CATEGORIES = [
+  {id:'qsr', name:'QSR'},
+  {id:'shopspace', name:'Shop Space'},
+  {id:'sitdown', name:'Sit Down Restaurant'},
+  {id:'freestanding', name:'Free Standing Building - Other'},
+  {id:'medical', name:'Medical'},
+  {id:'hospitality', name:'Hospitality'},
+  {id:'fuel', name:'Fuel Center'},
+  {id:'specialty', name:'Specialty'},
+  {id:'bigbox', name:'Big Box'},
+  {id:'anchor', name:'Anchor'},
+];
+// Fixed hierarchy — NOT user-editable, unlike property categories. Ordered top (most
+// advanced) to bottom, matching the board layout. "track" controls which stages a
+// deal can move between once it's Lease vs Sale.
+const LSR_STAGES = [
+  {id:'signedLease', name:'Signed Lease', track:'lease', color:'#E8951E'},
+  {id:'closedEscrow', name:'Closed Escrow', track:'sale', color:'#E8951E'},
+  {id:'negotiating', name:'Negotiating Lease', track:'lease', color:'#E0469A'},
+  {id:'inEscrow', name:'In Escrow', track:'sale', color:'#E0469A'},
+  {id:'signedLOI', name:'Signed LOI', track:'both', color:'#00A65A'},
+  {id:'loi', name:'LOI', track:'both', color:'#00A65A'},
+];
+const LSR_STAGE_MAP = {}; LSR_STAGES.forEach(s=>LSR_STAGE_MAP[s.id]=s);
+function lsrDealIsActive(p){
+  // Closed Escrow means the sale already fully closed — never "active" from that point on.
+  if(p.stage==='closedEscrow') return false;
+  // A signed lease stops being "active" once both commission halves are paid — at that
+  // point it's a fully closed-out deal, not something anyone still needs to track/chase.
+  if(p.dealType==='lease' && p.commission1Paid && p.commission2Paid) return false;
+  return true;
+}
+function lsrStagesForTrack(dealType){
+  // dropdown options once converted, in hierarchy order (lowest to highest for a <select>)
+  if(dealType==='sale') return ['loi','signedLOI','inEscrow','closedEscrow'];
+  return ['loi','signedLOI','negotiating','signedLease'];
+}
+function newLSRCategoryConfig(){
+  return { order: DEFAULT_PROPERTY_CATEGORIES.map(c=>c.id), hidden: [], custom: [] };
+}
+function lsrCategoriesFor(listingClient){
+  if(!listingClient.categoryConfig) listingClient.categoryConfig = newLSRCategoryConfig();
+  const cfg = listingClient.categoryConfig;
+  const all = DEFAULT_PROPERTY_CATEGORIES.concat(cfg.custom);
+  const byId = {}; all.forEach(c=>byId[c.id]=c);
+  // respect saved order, then append anything new (e.g. just-added custom categories)
+  const ordered = cfg.order.map(id=>byId[id]).filter(Boolean);
+  all.forEach(c=>{ if(!cfg.order.includes(c.id)) ordered.push(c); });
+  return ordered.filter(c=>!cfg.hidden.includes(c.id));
+}
+
 let db = {
   contacts: [
     {id:'c1', first:'Greg', last:'Abbott', company:'Velocity Retail Group', email:'gabbott@velocityrg.com', mobile:'(602) 555-0101', phone:'(602) 682-8181'},
@@ -537,18 +654,18 @@ let db = {
         {
           id:'cityvet', name:'City Vet', primary:'c5', secondary:[],
           deals:[
-            {id:'d1', name:'Thunderbird & 7th St SEC', complete:false, activeDeal:true, dueDate: addDays(todayDate(),-2)},
-            {id:'d2', name:'Germann & Gilbert SEC', complete:false, activeDeal:true, dueDate: addDays(todayDate(),1)},
-            {id:'d3', name:'Glendale / 12th', complete:false, activeDeal:false, dueDate:null},
-            {id:'d4', name:'Happy Valley & 83rd Ave ESEC', complete:false, activeDeal:false, dueDate:null},
-            {id:'d5', name:'Baseline & Gilbert NWC', complete:true, activeDeal:true, dueDate: addDays(todayDate(),-11)},
+            {id:'d1', name:'Thunderbird & 7th St SEC', complete:false, activeDeal:true, dueDate: addDays(todayDate(),-2), caExecuted:true},
+            {id:'d2', name:'Germann & Gilbert SEC', complete:false, activeDeal:true, dueDate: addDays(todayDate(),1), caExecuted:false},
+            {id:'d3', name:'Glendale / 12th', complete:false, activeDeal:false, dueDate:null, caExecuted:false},
+            {id:'d4', name:'Happy Valley & 83rd Ave ESEC', complete:false, activeDeal:false, dueDate:null, caExecuted:false},
+            {id:'d5', name:'Baseline & Gilbert NWC', complete:true, activeDeal:true, dueDate: addDays(todayDate(),-11), caExecuted:true},
           ]
         },
         {
           id:'dutchbros', name:'Dutch Bros', primary:'c6', secondary:[],
           deals:[
-            {id:'d6', name:'Bartaco Pad Site', complete:false, activeDeal:true, dueDate: addDays(todayDate(),3)},
-            {id:'d7', name:"Culver's Outparcel", complete:false, activeDeal:false, dueDate: addDays(todayDate(),7)},
+            {id:'d6', name:'Bartaco Pad Site', complete:false, activeDeal:true, dueDate: addDays(todayDate(),3), caExecuted:true},
+            {id:'d7', name:"Culver's Outparcel", complete:false, activeDeal:false, dueDate: addDays(todayDate(),7), caExecuted:false},
           ]
         },
       ]
@@ -557,7 +674,36 @@ let db = {
       id:'listings', name:'Listings', icon:'🏢', type:'deep',
       clients:[
         {id:'redriverctr', name:'Red River Center', primary:null, secondary:[], deals:[
-          {id:'d8', name:'Suite 140 — Lease Out', complete:false, activeDeal:true, dueDate: addDays(todayDate(),14)}
+          {id:'d8', name:'Suite 140 — Lease Out', complete:false, activeDeal:true, dueDate: addDays(todayDate(),14), caExecuted:true}
+        ],
+        categoryConfig: newLSRCategoryConfig(),
+        prospects: [
+          {id:'p1', tenantName:'Maverik', contactId:null, categoryId:'fuel', stage:'signedLease', dealType:'lease',
+            dateOfContact: addDays(todayDate(),-90), notes:'(3/24/26) - Under Contract. Slated to close in December.',
+            building:'Pad A', spaceNum:'', size:'3,200 SF', rent:'$3.25', term:'15 yrs + 3x5yr options', tiAllowance:'$0 (build to suit)', dealNotes:'',
+            edgeTracker:'mclark', deadDate:null, commission1Paid:true, commission2Paid:false},
+          {id:'p2', tenantName:'KT Development (Hyatt Studios)', contactId:null, categoryId:'hospitality', stage:'signedLease', dealType:'lease',
+            dateOfContact: addDays(todayDate(),-80), notes:'(3/24/26) - Under Contract.',
+            building:'Pad B', spaceNum:'', size:'1.2 AC', rent:'$4.00', term:'20 yrs', tiAllowance:'$0', dealNotes:'',
+            edgeTracker:'mclark', deadDate:null, commission1Paid:false, commission2Paid:false},
+          {id:'p3', tenantName:"Huey Magoo's", contactId:null, categoryId:'qsr', stage:'loi', dealType:null,
+            dateOfContact: addDays(todayDate(),-30), notes:"(10/7/25) Not ready to respond until we have site plan finalized.",
+            building:'', spaceNum:'', size:'', rent:'', term:'', tiAllowance:'', dealNotes:'',
+            edgeTracker:'nault', deadDate:null, commission1Paid:false, commission2Paid:false},
+          {id:'p4', tenantName:'Element Nail Bar', contactId:null, categoryId:'specialty', stage:'loi', dealType:null,
+            dateOfContact: addDays(todayDate(),-14), notes:'(12/8/25) - Received proposal.',
+            building:'', spaceNum:'', size:'', rent:'', term:'', tiAllowance:'', dealNotes:'',
+            edgeTracker:'nault', deadDate:null, commission1Paid:false, commission2Paid:false},
+          {id:'p5', tenantName:'H-TeaO', contactId:null, categoryId:'qsr', stage:'loi', dealType:null,
+            dateOfContact: addDays(todayDate(),-5), notes:'(2/23/26) - Offer received and sent to Scott and William for review.',
+            building:'', spaceNum:'', size:'', rent:'', term:'', tiAllowance:'', dealNotes:'',
+            edgeTracker:'mclark', deadDate:null, commission1Paid:false, commission2Paid:false},
+          {id:'p6', tenantName:'Banner Health', contactId:null, categoryId:'medical', stage:'interested',
+            dateOfContact: addDays(todayDate(),-9), notes:'(4/16/26) - Followed up. Awaiting feedback from Banner.',
+            edgeTracker:'mclark', deadDate:null, commission1Paid:false, commission2Paid:false},
+          {id:'p7', tenantName:'Longhorn Steakhouse', contactId:null, categoryId:'sitdown', stage:'interested',
+            dateOfContact: addDays(todayDate(),-126), notes:'(3/11/26) - Followed up.',
+            edgeTracker:'nault', deadDate:null, commission1Paid:false, commission2Paid:false},
         ]}
       ]
     },
@@ -620,6 +766,7 @@ const SMART_LIST_DEFAULTS = [
   {id:'archived', name:'Archived', icon:'🗄️'},
   {id:'everything', name:'Everything', icon:'📚'},
   {id:'activeDeals', name:'Active Deals', icon:'⭐'},
+  {id:'caStatus', name:'CA Status', icon:'📄'},
 ];
 // Single mutable, ordered list of every smart list (defaults + user-created). Reordering,
 // hiding, and deleting all operate on this one array so order is consistent everywhere.
@@ -729,6 +876,10 @@ function render(){
   if(state.todoDetailModal) renderTodoDetailModal();
   if(state.editContactModal) renderEditContactModal();
   if(state.importTodosModal) renderImportTodosModal();
+  if(state.lsrNewProspectModal) renderLSRNewProspectModal();
+  if(state.lsrConvertModal) renderLSRConvertModal();
+  if(state.lsrCategoryManagerOpen) renderLSRCategoryManagerModal();
+  if(state.calendarViewOpen && !state.isMobile) renderCalendarViewModal();
   if(state.newSmartListModal) renderNewSmartListModal();
   if(state.notifSettingsOpen) renderNotifSettingsModal();
   if(state.pendingUsersModalOpen) renderPendingUsersModal();
@@ -833,7 +984,7 @@ function generateDigestBody(forUser){
   if(!visible.length) body += 'Nothing due this week. Nice work.\n';
   else visible.forEach(td=>{ body += `• ${td.title}${td.dueDate? ' — due '+fmtDate(td.dueDate):''}\n`; });
   if(hiddenCount>0) body += `\n(${hiddenCount} private item${hiddenCount===1?'':'s'} not shown here.)\n`;
-  body += `\nLog in to see full details: [portal link]\n\n— Southwest Edge Portal`;
+  body += `\nLog in to see full details: ${portalUrl()}\n\n— Southwest Edge Portal`;
   return body;
 }
 function sendDigestNow(forUser){
@@ -987,6 +1138,11 @@ function renderNotifSettingsModal(){
     alert("Real Google Calendar sync needs a Google Cloud project registered to your account (or your Google Workspace admin) plus your portal's real, final web address — same idea as Outlook. Once you're on a stable Netlify domain, this is genuinely buildable client-side with no backend server. For now nothing is synced yet.");
   };
 }
+function portalUrl(){
+  // Uses wherever this file is actually running from — works correctly once deployed
+  // (Netlify, custom domain, etc.) without hardcoding any address.
+  return window.location.origin + window.location.pathname;
+}
 function openEmailDraft(toUser, subject, body){
   const client = (state.currentUser && state.currentUser.emailClient) || 'other';
   const enc = encodeURIComponent;
@@ -1095,6 +1251,7 @@ function renderSidebar(){
         <div class="sidebar-sub">${cu.role}</div>
       </div>
       <div class="sidebar-topicons">
+        ${!state.isMobile ? `<button class="icon-btn" data-action="openCalendarView" title="Calendar View">📅</button>` : ''}
         ${cu.role==='Admin' ? `<button class="icon-btn" data-action="toggleAdmin" title="Admin menu">☰</button>` : ''}
         <button class="icon-btn" data-action="openNotifSettings" title="Notification settings">⚙️</button>
         <button class="icon-btn" data-action="logout" title="Sign out">⏻</button>
@@ -1103,9 +1260,9 @@ function renderSidebar(){
     <div class="nav-section-label">Smart Lists <button class="nav-add" data-action="addSmartList">+</button></div>
     <div class="nav-list">
       ${visibleSmarts.map(sl=>{
-        const items = sl.id==='activeDeals' ? activeDealsClients() : (smartListTodos(sl.id) ? smartListTodos(sl.id).filter(visibleTodo) : []);
+        const items = sl.id==='activeDeals' ? activeDealsClients() : (sl.id==='caStatus' ? caOutstandingCount() : (smartListTodos(sl.id) ? smartListTodos(sl.id).filter(visibleTodo) : []));
         let cls='';
-        if(sl.id==='overdueMe'||sl.id==='overdueAll') cls='urgent';
+        if(sl.id==='overdueMe'||sl.id==='overdueAll'||sl.id==='caStatus') cls='urgent';
         else if(sl.id==='todayMe'||sl.id==='todayAll') cls='mild';
         const active = state.mainView.type==='smart' && state.mainView.id===sl.id;
         const menuOpen = menu && menu.kind==='smart' && menu.id===sl.id;
@@ -1148,6 +1305,7 @@ function renderSidebar(){
     </div>
     <div class="sidebar-footer">
       <div style="font-size:11px;color:var(--ink-soft);line-height:1.5;">Southwest Edge Portal · prototype build</div>
+      <div style="font-size:10px;color:var(--edge);font-weight:700;margin-top:2px;">Build: LSR-direct-v2</div>
     </div>
   </div>`;
 }
@@ -1301,6 +1459,176 @@ function renderCalendarWidget(){
     <button class="btn secondary sm" style="width:100%;margin-top:12px;" data-action="connectOutlook">📅 Connect a Calendar</button>
   </div>`;
 }
+/* ==================== CALENDAR VIEW (desktop only) ==================== */
+function openCalendarView(){
+  const now = new Date();
+  state.calendarViewMode = 'month';
+  state.calendarCursor = {year: now.getFullYear(), month: now.getMonth()};
+  state.calendarWeekStart = getSundayOfWeek(now);
+  state.calendarViewOpen = true;
+}
+function getSundayOfWeek(d){
+  const r = new Date(d);
+  r.setHours(0,0,0,0);
+  r.setDate(r.getDate() - r.getDay());
+  return r;
+}
+function calendarEligibleTodos(){
+  // Someday (no date) and Completed to-dos never appear on a calendar.
+  return db.todos.filter(td=>td.dueDate && !td.completed && visibleTodo(td));
+}
+function calendarTodosByDateKey(){
+  const map = {};
+  calendarEligibleTodos().forEach(td=>{
+    const d = td.dueDate;
+    const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+    (map[key] = map[key]||[]).push(td);
+  });
+  return map;
+}
+function renderCalendarDayCell(y,m,d,todosByDateKey,today,otherMonth){
+  const key = `${y}-${m}-${d}`;
+  const items = todosByDateKey[key]||[];
+  const isToday = y===today.getFullYear() && m===today.getMonth() && d===today.getDate();
+  return `
+  <div class="cv-day ${otherMonth?'other-month':''} ${isToday?'is-today':''}" data-cvdate="${y}-${m}-${d}">
+    <div class="cv-day-num">${d}</div>
+    ${items.map(td=>{
+      const mine = td.assignedTo===state.currentUser.id;
+      const assignee = USERS.find(u=>u.id===td.assignedTo);
+      return `<div class="cv-card-note ${mine?'':'assigned-other'}" draggable="true" data-cvtodo="${td.id}" title="${escapeAttr(td.title)}">
+        ${escapeHtml(td.title)}${!mine && assignee? ` <span style="opacity:.7;">(${escapeHtml(assignee.name.split(' ')[0])})</span>`:''}
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+function renderCalendarViewModal(){
+  const mode = state.calendarViewMode || 'month';
+  if(!state.calendarCursor){ const now=new Date(); state.calendarCursor={year:now.getFullYear(),month:now.getMonth()}; }
+  if(!state.calendarWeekStart){ state.calendarWeekStart = getSundayOfWeek(new Date()); }
+  const todosByDateKey = calendarTodosByDateKey();
+  const today = todayDate();
+
+  let headTitle = '', cellsHtml = '', gridRowsStyle = '';
+  if(mode==='month'){
+    const {year, month} = state.calendarCursor;
+    headTitle = new Date(year,month,1).toLocaleDateString('en-US',{month:'long', year:'numeric'});
+    const firstDow = new Date(year,month,1).getDay();
+    const daysInMonth = new Date(year,month+1,0).getDate();
+    const daysInPrevMonth = new Date(year,month,0).getDate();
+    const leadCount = firstDow;
+    for(let i=0;i<leadCount;i++){
+      const dayNum = daysInPrevMonth - leadCount + 1 + i;
+      let pm = month-1, py = year; if(pm<0){pm=11; py--;}
+      cellsHtml += renderCalendarDayCell(py, pm, dayNum, todosByDateKey, today, true);
+    }
+    for(let d=1; d<=daysInMonth; d++){
+      cellsHtml += renderCalendarDayCell(year, month, d, todosByDateKey, today, false);
+    }
+    const totalSoFar = leadCount + daysInMonth;
+    const trailCount = (7 - (totalSoFar % 7)) % 7;
+    for(let i=1;i<=trailCount;i++){
+      let nm = month+1, ny = year; if(nm>11){nm=0; ny++;}
+      cellsHtml += renderCalendarDayCell(ny, nm, i, todosByDateKey, today, true);
+    }
+  } else {
+    // week or 2week — always a fixed Sun–Sat span (or two of them), never a rolling window
+    const numWeeks = mode==='2week' ? 2 : 1;
+    const start = state.calendarWeekStart;
+    const end = new Date(start); end.setDate(end.getDate() + (numWeeks*7 - 1));
+    const sameMonth = start.getMonth()===end.getMonth() && start.getFullYear()===end.getFullYear();
+    const fmtShort = (d)=>d.toLocaleDateString('en-US',{month:'short',day:'numeric'});
+    headTitle = sameMonth
+      ? `${start.toLocaleDateString('en-US',{month:'long'})} ${start.getDate()}–${end.getDate()}, ${start.getFullYear()}`
+      : `${fmtShort(start)} – ${fmtShort(end)}, ${end.getFullYear()}`;
+    for(let i=0;i<numWeeks*7;i++){
+      const d = new Date(start); d.setDate(d.getDate()+i);
+      cellsHtml += renderCalendarDayCell(d.getFullYear(), d.getMonth(), d.getDate(), todosByDateKey, today, false);
+    }
+    gridRowsStyle = `grid-auto-rows:minmax(160px,1fr);`;
+  }
+
+  const overlay = document.createElement('div');
+  overlay.className='cv-overlay';
+  overlay.innerHTML = `
+  <div class="cv-card">
+    <div class="cv-head">
+      <button class="cv-nav-btn" data-cvnav="prev">←</button>
+      <div class="cv-head-title">${headTitle}</div>
+      <button class="cv-nav-btn" data-cvnav="next">→</button>
+      <button class="btn secondary sm" data-cvnav="today">Today</button>
+      <div class="segmented" style="margin-left:8px;">
+        <button class="${mode==='month'?'active':''}" data-cvmode="month">Month</button>
+        <button class="${mode==='week'?'active':''}" data-cvmode="week">1 Week</button>
+        <button class="${mode==='2week'?'active':''}" data-cvmode="2week">2 Weeks</button>
+      </div>
+      <div style="flex:1;"></div>
+      <button class="modal-close" data-action="closeCalendarView">✕ Done</button>
+    </div>
+    <div class="cv-legend">
+      <span><span class="cv-legend-dot" style="background:var(--edge);"></span>My To-Do's</span>
+      <span><span class="cv-legend-dot" style="background:#3B82C4;"></span>Assigned to Others</span>
+      <span style="margin-left:auto;">Drag a card onto another day to reschedule it</span>
+    </div>
+    <div class="cv-grid" style="${gridRowsStyle}">
+      ${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>`<div class="cv-dow">${d}</div>`).join('')}
+      ${cellsHtml}
+    </div>
+  </div>`;
+  document.getElementById('app').appendChild(overlay);
+  wireCalendarViewHandlers(overlay);
+}
+function wireCalendarViewHandlers(overlay){
+  overlay.querySelectorAll('[data-action="closeCalendarView"]').forEach(b=>b.onclick=()=>{ state.calendarViewOpen=false; render(); });
+  overlay.querySelectorAll('[data-cvmode]').forEach(b=>b.onclick=()=>{
+    state.calendarViewMode = b.dataset.cvmode;
+    if(state.calendarViewMode!=='month'){ state.calendarWeekStart = getSundayOfWeek(new Date()); }
+    render();
+  });
+  overlay.querySelectorAll('[data-cvnav]').forEach(b=>b.onclick=()=>{
+    const nav = b.dataset.cvnav;
+    const mode = state.calendarViewMode || 'month';
+    if(nav==='today'){
+      const now=new Date();
+      state.calendarCursor={year:now.getFullYear(),month:now.getMonth()};
+      state.calendarWeekStart = getSundayOfWeek(now);
+    } else if(mode==='month'){
+      let {year,month} = state.calendarCursor;
+      month += (nav==='next'?1:-1);
+      if(month<0){month=11;year--;} if(month>11){month=0;year++;}
+      state.calendarCursor = {year,month};
+    } else {
+      // week/2week: jump by exactly the span currently shown (7 or 14 days)
+      const span = mode==='2week' ? 14 : 7;
+      const d = new Date(state.calendarWeekStart);
+      d.setDate(d.getDate() + (nav==='next'? span : -span));
+      state.calendarWeekStart = d;
+    }
+    render();
+  });
+  overlay.querySelectorAll('[data-cvtodo]').forEach(card=>{
+    card.ondragstart=(ev)=>{
+      ev.dataTransfer.setData('text/plain', card.dataset.cvtodo);
+      ev.dataTransfer.effectAllowed='move';
+    };
+    card.onclick=()=>{ openTodoDetail(card.dataset.cvtodo); render(); };
+  });
+  overlay.querySelectorAll('[data-cvdate]').forEach(cell=>{
+    cell.ondragover=(ev)=>{ ev.preventDefault(); cell.classList.add('drag-over'); };
+    cell.ondragleave=()=>{ cell.classList.remove('drag-over'); };
+    cell.ondrop=(ev)=>{
+      ev.preventDefault();
+      cell.classList.remove('drag-over');
+      const todoId = ev.dataTransfer.getData('text/plain');
+      const td = db.todos.find(x=>x.id===todoId);
+      if(!td) return;
+      const [y,m,d] = cell.dataset.cvdate.split('-').map(Number);
+      td.dueDate = new Date(y,m,d);
+      flashToast(`"${td.title}" moved to ${fmtDate(td.dueDate)}.`);
+      render();
+    };
+  });
+}
 function renderSidePanel(){
   if(state.isMobile) return ''; // widgets are desktop-only, full stop — no markup, no weather fetch
   const w = state.sidePanelWidgets;
@@ -1327,12 +1655,27 @@ function renderSidePanel(){
     ${(!w.calendar && !w.weather && !w.news) ? `<div class="widget-card" style="text-align:center;color:var(--ink-soft);font-size:12.5px;">No widgets shown. Click "Widgets" above to add some.</div>` : ''}
   </div>`;
 }
+function caOutstandingCount(){
+  const clientsList = db.lists.find(x=>x.id==='clients');
+  const out = [];
+  clientsList.clients.forEach(c=>c.deals.forEach(d=>{
+    const caExecuted = d.caExecuted!==undefined ? d.caExecuted : false;
+    if(!caExecuted) out.push(d);
+  }));
+  return out;
+}
 function activeDealsClients(){
   const out = [];
   db.lists.filter(l=>l.type==='deep').forEach(l=>{
     l.clients.forEach(c=>{
-      const activeCount = c.deals.filter(d=>d.activeDeal && !d.complete).length;
-      if(activeCount>0) out.push({client:c, listId:l.id, listName:l.name, activeCount, totalCount:c.deals.length});
+      const oldActive = c.deals.filter(d=>d.activeDeal && !d.complete).length;
+      const lsrActive = (c.prospects||[]).filter(p=>{
+        const isDeal = p.stage!=='contacted' && p.stage!=='interested' && p.stage!=='dead' && p.stage!=='notInterested';
+        return isDeal && lsrDealIsActive(p);
+      }).length;
+      const activeCount = oldActive + lsrActive;
+      const totalCount = c.deals.length + (c.prospects? c.prospects.filter(p=>p.stage!=='contacted'&&p.stage!=='interested'&&p.stage!=='dead'&&p.stage!=='notInterested').length : 0);
+      if(activeCount>0) out.push({client:c, listId:l.id, listName:l.name, activeCount, totalCount});
     });
   });
   return out;
@@ -1356,6 +1699,7 @@ function renderMainContent(){
   const id = state.mainView.id;
   if(id==='activeDeals') return renderActiveDealsMain();
   if(id==='archived') return renderArchivedMain();
+  if(id==='caStatus') return renderCAStatusMain();
   const teamCapable = (id==='week' || id==='month');
   if(teamCapable && state.todoView==='team') return renderTeamTodos(id);
   let list = smartListTodosVisible(id);
@@ -1366,6 +1710,34 @@ function renderMainContent(){
   const archiveBar = id==='completed' && list.length ?
     `<button class="btn secondary sm" data-action="archiveAllCompleted" style="margin-bottom:12px;">🗄️ Archive All Completed (${list.length})</button>` : '';
   return archiveBar + renderBulkBar() + renderTodoList(list);
+}
+function renderCAStatusMain(){
+  const clientsList = db.lists.find(x=>x.id==='clients');
+  const rows = [];
+  clientsList.clients.forEach(c=>{
+    c.deals.forEach(d=>{
+      const caExecuted = d.caExecuted!==undefined ? d.caExecuted : false;
+      rows.push({client:c, deal:d, caExecuted});
+    });
+  });
+  const outstanding = rows.filter(r=>!r.caExecuted);
+  const executed = rows.filter(r=>r.caExecuted);
+  const renderGroup = (title, items, color)=>{
+    if(!items.length) return `<div class="section-label" style="color:${color};">${title} (0)</div><div class="empty-state" style="padding:14px;"><div class="tiny">Nothing here.</div></div>`;
+    return `<div class="section-label" style="color:${color};">${title} (${items.length})</div>` + items.map(r=>`
+      <div class="row-card" data-opendealdirect="${r.deal.id}" data-client="${r.client.id}">
+        <div class="nav-icon" style="font-size:18px;">📄</div>
+        <div class="row-body">
+          <div class="row-title">${escapeHtml(r.client.name)} — ${escapeHtml(r.deal.name)}</div>
+          <div class="row-meta"><span>${r.deal.dueDate? fmtDate(r.deal.dueDate):'No date'}</span></div>
+        </div>
+      </div>`).join('');
+  };
+  return `
+    <p style="font-size:12.5px;color:var(--ink-soft);margin-top:0;">Commission Agreement status across every Client deal. Listings aren't shown here — they're always covered by the property's Exclusive Listing Agreement.</p>
+    ${renderGroup('CA Outstanding', outstanding, 'var(--bad)')}
+    ${renderGroup('CA Executed', executed, 'var(--good)')}
+  `;
 }
 function renderArchivedMain(){
   const items = db.archivedTodos.filter(visibleTodo);
@@ -1536,6 +1908,7 @@ function renderListMain(listId){
     return addBtn + l.clients.map(c=>{
       const dealCount = c.deals.length;
       const openDeals = c.deals.filter(d=>!d.complete).length;
+      const isListingsRow = l.id==='listings' && !state.isMobile;
       return `
       <div class="row-card" data-openclient="${c.id}" data-listid="${l.id}">
         <div class="nav-icon" style="font-size:20px;">🏷️</div>
@@ -1543,6 +1916,12 @@ function renderListMain(listId){
           <div class="row-title">${escapeHtml(c.name)}</div>
           <div class="row-meta"><span>${openDeals} active of ${dealCount} site${dealCount===1?'':'s'}</span></div>
         </div>
+        ${isListingsRow ? `
+        <div style="display:flex;gap:6px;flex-shrink:0;" data-stopprop="1">
+          <button class="btn secondary sm" data-openlisting="deals" data-client="${c.id}" data-listid="${l.id}">Open Deals</button>
+          <button class="btn secondary sm" data-openlisting="prospecting" data-client="${c.id}" data-listid="${l.id}">Open Prospecting</button>
+          <button class="btn sm" data-openlisting="all" data-client="${c.id}" data-listid="${l.id}">Open All</button>
+        </div>` : ''}
       </div>`;
     }).join('');
   } else {
@@ -1580,9 +1959,9 @@ function renderShell(){
     <div class="main" style="${hideMain?'display:none;':''}position:relative;">
       ${renderTopbar()}
       <div class="content"><div class="content-flex"><div class="content-inner">${renderMainContent()}</div>${renderSidePanel()}</div></div>
-      ${(!state.isMobile || state.mobileScreen==='main') ? `<button class="fab" data-action="newTodo" title="New To-Do">+</button>` : ''}
     </div>
   </div>
+  <button class="fab" data-action="newTodo" title="New To-Do">+</button>
   ${state.isMobile ? renderMobileTabbar() : ''}
   ${state.showAdminMenu ? renderAdminMenu() : ''}
   `;
@@ -1634,6 +2013,18 @@ function attachShellHandlers(){
   document.querySelectorAll('[data-openclient]').forEach(el=>el.onclick=()=>{
     openClientModal(el.dataset.listid, el.dataset.openclient); render();
   });
+  document.querySelectorAll('[data-openlisting]').forEach(el=>el.onclick=(ev)=>{
+    ev.stopPropagation();
+    openClientModal(el.dataset.listid, el.dataset.client, el.dataset.openlisting);
+    render();
+  });
+  document.querySelectorAll('[data-opendealdirect]').forEach(el=>el.onclick=()=>{
+    state.modalStack = [
+      {kind:'client', listId:'clients', clientId:el.dataset.client, viewMode:'all'},
+      {kind:'deal', listId:'clients', clientId:el.dataset.client, dealId:el.dataset.opendealdirect}
+    ];
+    render();
+  });
   document.querySelectorAll('[data-openentry]').forEach(el=>el.onclick=()=>{
     openEntryModal(el.dataset.listid, el.dataset.openentry); render();
   });
@@ -1679,6 +2070,9 @@ function attachShellHandlers(){
   };
   const notifBtn=document.querySelector('[data-action="openNotifSettings"]'); if(notifBtn) notifBtn.onclick=()=>{
     state.notifSettingsOpen=true; render();
+  };
+  const calBtn=document.querySelector('[data-action="openCalendarView"]'); if(calBtn) calBtn.onclick=()=>{
+    openCalendarView(); render();
   };
   const importBtn=document.querySelector('[data-action="openImportTodos"]'); if(importBtn) importBtn.onclick=()=>{
     state.importTodosModal = {step:'upload'};
@@ -2072,7 +2466,7 @@ function renderTodoDetailModal(){
       if(newAssign!==state.currentUser.id){
         td.isNew=true;
         const subject = 'You Have a New To Do on Southwest Edge';
-        const body = `Hi ${u.name.split(' ')[0]},\n\n${state.currentUser.name} assigned you a to-do:\n\n"${td.title}"${td.category?` (${td.category})`:''}${td.dueDate?`\nDue: ${fmtDate(td.dueDate)}`:''}\n\nLog in to Southwest Edge Portal to view it: [portal link]\n\n— Sent from Southwest Edge Portal`;
+        const body = `Hi ${u.name.split(' ')[0]},\n\n${state.currentUser.name} assigned you a to-do:\n\n"${td.title}"${td.category?` (${td.category})`:''}${td.dueDate?`\nDue: ${fmtDate(td.dueDate)}`:''}\n\nLog in to Southwest Edge Portal to view it: ${portalUrl()}\n\n— Sent from Southwest Edge Portal`;
         openEmailDraft(u, subject, body);
         flashToast(`Email draft opened for ${u.name}.`);
       }
@@ -2118,8 +2512,8 @@ function wireTodoRowHandlers(root){
 }
 
 /* ---------------- MODAL STACK: Client / Deal / FlatEntry ---------------- */
-function openClientModal(listId, clientId){
-  state.modalStack=[{kind:'client', listId, clientId}];
+function openClientModal(listId, clientId, viewMode){
+  state.modalStack=[{kind:'client', listId, clientId, viewMode: viewMode||'all'}];
 }
 function openDealModal(listId, clientId, dealId){
   state.modalStack.push({kind:'deal', listId, clientId, dealId});
@@ -2143,6 +2537,10 @@ function breadcrumbFor(stack){
     } else if(frame.kind==='entry'){
       const l=db.lists.find(x=>x.id===frame.listId); const e=l.entries.find(x=>x.id===frame.entryId);
       crumbs.push({label:e.name, idx:i});
+    } else if(frame.kind==='lsrProspect'){
+      const l=db.lists.find(x=>x.id==='listings'); const c=l.clients.find(x=>x.id===frame.clientId);
+      const p=c.prospects.find(x=>x.id===frame.prospectId);
+      crumbs.push({label:p.tenantName, idx:i});
     }
   });
   return crumbs;
@@ -2171,7 +2569,7 @@ function renderTopModalCard(){
   if(frame.kind==='client'){
     const l=db.lists.find(x=>x.id===frame.listId); const c=l.clients.find(x=>x.id===frame.clientId);
     titleText=c.name; brandName=c.name;
-    bodyHtml = renderClientModalBody(l,c);
+    bodyHtml = renderClientModalBody(l,c,frame.viewMode);
   } else if(frame.kind==='deal'){
     const l=db.lists.find(x=>x.id===frame.listId); const c=l.clients.find(x=>x.id===frame.clientId);
     const d=c.deals.find(x=>x.id===frame.dealId);
@@ -2181,6 +2579,11 @@ function renderTopModalCard(){
     const l=db.lists.find(x=>x.id===frame.listId); const e=l.entries.find(x=>x.id===frame.entryId);
     titleText=e.name; brandName=e.name;
     bodyHtml = renderEntryModalBody(l,e);
+  } else if(frame.kind==='lsrProspect'){
+    const l=db.lists.find(x=>x.id==='listings'); const c=l.clients.find(x=>x.id===frame.clientId);
+    const p=c.prospects.find(x=>x.id===frame.prospectId);
+    titleText=p.tenantName; brandName=p.tenantName;
+    bodyHtml = renderLSRProspectBody(l,c,p);
   }
   return `
   <div class="modal-card wide">
@@ -2208,11 +2611,17 @@ function contactRow(contactId){
   ${c.website ? `<div class="contact-line"><span>Website</span><b>${escapeHtml(c.website)}</b></div>`:''}
   ${addrParts ? `<div class="contact-line"><span>Address</span><b>${escapeHtml(addrParts)}</b></div>`:''}`;
 }
-function renderClientModalBody(l,c){
+function renderClientModalBody(l,c,viewMode){
+  viewMode = viewMode || 'all';
   const openDeals = c.deals.filter(d=>!d.complete);
   const doneDeals = c.deals.filter(d=>d.complete);
+  const showDeals = viewMode!=='prospecting';
+  const showProspecting = l.id==='listings' && !state.isMobile;
   return `
-  <button class="btn sm" data-action="addDeal" data-client="${c.id}" style="margin-bottom:14px;">+ Add site / deal</button>
+  ${showDeals ? `
+  <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+    <button class="btn sm" data-action="addDeal" data-client="${c.id}">+ Add site / deal</button>
+  </div>
   <div class="contact-card">
     <div class="label">Primary Contact</div>
     ${contactRow(c.primary)}
@@ -2221,12 +2630,15 @@ function renderClientModalBody(l,c){
   <div class="section-label">Sites / Deals</div>
   ${openDeals.map(d=>renderDealRowInClient(l,c,d)).join('')}
   ${doneDeals.length? `<div class="section-label">Completed</div>${doneDeals.map(d=>renderDealRowInClient(l,c,d)).join('')}`:''}
+  ` : ''}
+  ${showProspecting ? renderLSRInline(c, viewMode) : ''}
   `;
 }
 function renderDealRowInClient(l,c,d){
   const status = dueStatus(d.dueDate);
   const cls = status==='overdue'?'overdue':(status==='today'?'today':'');
   const todoCount = db.todos.filter(t=>t.dealId===d.id && !t.completed).length;
+  const caExecuted = d.caExecuted!==undefined ? d.caExecuted : (l.id==='listings');
   return `
   <div class="row-card" data-opendeal="${d.id}" data-client="${c.id}" data-listid="${l.id}">
     <div class="row-check ${d.complete?'done':''}" data-toggledeal="${d.id}" title="Mark complete">${d.complete?'✓':''}</div>
@@ -2235,23 +2647,37 @@ function renderDealRowInClient(l,c,d){
       <div class="row-meta">
         <span class="due ${cls}">${d.dueDate?fmtDate(d.dueDate):'No date'}</span>
         <span class="pill gray">${todoCount} open to-do${todoCount===1?'':'s'}</span>
+        ${!caExecuted? `<span class="pill" style="background:#FBEBD8;color:#A5620C;">CA Outstanding</span>`:''}
       </div>
     </div>
-    <label style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink-soft);flex-shrink:0;" data-stopprop="1">
-      <input type="checkbox" data-toggleactive="${d.id}" ${d.activeDeal?'checked':''} style="width:auto;accent-color:var(--edge);">
-      Active Deal
-    </label>
+    <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end;flex-shrink:0;" data-stopprop="1">
+      <label style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink-soft);">
+        <input type="checkbox" data-toggleactive="${d.id}" ${d.activeDeal?'checked':''} style="width:auto;accent-color:var(--edge);">
+        Active Deal
+      </label>
+      <label style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink-soft);">
+        <input type="checkbox" data-togglecaexec="${d.id}" data-listid="${l.id}" data-client="${c.id}" ${caExecuted?'checked':''} style="width:auto;accent-color:var(--good);">
+        CA Executed
+      </label>
+    </div>
   </div>`;
 }
 function renderDealModalBody(l,c,d){
   const todos = db.todos.filter(t=>t.dealId===d.id).filter(visibleTodo);
+  const caExecuted = d.caExecuted!==undefined ? d.caExecuted : (l.id==='listings');
   return `
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px;">
     <button class="btn sm" data-action="newTodoInDeal" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">+ New To-Do</button>
-    <label style="display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--ink-soft);font-weight:600;">
-      <input type="checkbox" data-toggleactive="${d.id}" ${d.activeDeal?'checked':''} style="width:auto;accent-color:var(--edge);">
-      ⭐ Active Deal
-    </label>
+    <div style="display:flex;gap:14px;">
+      <label style="display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--ink-soft);font-weight:600;">
+        <input type="checkbox" data-toggleactive="${d.id}" ${d.activeDeal?'checked':''} style="width:auto;accent-color:var(--edge);">
+        ⭐ Active Deal
+      </label>
+      <label style="display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--ink-soft);font-weight:600;">
+        <input type="checkbox" data-togglecaexec="${d.id}" data-listid="${l.id}" data-client="${c.id}" ${caExecuted?'checked':''} style="width:auto;accent-color:var(--good);">
+        📄 CA Executed
+      </label>
+    </div>
   </div>
   <div class="contact-card">
     <div class="label">Site / Deal Contact</div>
@@ -2261,6 +2687,593 @@ function renderDealModalBody(l,c,d){
   ${todos.length? renderTodoList(todos) : `<div class="empty-state" style="padding:26px;"><div class="big">No to-do's yet.</div><div class="tiny">Add the first action item for this site.</div></div>`}
   `;
 }
+/* ==================== LEASING / PROSPECTING REPORT (LSR) ==================== */
+/* Rendered inline inside the Listing's own Client modal — same row-card language,
+   breadcrumb drill-down, and modal chrome used everywhere else in the app. */
+function lsrEnsureListing(listing){
+  if(!listing.prospects) listing.prospects=[];
+  if(!listing.categoryConfig) listing.categoryConfig = newLSRCategoryConfig();
+}
+function lsrMoney(val){
+  if(val===undefined||val===null||val==='') return '';
+  const s = String(val).trim();
+  if(!s) return '';
+  return /^[\$]/.test(s) ? s : (/^[0-9.]+$/.test(s) ? '$'+s : s);
+}
+function lsrFilterRows(rows){
+  let out = rows;
+  const q = (state.lsrSearch||'').toLowerCase().trim();
+  if(q){
+    out = out.filter(p=>{
+      const contact = p.contactId ? db.contacts.find(c=>c.id===p.contactId) : null;
+      const hay = `${p.tenantName} ${p.notes||''} ${contact? contact.first+' '+contact.last:''}`.toLowerCase();
+      return hay.includes(q);
+    });
+  }
+  if(state.lsrTrackerFilter && state.lsrTrackerFilter!=='all'){
+    out = out.filter(p=>p.edgeTracker===state.lsrTrackerFilter);
+  }
+  return out;
+}
+function lsrSortRows(rows){
+  return rows.slice().sort((a,b)=>{
+    if(!a.dueDateSortHelperUnused){} // no-op, keeps structure simple
+    const ad = a.dateOfContact||a.deadDate, bd = b.dateOfContact||b.deadDate;
+    const at = ad? ad.getTime():0, bt = bd? bd.getTime():0;
+    return bt-at; // most recent activity first
+  });
+}
+function renderLSRInline(listing, mode){
+  mode = mode || 'all'; // 'all' | 'deals' | 'prospecting'
+  lsrEnsureListing(listing);
+  const cats = lsrCategoriesFor(listing);
+  const visible = lsrFilterRows(listing.prospects);
+  const showStages = (mode==='all' || mode==='deals');
+  const showCategories = (mode==='all' || mode==='prospecting');
+  const showToolbar = (mode==='all');
+
+  let toolbarHtml = `<div class="section-label no-print" style="margin-top:28px;">📊 ${mode==='deals'?'Deals':(mode==='prospecting'?'Prospecting Report':'Leasing / Prospecting Report')}</div>`;
+  if(showToolbar){
+    toolbarHtml += `<div class="no-print" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:6px;">
+      <input id="lsrSearchBox" placeholder="🔍 Search tenant, contact, notes…" value="${escapeAttr(state.lsrSearch)}"
+        style="flex:1;min-width:180px;padding:8px 11px;border:1px solid var(--line);border-radius:8px;font-size:12.5px;">
+      <select id="lsrTrackerSelect" style="padding:8px 11px;border:1px solid var(--line);border-radius:8px;font-size:12.5px;">
+        <option value="all" ${state.lsrTrackerFilter==='all'?'selected':''}>All Edge Trackers</option>
+        ${USERS.map(u=>`<option value="${u.id}" ${state.lsrTrackerFilter===u.id?'selected':''}>${u.name}</option>`).join('')}
+      </select>
+      <button class="btn secondary sm" data-action="lsrManageCategories" data-client="${listing.id}">⚙️ Categories</button>
+      <button class="btn sm" data-action="lsrNewDeal" data-client="${listing.id}">+ New Deal (direct to LOI)</button>
+      <button class="btn" data-action="lsrExportPdf">📄 Create Leasing Report</button>
+    </div>
+    <div class="no-print" style="font-size:11px;color:var(--ink-soft);margin-bottom:14px;">Opens your browser's print dialog, pre-set to landscape — choose "Save as PDF" to generate the report. The report itself is clean — no search bars or buttons — ready to hand to a client.</div>`;
+  } else if(mode==='deals'){
+    toolbarHtml += `<div class="no-print" style="margin-bottom:14px;"><button class="btn sm" data-action="lsrNewDeal" data-client="${listing.id}">+ New Deal (direct to LOI)</button></div>`;
+  }
+
+  let html = `
+    <div class="print-only" style="display:none;">
+      <div style="font-size:20px;font-weight:700;color:var(--edge-darker);">${escapeHtml(listing.name)} — Leasing Report</div>
+      <div style="font-size:12px;color:var(--ink-soft);margin-bottom:16px;">Prepared ${new Date().toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'})}</div>
+    </div>`;
+  if(showStages){
+    LSR_STAGES.forEach(stage=>{
+      const rows = lsrSortRows(visible.filter(p=>p.stage===stage.id));
+      html += renderLSRSectionInline({key:'stage_'+stage.id, title:stage.name, color:stage.color, rows, listing, kind:'deal'});
+    });
+  }
+  if(showCategories){
+    cats.forEach(cat=>{
+      const rows = lsrSortRows(visible.filter(p=>p.categoryId===cat.id && (p.stage==='contacted'||p.stage==='interested')));
+      html += renderLSRSectionInline({key:'cat_'+cat.id, title:cat.name, color:'#8B5CF6', rows, listing, kind:'prospect', categoryId:cat.id});
+    });
+    const deadRows = lsrSortRows(visible.filter(p=>p.stage==='dead'));
+    const niRows = lsrSortRows(visible.filter(p=>p.stage==='notInterested'));
+    html += renderLSRSectionInline({key:'dead', title:'Dead Deals', color:'#8A8378', rows:deadRows, listing, kind:'dead'});
+    html += renderLSRSectionInline({key:'notInterested', title:'Prospects - Not Interested', color:'#B9B4AD', rows:niRows, listing, kind:'dead'});
+  }
+  return `${toolbarHtml}<div id="lsrPrintArea">${html}</div>`;
+}
+function renderLSRSectionInline(opts){
+  const collapsed = !!state.lsrCollapsed[opts.key];
+  let body = '';
+  if(!collapsed){
+    if(!opts.rows.length){
+      body = `<div class="empty-state" style="padding:14px;text-align:left;"><div class="tiny" style="color:var(--ink-soft);">Nothing here yet.</div></div>`;
+    } else {
+      body = opts.rows.map(p=>renderLSRRowCard(p, opts.listing, opts.kind)).join('');
+    }
+    if(opts.kind==='prospect'){
+      body += `<button class="btn ghost sm" data-action="lsrAddProspect" data-category="${opts.categoryId}" data-client="${opts.listing.id}" style="margin-top:4px;">+ Add tenant</button>`;
+    }
+  }
+  return `
+  <div style="margin-bottom:16px;">
+    <button class="row-card" data-lsrtoggle="${opts.key}" style="cursor:pointer;border-left:4px solid ${opts.color};width:100%;text-align:left;background:#fff;">
+      <div class="row-body">
+        <div class="row-title" style="color:${opts.color};">${collapsed?'▸':'▾'} ${escapeHtml(opts.title)}
+          <span style="color:var(--ink-soft);font-weight:400;font-size:12px;">(${opts.rows.length})</span>
+        </div>
+      </div>
+    </button>
+    ${body}
+  </div>`;
+}
+function renderLSRRowCard(p, listing, kind){
+  const cat = DEFAULT_PROPERTY_CATEGORIES.concat(listing.categoryConfig.custom).find(c=>c.id===p.categoryId);
+  const contact = p.contactId ? db.contacts.find(x=>x.id===p.contactId) : null;
+  const tracker = USERS.find(u=>u.id===p.edgeTracker);
+  let meta = [];
+  if(cat) meta.push(`<span class="pill">${escapeHtml(cat.name)}</span>`);
+  if(kind==='deal'){
+    const moneyLabel = p.dealType==='sale'?'Price':'Rent';
+    const money = lsrMoney(p.dealType==='sale'?p.price:p.rent);
+    if(p.building) meta.push(`<span>${escapeHtml(p.building)}${p.spaceNum?' #'+escapeHtml(p.spaceNum):''}</span>`);
+    if(p.size) meta.push(`<span>${escapeHtml(p.size)}</span>`);
+    if(money) meta.push(`<span>${moneyLabel}: ${escapeHtml(money)}</span>`);
+    if(p.term) meta.push(`<span>${escapeHtml(p.term)}</span>`);
+  } else if(kind==='dead'){
+    if(p.deadDate) meta.push(`<span class="due overdue">Marked ${fmtDate(p.deadDate)}</span>`);
+  } else {
+    if(p.dateOfContact) meta.push(`<span>Contacted ${fmtDate(p.dateOfContact)}</span>`);
+  }
+  if(tracker) meta.push(`<span class="pill gray">${escapeHtml(tracker.name)}</span>`);
+  return `
+  <div class="row-card" data-lsropen="${p.id}" data-client="${listing.id}" style="flex-wrap:wrap;">
+    <div class="nav-icon" style="font-size:18px;">${kind==='dead'?'⚫':(kind==='deal'?'⭐':'🎯')}</div>
+    <div class="row-body" style="min-width:220px;">
+      <div class="row-title">${escapeHtml(p.tenantName)}</div>
+      <div class="row-meta">${meta.join('')}</div>
+      ${p.notes? `<div class="row-meta" style="color:var(--ink-soft);">${escapeHtml(p.notes)}</div>`:''}
+    </div>
+    ${contact ? `
+    <div class="row-contact" style="flex-shrink:0;">
+      ${contact.email? `<a class="contact-link" href="mailto:${contact.email}" data-stopprop="1">✉️ ${escapeHtml(contact.email)}</a>`:''}
+      ${contact.mobile? `<a class="contact-link" href="${telHref(contact.mobile)}" data-stopprop="1">📱 ${escapeHtml(contact.mobile)}</a>`:''}
+    </div>` : ''}
+    ${kind==='prospect' ? `<button class="btn" data-lsrconvert="${p.id}" data-client="${listing.id}" data-stopprop="1" style="flex-shrink:0;margin-left:auto;">Convert to Deal →</button>` : ''}
+    ${kind==='deal' && p.dealType==='lease' ? `
+    <div style="width:100%;display:flex;align-items:center;gap:14px;margin-top:8px;padding-top:8px;border-top:1px solid var(--line-soft);" data-stopprop="1">
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-soft);">
+        <input type="checkbox" data-lsrcomm1="${p.id}" data-client="${listing.id}" ${p.commission1Paid?'checked':''} style="width:auto;accent-color:var(--good);"> 1st Half Commission Paid
+      </label>
+      <button class="btn ${p.commission2Paid?'secondary':''} sm" data-lsrcomm2="${p.id}" data-client="${listing.id}">
+        ${p.commission2Paid? '✓ 2nd Half Paid':'2nd Half Commission Paid'}
+      </button>
+      ${!lsrDealIsActive(p) ? `<span class="pill gray">Fully Closed</span>`:''}
+    </div>`:''}
+  </div>`;
+}
+
+/* ---- Prospect detail — nested modal frame, same chrome as Deal modal ---- */
+function openLSRProspect(clientId, prospectId){
+  state.modalStack.push({kind:'lsrProspect', clientId, prospectId});
+}
+function renderLSRProspectBody(l, listing, p){
+  const isConverted = p.stage!=='contacted' && p.stage!=='interested' && p.stage!=='dead' && p.stage!=='notInterested';
+  const allCats = DEFAULT_PROPERTY_CATEGORIES.concat(listing.categoryConfig.custom);
+  return `
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
+    <button class="btn danger sm" data-action="lsrDeleteProspect">🗑️ Delete</button>
+    ${!isConverted && p.stage!=='dead' && p.stage!=='notInterested' ? `<button class="btn" data-lsrconvert="${p.id}" data-client="${listing.id}">Convert to Deal →</button>`:''}
+    ${p.stage!=='dead' && p.stage!=='notInterested' ? `
+      <button class="btn secondary sm" data-action="lsrMarkDead">Mark Dead</button>
+      ${!isConverted ? `<button class="btn secondary sm" data-action="lsrMarkNotInterested">Not Interested</button>`:''}
+    ` : `<button class="btn secondary sm" data-action="lsrRevive">Revive</button>`}
+    <button class="btn secondary sm" data-action="lsrCreateTodo">+ Create To-Do</button>
+  </div>
+  <div class="field"><label>Tenant / Company</label><input id="lpName" value="${escapeAttr(p.tenantName)}"></div>
+  <div class="contact-card">
+    <div class="label">Contact</div>
+    ${contactRow(p.contactId)}
+    <button class="btn secondary sm" style="margin-top:10px;" data-action="lsrPickContact">${p.contactId?'Change contact':'Attach contact'}</button>
+  </div>
+  <div class="field">
+    <label>Category</label>
+    <select id="lpCategory">${allCats.map(c=>`<option value="${c.id}" ${p.categoryId===c.id?'selected':''}>${escapeHtml(c.name)}</option>`).join('')}<option value="__new__">➕ Create New Category…</option></select>
+  </div>
+  <div class="field"><label>Date of Contact</label><input id="lpDate" placeholder="today, tomorrow, 7/20/26…" value="${p.dateOfContact? p.dateOfContact.toISOString().slice(0,10):''}"></div>
+  <div class="field"><label>Notes / Next Steps</label><textarea id="lpNotes" rows="3">${escapeHtml(p.notes||'')}</textarea></div>
+  <div class="field">
+    <label>Edge Tracker</label>
+    <select id="lpTracker">${USERS.map(u=>`<option value="${u.id}" ${p.edgeTracker===u.id?'selected':''}>${u.name}</option>`).join('')}</select>
+  </div>
+  ${isConverted ? `
+  <div class="section-label">Deal Terms (${p.dealType==='sale'?'Sale':'Lease'})</div>
+  <div class="field-row">
+    <div class="field"><label>Building</label><input id="lpBuilding" value="${escapeAttr(p.building||'')}"></div>
+    <div class="field"><label>Space #</label><input id="lpSpaceNum" value="${escapeAttr(p.spaceNum||'')}"></div>
+  </div>
+  <div class="field-row">
+    <div class="field"><label>Size</label><input id="lpSize" value="${escapeAttr(p.size||'')}"></div>
+    <div class="field"><label>${p.dealType==='sale'?'Price':'Rent'}</label><input id="lpMoney" value="${escapeAttr(p.dealType==='sale'? (p.price||'') : (p.rent||''))}"></div>
+  </div>
+  <div class="field-row">
+    <div class="field"><label>Term</label><input id="lpTerm" value="${escapeAttr(p.term||'')}"></div>
+    <div class="field"><label>TI Allowance</label><input id="lpTI" value="${escapeAttr(p.tiAllowance||'')}"></div>
+  </div>
+  <div class="field">
+    <label>Stage</label>
+    <select id="lpStage">${lsrStagesForTrack(p.dealType).map(sid=>`<option value="${sid}" ${p.stage===sid?'selected':''}>${LSR_STAGE_MAP[sid].name}</option>`).join('')}</select>
+  </div>
+  ` : ''}
+  ${(p.stage==='dead'||p.stage==='notInterested') ? `<div class="field"><div class="lsr-dead-date">Marked ${p.stage==='dead'?'Dead':'Not Interested'} on ${p.deadDate?fmtDate(p.deadDate):'—'}</div></div>` : ''}
+  <button class="btn" data-action="lsrSaveProspect" style="margin-top:8px;width:100%;">Save Changes</button>
+  `;
+}
+
+/* ---- New Prospect / New Deal creation (small floating modal) ---- */
+function openLSRNewProspectModal(clientId, categoryId, directToLOI){
+  state.lsrNewProspectModal = {
+    clientId, categoryId: categoryId||null, directToLOI: !!directToLOI, tenantName:'', dateOfContact:'', notes:'',
+    edgeTracker: state.currentUser.id, dealType: directToLOI? 'lease':null,
+    building:'', spaceNum:'', size:'', money:'', term:'', tiAllowance:''
+  };
+}
+function renderLSRNewProspectModal(){
+  const m = state.lsrNewProspectModal;
+  const listing = db.lists.find(x=>x.id==='listings').clients.find(c=>c.id===m.clientId);
+  lsrEnsureListing(listing);
+  const allCats = DEFAULT_PROPERTY_CATEGORIES.concat(listing.categoryConfig.custom);
+  const otherListings = db.lists.find(x=>x.id==='listings').clients.filter(c=>c.id!==listing.id);
+  const overlay = document.createElement('div');
+  overlay.className='modal-overlay'; overlay.style.zIndex=270;
+  overlay.innerHTML = `
+  <div class="modal-card">
+    <div class="modal-head"><div class="modal-title">${m.directToLOI? 'New Deal (LOI)':'New Prospect'}</div><button class="modal-close" data-action="lsrCloseNewProspect">✕</button></div>
+    <div class="modal-body">
+      <div class="field"><label>Tenant / Company</label><input id="npName" value="${escapeAttr(m.tenantName)}"></div>
+      ${!m.directToLOI ? `
+      <div class="field">
+        <label>Category</label>
+        <select id="npCategory">${allCats.map(c=>`<option value="${c.id}" ${m.categoryId===c.id?'selected':''}>${escapeHtml(c.name)}</option>`).join('')}<option value="__new__">➕ Create New Category…</option></select>
+      </div>
+      <div class="field"><label>Date of Contact</label><input id="npDate" placeholder="today, tomorrow…" value="${escapeAttr(m.dateOfContact)}"></div>
+      ` : `
+      <div class="field">
+        <label>Category</label>
+        <select id="npCategory"><option value="">— none —</option>${allCats.map(c=>`<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('')}<option value="__new__">➕ Create New Category…</option></select>
+      </div>
+      <div class="type-toggle">
+        <button class="${m.dealType==='lease'?'active':''}" data-npdealtype="lease">Lease</button>
+        <button class="${m.dealType==='sale'?'active':''}" data-npdealtype="sale">Sale</button>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Building</label><input id="npBuilding" value="${escapeAttr(m.building)}"></div>
+        <div class="field"><label>Space #</label><input id="npSpaceNum" value="${escapeAttr(m.spaceNum)}"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Size</label><input id="npSize" value="${escapeAttr(m.size)}"></div>
+        <div class="field"><label>${m.dealType==='sale'?'Price':'Rent'}</label><input id="npMoney" value="${escapeAttr(m.money)}"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Term</label><input id="npTerm" value="${escapeAttr(m.term)}"></div>
+        <div class="field"><label>TI Allowance</label><input id="npTI" value="${escapeAttr(m.tiAllowance)}"></div>
+      </div>
+      `}
+      <div class="field"><label>Notes</label><textarea id="npNotes" rows="2">${escapeHtml(m.notes)}</textarea></div>
+      <div class="field">
+        <label>Edge Tracker</label>
+        <select id="npTracker">${USERS.map(u=>`<option value="${u.id}" ${m.edgeTracker===u.id?'selected':''}>${u.name}</option>`).join('')}</select>
+      </div>
+      ${otherListings.length? `
+      <div class="field">
+        <label>Also discussing with these listings? (optional)</label>
+        <div style="display:flex;flex-direction:column;gap:6px;max-height:120px;overflow-y:auto;">
+          ${otherListings.map(ol=>`
+            <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;">
+              <input type="checkbox" class="npOtherListing" value="${ol.id}" style="width:auto;"> ${escapeHtml(ol.name)}
+            </label>`).join('')}
+        </div>
+      </div>` : ''}
+    </div>
+    <div class="modal-foot">
+      <button class="btn secondary" data-action="lsrCloseNewProspect">Cancel</button>
+      <button class="btn" data-action="lsrSaveNewProspect">${m.directToLOI?'Create Deal':'Create Prospect'}</button>
+    </div>
+  </div>`;
+  document.getElementById('app').appendChild(overlay);
+  wireCategoryCreateOption(overlay.querySelector('#npCategory'), listing);
+  overlay.querySelector('[data-action="lsrCloseNewProspect"]').onclick=()=>{ state.lsrNewProspectModal=null; render(); };
+  overlay.querySelectorAll('[data-npdealtype]').forEach(b=>b.onclick=()=>{ m.dealType=b.dataset.npdealtype; render(); });
+  overlay.querySelector('[data-action="lsrSaveNewProspect"]').onclick=()=>{
+    const name = document.getElementById('npName').value.trim();
+    if(!name){ flashToast('Give it a tenant/company name.'); return; }
+    const categoryId = document.getElementById('npCategory').value || null;
+    const notes = document.getElementById('npNotes').value.trim();
+    const edgeTracker = document.getElementById('npTracker').value;
+    const newProspect = {
+      id:'prospect'+uid(), tenantName:name, contactId:null, categoryId,
+      stage: m.directToLOI? 'loi' : 'interested',
+      dealType: m.directToLOI? m.dealType : null,
+      dateOfContact: m.directToLOI? new Date() : parseNaturalDate(document.getElementById('npDate').value.trim()),
+      notes, edgeTracker, deadDate:null,
+      building:'', spaceNum:'', size:'', rent:'', price:'', term:'', tiAllowance:'', dealNotes:'', commission1Paid:false, commission2Paid:false
+    };
+    if(m.directToLOI){
+      newProspect.building = document.getElementById('npBuilding').value.trim();
+      newProspect.spaceNum = document.getElementById('npSpaceNum').value.trim();
+      newProspect.size = document.getElementById('npSize').value.trim();
+      const moneyVal = document.getElementById('npMoney').value.trim();
+      if(m.dealType==='sale') newProspect.price=moneyVal; else newProspect.rent=moneyVal;
+      newProspect.term = document.getElementById('npTerm').value.trim();
+      newProspect.tiAllowance = document.getElementById('npTI').value.trim();
+    }
+    listing.prospects.push(newProspect);
+    const otherChecks = Array.from(overlay.querySelectorAll('.npOtherListing:checked')).map(c=>c.value);
+    otherChecks.forEach(olid=>{
+      const ol = db.lists.find(x=>x.id==='listings').clients.find(c=>c.id===olid);
+      lsrEnsureListing(ol);
+      ol.prospects.push({
+        id:'prospect'+uid(), tenantName:name, contactId:newProspect.contactId, categoryId:null,
+        stage:'contacted', dealType:null, dateOfContact:new Date(), notes:'(stubbed from '+listing.name+' — fill in details)',
+        edgeTracker, deadDate:null, building:'',spaceNum:'',size:'',rent:'',price:'',term:'',tiAllowance:'',dealNotes:''
+      });
+    });
+    state.lsrNewProspectModal=null;
+    if(edgeTracker !== state.currentUser.id){
+      notifyNewLSRTracker(edgeTracker, newProspect, listing);
+    } else {
+      flashToast(`${name} added${otherChecks.length? ` and stubbed into ${otherChecks.length} other listing(s)`:''}.`);
+    }
+    render();
+  };
+}
+
+/* ---- Convert to Deal (small floating modal) ---- */
+function openLSRConvertModal(clientId, prospectId){
+  state.lsrConvertModal = {clientId, prospectId, dealType:'lease', building:'', spaceNum:'', size:'', money:'', term:'', tiAllowance:''};
+}
+function renderLSRConvertModal(){
+  const m = state.lsrConvertModal;
+  const listing = db.lists.find(x=>x.id==='listings').clients.find(c=>c.id===m.clientId);
+  const p = listing.prospects.find(x=>x.id===m.prospectId);
+  if(!p){ state.lsrConvertModal=null; return; }
+  const overlay = document.createElement('div');
+  overlay.className='modal-overlay'; overlay.style.zIndex=270;
+  overlay.innerHTML = `
+  <div class="modal-card">
+    <div class="modal-head"><div class="modal-title">Convert ${escapeHtml(p.tenantName)} to Deal</div><button class="modal-close" data-action="lsrCloseConvert">✕</button></div>
+    <div class="modal-body">
+      <div class="type-toggle">
+        <button class="${m.dealType==='lease'?'active':''}" data-convdealtype="lease">Lease</button>
+        <button class="${m.dealType==='sale'?'active':''}" data-convdealtype="sale">Sale</button>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Building</label><input id="cvBuilding" value="${escapeAttr(m.building)}"></div>
+        <div class="field"><label>Space #</label><input id="cvSpaceNum" value="${escapeAttr(m.spaceNum)}"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Size</label><input id="cvSize" value="${escapeAttr(m.size)}"></div>
+        <div class="field"><label>${m.dealType==='sale'?'Price':'Rent'}</label><input id="cvMoney" value="${escapeAttr(m.money)}"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Term</label><input id="cvTerm" value="${escapeAttr(m.term)}"></div>
+        <div class="field"><label>TI Allowance</label><input id="cvTI" value="${escapeAttr(m.tiAllowance)}"></div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn secondary" data-action="lsrCloseConvert">Cancel</button>
+      <button class="btn" data-action="lsrConfirmConvert">Convert to LOI</button>
+    </div>
+  </div>`;
+  document.getElementById('app').appendChild(overlay);
+  overlay.querySelector('[data-action="lsrCloseConvert"]').onclick=()=>{ state.lsrConvertModal=null; render(); };
+  overlay.querySelectorAll('[data-convdealtype]').forEach(b=>b.onclick=()=>{ m.dealType=b.dataset.convdealtype; render(); });
+  overlay.querySelector('[data-action="lsrConfirmConvert"]').onclick=()=>{
+    p.dealType = m.dealType;
+    p.stage = 'loi';
+    p.building = document.getElementById('cvBuilding').value.trim();
+    p.spaceNum = document.getElementById('cvSpaceNum').value.trim();
+    p.size = document.getElementById('cvSize').value.trim();
+    const moneyVal = document.getElementById('cvMoney').value.trim();
+    if(m.dealType==='sale') p.price=moneyVal; else p.rent=moneyVal;
+    p.term = document.getElementById('cvTerm').value.trim();
+    p.tiAllowance = document.getElementById('cvTI').value.trim();
+    state.lsrConvertModal=null;
+    flashToast(`${p.tenantName} converted to an LOI (${m.dealType==='sale'?'Sale':'Lease'}).`);
+    render();
+  };
+}
+
+/* ---- Category manager (small floating modal) ---- */
+function renderLSRCategoryManagerModal(){
+  const clientId = state.lsrCategoryManagerOpen;
+  const listing = db.lists.find(x=>x.id==='listings').clients.find(c=>c.id===clientId);
+  lsrEnsureListing(listing);
+  const cfg = listing.categoryConfig;
+  const all = DEFAULT_PROPERTY_CATEGORIES.concat(cfg.custom);
+  const ordered = cfg.order.map(id=>all.find(c=>c.id===id)).filter(Boolean);
+  all.forEach(c=>{ if(!cfg.order.includes(c.id)) ordered.push(c); });
+  const overlay = document.createElement('div');
+  overlay.className='modal-overlay'; overlay.style.zIndex=270;
+  overlay.innerHTML = `
+  <div class="modal-card">
+    <div class="modal-head"><div class="modal-title">Manage Categories — ${escapeHtml(listing.name)}</div><button class="modal-close" data-action="lsrCloseCatMgr">✕</button></div>
+    <div class="modal-body">
+      <p style="font-size:12px;color:var(--ink-soft);margin-top:0;">Hide categories this property doesn't need, reorder them, or add your own. This only affects this listing.</p>
+      ${ordered.map((c,i)=>`
+        <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--line-soft);">
+          <span style="flex:1;font-size:13px;${cfg.hidden.includes(c.id)?'color:var(--ink-soft);text-decoration:line-through;':''}">${escapeHtml(c.name)}</span>
+          <button class="btn secondary sm" data-catmove="up:${c.id}" ${i===0?'disabled':''}>↑</button>
+          <button class="btn secondary sm" data-catmove="down:${c.id}" ${i===ordered.length-1?'disabled':''}>↓</button>
+          <button class="btn secondary sm" data-cattogglehide="${c.id}">${cfg.hidden.includes(c.id)?'Show':'Hide'}</button>
+        </div>`).join('')}
+      <div class="field" style="margin-top:14px;">
+        <label>Add a new category</label>
+        <div style="display:flex;gap:8px;">
+          <input id="newCatName" placeholder="e.g., Barbecue" style="flex:1;">
+          <button class="btn sm" data-action="lsrAddCategory">Add</button>
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot"><button class="btn secondary" data-action="lsrCloseCatMgr">Close</button></div>
+  </div>`;
+  document.getElementById('app').appendChild(overlay);
+  overlay.querySelectorAll('[data-action="lsrCloseCatMgr"]').forEach(b=>b.onclick=()=>{ state.lsrCategoryManagerOpen=null; render(); });
+  overlay.querySelectorAll('[data-catmove]').forEach(el=>el.onclick=()=>{
+    const [dir,id] = el.dataset.catmove.split(':');
+    if(!cfg.order.includes(id)) cfg.order = ordered.map(c=>c.id);
+    const idx = cfg.order.indexOf(id);
+    const swap = dir==='up'? idx-1 : idx+1;
+    if(swap<0||swap>=cfg.order.length) return;
+    const tmp=cfg.order[idx]; cfg.order[idx]=cfg.order[swap]; cfg.order[swap]=tmp;
+    render();
+  });
+  overlay.querySelectorAll('[data-cattogglehide]').forEach(el=>el.onclick=()=>{
+    const id = el.dataset.cattogglehide;
+    if(cfg.hidden.includes(id)) cfg.hidden = cfg.hidden.filter(x=>x!==id);
+    else cfg.hidden.push(id);
+    render();
+  });
+  overlay.querySelector('[data-action="lsrAddCategory"]').onclick=()=>{
+    const name = document.getElementById('newCatName').value.trim();
+    if(!name) return;
+    const id = 'custom'+uid();
+    cfg.custom.push({id, name});
+    cfg.order.push(id);
+    flashToast(`"${name}" category added.`);
+    render();
+  };
+}
+
+/* ---- Wiring for everything above, called from attachModalHandlers ---- */
+function wireCategoryCreateOption(selectEl, listing){
+  if(!selectEl) return;
+  lsrEnsureListing(listing);
+  let lastValue = selectEl.value;
+  selectEl.addEventListener('change', ()=>{
+    if(selectEl.value==='__new__'){
+      const name = prompt('Name the new category (e.g., "Barbecue"):');
+      if(!name){ selectEl.value = lastValue; return; }
+      const id = 'custom'+uid();
+      listing.categoryConfig.custom.push({id, name});
+      listing.categoryConfig.order.push(id);
+      const opt = document.createElement('option');
+      opt.value = id; opt.textContent = name;
+      const newCatOption = Array.from(selectEl.options).find(o=>o.value==='__new__');
+      selectEl.insertBefore(opt, newCatOption);
+      selectEl.value = id;
+      lastValue = id;
+      flashToast(`"${name}" category added.`);
+    } else {
+      lastValue = selectEl.value;
+    }
+  });
+}
+function wireLSRInlineHandlers(root){
+  const searchBox = root.querySelector('#lsrSearchBox');
+  if(searchBox){
+    searchBox.oninput=()=>{ state.lsrSearch=searchBox.value; render(); };
+    if(state.lsrSearchFocused){ searchBox.focus(); const len=searchBox.value.length; searchBox.setSelectionRange(len,len); }
+    searchBox.onfocus=()=>{ state.lsrSearchFocused=true; };
+    searchBox.onblur=()=>{ state.lsrSearchFocused=false; };
+  }
+  const trackerSel = root.querySelector('#lsrTrackerSelect');
+  if(trackerSel) trackerSel.onchange=()=>{ state.lsrTrackerFilter=trackerSel.value; render(); };
+  root.querySelectorAll('[data-lsrtoggle]').forEach(el=>el.onclick=()=>{
+    const k=el.dataset.lsrtoggle; state.lsrCollapsed[k]=!state.lsrCollapsed[k]; render();
+  });
+  root.querySelectorAll('[data-lsropen]').forEach(el=>el.onclick=(ev)=>{
+    if(ev.target.closest('[data-stopprop]')) return;
+    openLSRProspect(el.dataset.client, el.dataset.lsropen); render();
+  });
+  root.querySelectorAll('[data-lsrconvert]').forEach(el=>el.onclick=(ev)=>{
+    ev.stopPropagation();
+    openLSRConvertModal(el.dataset.client, el.dataset.lsrconvert); render();
+  });
+  root.querySelectorAll('[data-lsrcomm1]').forEach(el=>el.onclick=(ev)=>{
+    ev.stopPropagation();
+    const listing = db.lists.find(x=>x.id==='listings').clients.find(c=>c.id===el.dataset.client);
+    const p = listing.prospects.find(x=>x.id===el.dataset.lsrcomm1);
+    p.commission1Paid = el.checked;
+    render();
+  });
+  root.querySelectorAll('[data-lsrcomm2]').forEach(el=>el.onclick=(ev)=>{
+    ev.stopPropagation();
+    const listing = db.lists.find(x=>x.id==='listings').clients.find(c=>c.id===el.dataset.client);
+    const p = listing.prospects.find(x=>x.id===el.dataset.lsrcomm2);
+    p.commission2Paid = !p.commission2Paid;
+    if(!lsrDealIsActive(p)) flashToast(`${p.tenantName} — both commission halves paid. No longer an active deal.`);
+    render();
+  });
+  root.querySelectorAll('[data-action="lsrAddProspect"]').forEach(el=>el.onclick=()=>{
+    openLSRNewProspectModal(el.dataset.client, el.dataset.category); render();
+  });
+  const newDealBtn = root.querySelector('[data-action="lsrNewDeal"]'); if(newDealBtn) newDealBtn.onclick=()=>{
+    openLSRNewProspectModal(newDealBtn.dataset.client, null, true); render();
+  };
+  const mgmtBtn = root.querySelector('[data-action="lsrManageCategories"]'); if(mgmtBtn) mgmtBtn.onclick=()=>{
+    state.lsrCategoryManagerOpen = mgmtBtn.dataset.client; render();
+  };
+  const pdfBtn = root.querySelector('[data-action="lsrExportPdf"]'); if(pdfBtn) pdfBtn.onclick=()=>{ window.print(); };
+}
+function notifyNewLSRTracker(newTrackerId, p, listing){
+  if(newTrackerId===state.currentUser.id) return;
+  const u = USERS.find(x=>x.id===newTrackerId);
+  if(!u) return;
+  // A real to-do, assigned to them and marked "new" — reuses the existing float-to-top +
+  // email mechanism to-do's already use, rather than inventing a second notification system.
+  db.todos.push({
+    id:uid(), title:`Review lead: ${p.tenantName} (${listing.name})`, category:listing.name,
+    dueDate: addDays(todayDate(),1), assignedTo:newTrackerId, createdBy:state.currentUser.id,
+    type:'task', private:false, completed:false, isNew:true,
+    notes:`You're now the Edge Tracker for ${p.tenantName} at ${listing.name}.`,
+    listId:'listings', clientId:listing.id, dealId:null, entryId:null, attachments:[]
+  });
+  const subject = 'You Have a New Lead Assigned on Southwest Edge';
+  const body = `Hi ${u.name.split(' ')[0]},\n\n${state.currentUser.name} made you the Edge Tracker for:\n\n"${p.tenantName}" — ${listing.name}\n\nA to-do has been added to your list to follow up — it'll be marked New until you open it.\n\nLog in to view it: ${portalUrl()}\n\n— Sent from Southwest Edge Portal`;
+  openEmailDraft(u, subject, body);
+  flashToast(`Email draft opened for ${u.name} — they'll also see a new to-do waiting for them.`);
+}
+function wireLSRProspectBodyHandlers(root, l, listing, p){
+  const isConverted = p.stage!=='contacted' && p.stage!=='interested' && p.stage!=='dead' && p.stage!=='notInterested';
+  wireCategoryCreateOption(root.querySelector('#lpCategory'), listing);
+  const pickBtn = root.querySelector('[data-action="lsrPickContact"]'); if(pickBtn) pickBtn.onclick=()=>{
+    openContactPicker({lsrClientId: listing.id, lsrProspectId: p.id}); render();
+  };
+  const delBtn = root.querySelector('[data-action="lsrDeleteProspect"]'); if(delBtn) delBtn.onclick=()=>{
+    if(confirm(`Delete ${p.tenantName}? This can't be undone.`)){
+      listing.prospects = listing.prospects.filter(x=>x.id!==p.id);
+      state.modalStack.pop(); render();
+    }
+  };
+  const markDeadBtn = root.querySelector('[data-action="lsrMarkDead"]'); if(markDeadBtn) markDeadBtn.onclick=()=>{
+    p.stage='dead'; p.deadDate=new Date(); state.modalStack.pop(); flashToast(`${p.tenantName} marked Dead.`); render();
+  };
+  const markNI = root.querySelector('[data-action="lsrMarkNotInterested"]'); if(markNI) markNI.onclick=()=>{
+    p.stage='notInterested'; p.deadDate=new Date(); state.modalStack.pop(); flashToast(`${p.tenantName} marked Not Interested.`); render();
+  };
+  const reviveBtn = root.querySelector('[data-action="lsrRevive"]'); if(reviveBtn) reviveBtn.onclick=()=>{
+    p.stage='interested'; p.deadDate=null; flashToast(`${p.tenantName} revived to Interested Prospect.`); render();
+  };
+  const todoBtn = root.querySelector('[data-action="lsrCreateTodo"]'); if(todoBtn) todoBtn.onclick=()=>{
+    state.modalStack.pop();
+    openNewTodoModal({category: p.tenantName});
+    render();
+  };
+  const saveBtn = root.querySelector('[data-action="lsrSaveProspect"]'); if(saveBtn) saveBtn.onclick=()=>{
+    const prevTracker = p.edgeTracker;
+    p.tenantName = document.getElementById('lpName').value.trim()||p.tenantName;
+    p.categoryId = document.getElementById('lpCategory').value;
+    p.dateOfContact = parseNaturalDate(document.getElementById('lpDate').value.trim());
+    p.notes = document.getElementById('lpNotes').value.trim();
+    p.edgeTracker = document.getElementById('lpTracker').value;
+    if(isConverted){
+      p.building = document.getElementById('lpBuilding').value.trim();
+      p.spaceNum = document.getElementById('lpSpaceNum').value.trim();
+      p.size = document.getElementById('lpSize').value.trim();
+      const moneyVal = document.getElementById('lpMoney').value.trim();
+      if(p.dealType==='sale') p.price = moneyVal; else p.rent = moneyVal;
+      p.term = document.getElementById('lpTerm').value.trim();
+      p.tiAllowance = document.getElementById('lpTI').value.trim();
+      p.stage = document.getElementById('lpStage').value;
+    }
+    if(p.edgeTracker !== prevTracker) notifyNewLSRTracker(p.edgeTracker, p, listing);
+    flashToast('Saved.');
+    render();
+  };
+}
+
 function renderEntryModalBody(l,e){
   const todos = db.todos.filter(t=>t.entryId===e.id).filter(visibleTodo);
   const owner = USERS.find(u=>u.id===e.ownerId);
@@ -2310,6 +3323,14 @@ function attachModalHandlers(root){
     flashToast(d.activeDeal ? `${d.name} marked as an Active Deal.` : `${d.name} removed from Active Deals.`);
     render();
   });
+  root.querySelectorAll('[data-togglecaexec]').forEach(el=>el.onclick=(ev)=>{
+    ev.stopPropagation();
+    const l=db.lists.find(x=>x.id===el.dataset.listid); const c=l.clients.find(x=>x.id===el.dataset.client);
+    const d=c.deals.find(x=>x.id===el.dataset.togglecaexec);
+    d.caExecuted = el.checked;
+    flashToast(d.caExecuted ? `CA marked executed for ${d.name}.` : `CA marked outstanding for ${d.name}.`);
+    render();
+  });
   const pick = root.querySelector('[data-action="pickContact"]'); if(pick) pick.onclick=()=>{
     openContactPicker({clientId: pick.dataset.client, slot: pick.dataset.slot}); render();
   };
@@ -2322,7 +3343,7 @@ function attachModalHandlers(root){
     const l=db.lists.find(x=>x.id===addDeal.dataset.client && false); // unused
     const frame = state.modalStack[state.modalStack.length-1];
     const list=db.lists.find(x=>x.id===frame.listId); const c=list.clients.find(x=>x.id===addDeal.dataset.client);
-    c.deals.push({id:'deal'+uid(), name, complete:false, activeDeal:false, dueDate:null});
+    c.deals.push({id:'deal'+uid(), name, complete:false, activeDeal:false, dueDate:null, caExecuted: list.id==='listings'});
     render();
   };
   const ntDeal = root.querySelector('[data-action="newTodoInDeal"]'); if(ntDeal) ntDeal.onclick=()=>{
@@ -2344,6 +3365,13 @@ function attachModalHandlers(root){
     };
   });
   if(state.contactPickerOpen) attachContactPickerHandlers(root);
+  wireLSRInlineHandlers(root);
+  const topFrame = state.modalStack[state.modalStack.length-1];
+  if(topFrame && topFrame.kind==='lsrProspect'){
+    const l=db.lists.find(x=>x.id==='listings'); const c=l.clients.find(x=>x.id===topFrame.clientId);
+    const p=c.prospects.find(x=>x.id===topFrame.prospectId);
+    if(p) wireLSRProspectBodyHandlers(root, l, c, p);
+  }
 }
 function openNewTodoContext(){} // placeholder no-op used above safely
 
@@ -2373,7 +3401,7 @@ function renderContactPickerPanel(){
   const q = state.contactPickerQuery.toLowerCase();
   const matches = q ? db.contacts.filter(c=>(`${c.last} ${c.first}`).toLowerCase().includes(q) || (`${c.first} ${c.last}`).toLowerCase().includes(q)) : [];
   return `
-  <div class="modal-overlay" style="z-index:200;" id="contactPickerOverlay">
+  <div class="modal-overlay" style="z-index:600;" id="contactPickerOverlay">
     <div class="modal-card">
       <div class="modal-head"><div class="modal-title">${standalone?'New Contact':'Attach Contact'}</div><button class="modal-close" data-action="closeContactPicker">✕</button></div>
       <div class="modal-body">
@@ -2415,7 +3443,7 @@ function renderContactPickerPanel(){
 function renderDuplicatePrompt(){
   const dp = state.duplicatePrompt;
   const overlay = document.createElement('div');
-  overlay.className='modal-overlay'; overlay.style.zIndex=250;
+  overlay.className='modal-overlay'; overlay.style.zIndex=650;
   overlay.innerHTML = `
     <div class="modal-card" style="width:420px;">
       <div class="modal-head"><div class="modal-title">Possible Duplicate</div></div>
@@ -2442,7 +3470,12 @@ function renderDuplicatePrompt(){
 }
 function finishContactPick(contactId){
   state.duplicatePrompt=null;
-  if(state.contactPickerOpen && state.contactPickerOpen.clientId){
+  if(state.contactPickerOpen && state.contactPickerOpen.lsrProspectId){
+    const {lsrClientId, lsrProspectId} = state.contactPickerOpen;
+    const listing = db.lists.find(x=>x.id==='listings').clients.find(c=>c.id===lsrClientId);
+    const p = listing.prospects.find(x=>x.id===lsrProspectId);
+    p.contactId = contactId;
+  } else if(state.contactPickerOpen && state.contactPickerOpen.clientId){
     const {clientId, slot} = state.contactPickerOpen;
     const clientsList = db.lists.find(l=>l.type==='deep' && l.clients.some(c=>c.id===clientId));
     const client = clientsList.clients.find(c=>c.id===clientId);
@@ -2589,7 +3622,7 @@ function renderNewTodoModal(){
       newTd.isNew = true;
       const u=USERS.find(x=>x.id===assignTo);
       const subject = 'You Have a New To Do on Southwest Edge';
-      const body = `Hi ${u.name.split(' ')[0]},\n\n${state.currentUser.name} assigned you a new to-do:\n\n"${title}"${category?` (${category})`:''}${newTd.dueDate?`\nDue: ${fmtDate(newTd.dueDate)}`:''}\n\nLog in to Southwest Edge Portal to view it: [portal link]\n\n— Sent from Southwest Edge Portal`;
+      const body = `Hi ${u.name.split(' ')[0]},\n\n${state.currentUser.name} assigned you a new to-do:\n\n"${title}"${category?` (${category})`:''}${newTd.dueDate?`\nDue: ${fmtDate(newTd.dueDate)}`:''}\n\nLog in to Southwest Edge Portal to view it: ${portalUrl()}\n\n— Sent from Southwest Edge Portal`;
       openEmailDraft(u, subject, body);
       flashToast(`Email draft opened for ${u.name}.`);
     } else {
@@ -3024,6 +4057,15 @@ document.addEventListener('keydown', (ev)=>{
 });
 
 render();
+
+// Register the service worker so this can be "Added to Home Screen" as an installable
+// app. Fails silently anywhere this isn't supported (e.g. this preview sandbox) — the
+// app works exactly the same either way, this is purely additive.
+if('serviceWorker' in navigator){
+  window.addEventListener('load', ()=>{
+    navigator.serviceWorker.register('sw.js').catch(()=>{ /* not available here — fine */ });
+  });
+}
 </script>
 </body>
 </html>
