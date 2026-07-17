@@ -493,6 +493,7 @@ let state = {
   expandedTeamUser:null,
   toast:null,
   showAdminMenu:false,
+  showUserMenu:false,
   newTodoModal:null,            // {context:{...}} when open
   contactModal:null,            // 'master' | {id} for detail
   selectedContactIds:[],
@@ -1878,11 +1879,25 @@ function attachLoginHandlers(){
         : `Sign-in failed: ${error.message}`;
       submit.disabled=false; render(); return;
     }
-    const profile = await fetchMyProfile(data.user.id);
-    if(profile){
-      u.authId = profile.id;
-      if(!u.emailClient) u.emailClient = profile.email_client;
+    let profile = await fetchMyProfile(data.user.id);
+    let selfHealError = null;
+    if(!profile){
+      // Account exists but its profile row never got created (e.g. an earlier
+      // attempt hit an RLS error, exactly like this bug did) — self-heal it now.
+      const { error: createError } = await supabaseClient.from('profiles').insert({
+        id: data.user.id, name: u.name, email: u.email, role: u.role, initials: u.initials
+      });
+      if(!createError) profile = await fetchMyProfile(data.user.id);
+      else selfHealError = createError;
     }
+    if(!profile){
+      // Still no profile — do NOT silently let them into the app with no real
+      // account record. Show the real error so this can't fail invisibly again.
+      state.loginError = `Signed in, but couldn't create/find your profile: ${selfHealError ? selfHealError.message : 'unknown error'}. Contact an admin — likely a database permissions issue.`;
+      submit.disabled=false; render(); return;
+    }
+    u.authId = profile.id;
+    if(!u.emailClient) u.emailClient = profile.email_client;
     await fetchAllProfilesIntoUsers();
     if(!u.emailClient){
       state.pendingLoginUser = u;
@@ -1948,17 +1963,22 @@ function renderSidebar(){
   return `
   <div class="sidebar">
     <div class="sidebar-header">
-      <div class="sidebar-avatar">${cu.initials}</div>
-      <div>
-        <div class="sidebar-user">${cu.name}</div>
-        <div class="sidebar-sub">${cu.role}</div>
+      <div class="user-menu-trigger" data-action="toggleUserMenu" style="display:flex;align-items:center;gap:10px;cursor:pointer;position:relative;">
+        <div class="sidebar-avatar">${cu.initials}</div>
+        <div>
+          <div class="sidebar-user">${cu.name}</div>
+          <div class="sidebar-sub">${cu.role}</div>
+        </div>
+        ${state.showUserMenu ? `
+        <div class="admin-menu" style="top:100%;left:0;margin-top:6px;min-width:160px;">
+          <button class="admin-item" data-action="logout" style="width:100%;border:none;background:none;text-align:left;">⏻ Sign out</button>
+        </div>` : ''}
       </div>
       <div class="sidebar-topicons">
         <button class="icon-btn" data-action="openBlankEmail" title="New Email">✉️</button>
         ${!state.isMobile ? `<button class="icon-btn" data-action="openCalendarView" title="Calendar View">📅</button>` : ''}
         ${cu.role==='Admin' ? `<button class="icon-btn" data-action="toggleAdmin" title="Admin menu">☰</button>` : ''}
         <button class="icon-btn" data-action="openNotifSettings" title="Notification settings">⚙️</button>
-        <button class="icon-btn" data-action="logout" title="Sign out">⏻</button>
       </div>
     </div>
     <div class="nav-section-label">Smart Lists <button class="nav-add" data-action="addSmartList">+</button></div>
@@ -2912,6 +2932,7 @@ function attachShellHandlers(){
   const team=document.querySelector('[data-action="todoViewTeam"]'); if(team) team.onclick=()=>{state.todoView='team'; render();};
   const fab=document.querySelector('[data-action="newTodo"]'); if(fab) fab.onclick=()=>{ openNewTodoModal({}); render(); };
   const admin=document.querySelector('[data-action="toggleAdmin"]'); if(admin) admin.onclick=()=>{ state.showAdminMenu=!state.showAdminMenu; render(); };
+  const userMenuBtn=document.querySelector('[data-action="toggleUserMenu"]'); if(userMenuBtn) userMenuBtn.onclick=(ev)=>{ ev.stopPropagation(); state.showUserMenu=!state.showUserMenu; render(); };
   const logout=document.querySelector('[data-action="logout"]'); if(logout) logout.onclick=async ()=>{
     await supabaseClient.auth.signOut();
     state.screen='login'; state.currentUser=null; state.mainView={type:'smart',id:'todayMe'}; state.modalStack=[]; state.mobileScreen='nav'; render();
@@ -5143,6 +5164,9 @@ document.addEventListener('click', (ev)=>{
   }
   if(state.showWidgetPicker && !ev.target.closest('[data-action="toggleWidgetPicker"]') && !ev.target.closest('[data-widgettoggle]')){
     state.showWidgetPicker=false; changed=true;
+  }
+  if(state.showUserMenu && !ev.target.closest('[data-action="toggleUserMenu"]')){
+    state.showUserMenu=false; changed=true;
   }
   if(changed) render();
 });
