@@ -161,6 +161,16 @@
   }
   .cv-card-note:active{cursor:grabbing;}
 
+  /* ---------- PULL TO REFRESH ---------- */
+  #pullRefreshIndicator{
+    position:fixed;top:0;left:50%;transform:translate(-50%,-100%);z-index:900;
+    background:var(--edge);color:#fff;padding:8px 16px;border-radius:0 0 12px 12px;font-size:12.5px;font-weight:600;
+    box-shadow:var(--shadow-sm);transition:transform .15s ease-out;display:flex;align-items:center;gap:8px;
+  }
+  #pullRefreshIndicator.visible{transition:none;}
+  #pullRefreshIndicator .spin{display:inline-block;animation:pullspin 0.8s linear infinite;}
+  @keyframes pullspin{from{transform:rotate(0deg);}to{transform:rotate(360deg);}}
+
   /* ---------- SHELL ---------- */
   .shell{display:flex;height:100vh;width:100vw;}
   .sidebar{
@@ -500,6 +510,7 @@ let state = {
   globalSearchQuery:'',
   globalSearchFocused:false,
   quickLinks:null,
+  widgetOrder:null,
   newTodoModal:null,            // {context:{...}} when open
   contactModal:null,            // 'master' | {id} for detail
   selectedContactIds:[],
@@ -976,6 +987,11 @@ async function supaReorderQuickLinks(){
     const { error } = await supabaseClient.from('quick_links').update({display_order:i}).eq('id', links[i].id);
     if(error) console.error('supaReorderQuickLinks error:', error);
   }
+}
+async function supaSaveWidgetOrder(){
+  if(!state.currentUser || !state.currentUser.authId) return;
+  const { error } = await supabaseClient.from('profiles').update({widget_order: state.widgetOrder}).eq('id', state.currentUser.authId);
+  if(error) console.error('supaSaveWidgetOrder error:', error);
 }
 
 
@@ -2195,6 +2211,15 @@ function portalUrl(){
   // (Netlify, custom domain, etc.) without hardcoding any address.
   return window.location.origin + window.location.pathname;
 }
+async function doAppRefresh(){
+  try{
+    if('serviceWorker' in navigator){
+      const regs = await navigator.serviceWorker.getRegistrations();
+      for(const reg of regs) await reg.update();
+    }
+  } catch(e){ /* fine either way — reload below still fetches fresh over the network */ }
+  location.reload();
+}
 function openEmailDraft(toUser, subject, body){
   const client = (state.currentUser && state.currentUser.emailClient) || 'other';
   const enc = encodeURIComponent;
@@ -2306,6 +2331,7 @@ function attachLoginHandlers(){
     }
     u.authId = profile.id;
     if(!u.emailClient) u.emailClient = profile.email_client;
+    if(profile.widget_order) state.widgetOrder = profile.widget_order;
     await fetchAllProfilesIntoUsers();
     if(!u.emailClient){
       state.pendingLoginUser = u;
@@ -2384,6 +2410,7 @@ function renderSidebar(){
         </div>` : ''}
       </div>
       <div class="sidebar-topicons">
+        <button class="icon-btn" data-action="refreshApp" title="Refresh">🔄</button>
         <button class="icon-btn" data-action="openBlankEmail" title="New Email">✉️</button>
         ${!state.isMobile ? `<button class="icon-btn" data-action="openCalendarView" title="Calendar View">📅</button>` : ''}
         ${cu.role==='Admin' ? `<button class="icon-btn" data-action="toggleAdmin" title="Admin menu">☰</button>` : ''}
@@ -3021,9 +3048,20 @@ function wireMarketingListWizard(overlay, listing, allCats){
     };
   }
 }
+const WIDGET_RENDERERS = { calendar: renderCalendarWidget, weather: renderWeatherWidget, news: renderNewsWidget, quicklinks: renderQuickLinksWidget };
 function renderSidePanel(){
   if(state.isMobile) return ''; // widgets are desktop-only, full stop — no markup, no weather fetch
   const w = state.sidePanelWidgets;
+  const order = (state.widgetOrder||['calendar','weather','news','quicklinks']).filter(k=>WIDGET_RENDERERS[k]);
+  const visibleOrder = order.filter(k=>w[k]);
+  const widgetsHtml = visibleOrder.map((key,i)=>`
+    <div style="position:relative;">
+      <div style="position:absolute;top:12px;right:16px;display:flex;gap:2px;z-index:2;">
+        <button class="row-trash" data-movewidget="up:${key}" ${i===0?'disabled':''} title="Move up" style="opacity:.5;">↑</button>
+        <button class="row-trash" data-movewidget="down:${key}" ${i===visibleOrder.length-1?'disabled':''} title="Move down" style="opacity:.5;">↓</button>
+      </div>
+      ${WIDGET_RENDERERS[key]()}
+    </div>`).join('');
   return `
   <div class="side-panel">
     <div style="display:flex;justify-content:flex-end;position:relative;">
@@ -3044,11 +3082,8 @@ function renderSidePanel(){
         </label>
       </div>` : ''}
     </div>
-    ${w.calendar ? renderCalendarWidget() : ''}
-    ${w.weather ? renderWeatherWidget() : ''}
-    ${w.news ? renderNewsWidget() : ''}
-    ${w.quicklinks ? renderQuickLinksWidget() : ''}
-    ${(!w.calendar && !w.weather && !w.news && !w.quicklinks) ? `<div class="widget-card" style="text-align:center;color:var(--ink-soft);font-size:12.5px;">No widgets shown. Click "Widgets" above to add some.</div>` : ''}
+    ${widgetsHtml}
+    ${!visibleOrder.length ? `<div class="widget-card" style="text-align:center;color:var(--ink-soft);font-size:12.5px;">No widgets shown. Click "Widgets" above to add some.</div>` : ''}
   </div>`;
 }
 function caOutstandingCount(){
@@ -3532,6 +3567,7 @@ function attachShellHandlers(){
   const notifBtn=document.querySelector('[data-action="openNotifSettings"]'); if(notifBtn) notifBtn.onclick=()=>{
     state.notifSettingsOpen=true; render();
   };
+  const refreshBtn=document.querySelector('[data-action="refreshApp"]'); if(refreshBtn) refreshBtn.onclick=()=>{ doAppRefresh(); };
   const newEmailBtn=document.querySelector('[data-action="openBlankEmail"]'); if(newEmailBtn) newEmailBtn.onclick=()=>{
     openBlankEmailDraft();
     flashToast('Opening a new email draft…');
@@ -3579,6 +3615,23 @@ function attachShellHandlers(){
     if(idx<0 || swap<0 || swap>=links.length) return;
     const tmp = links[idx]; links[idx] = links[swap]; links[swap] = tmp;
     supaReorderQuickLinks();
+    render();
+  });
+  document.querySelectorAll('[data-movewidget]').forEach(el=>el.onclick=()=>{
+    const [dir, key] = el.dataset.movewidget.split(':');
+    if(!state.widgetOrder) state.widgetOrder = ['calendar','weather','news','quicklinks'];
+    const w = state.sidePanelWidgets;
+    const visibleOrder = state.widgetOrder.filter(k=>w[k]);
+    const vIdx = visibleOrder.indexOf(key);
+    const vSwap = dir==='up' ? vIdx-1 : vIdx+1;
+    if(vIdx<0 || vSwap<0 || vSwap>=visibleOrder.length) return;
+    const neighborKey = visibleOrder[vSwap];
+    const fullIdxA = state.widgetOrder.indexOf(key);
+    const fullIdxB = state.widgetOrder.indexOf(neighborKey);
+    const tmp = state.widgetOrder[fullIdxA];
+    state.widgetOrder[fullIdxA] = state.widgetOrder[fullIdxB];
+    state.widgetOrder[fullIdxB] = tmp;
+    supaSaveWidgetOrder();
     render();
   });
   document.querySelectorAll('[data-action="connectOutlook"]').forEach(outlookBtn=>outlookBtn.onclick=()=>{
@@ -5884,6 +5937,56 @@ render = function(){
 
 window.addEventListener('resize', ()=>{ state.isMobile = window.innerWidth<=820; render(); });
 
+// Pull-to-refresh — native browsers suppress this gesture inside an installed
+// PWA (no browser chrome to trigger it), so it's rebuilt by hand here. Mobile
+// only, and only engages when the visible content is already scrolled to the
+// very top (so it never fights with normal scrolling further down the page).
+(function setupPullToRefresh(){
+  const PULL_THRESHOLD = 70;
+  let startY = null, pulling = false, refreshing = false;
+  const indicator = document.createElement('div');
+  indicator.id = 'pullRefreshIndicator';
+  indicator.textContent = '↓ Pull to refresh';
+  document.body.appendChild(indicator);
+
+  function contentEl(){ return document.querySelector('.content'); }
+
+  document.addEventListener('touchstart', (ev)=>{
+    if(!state.isMobile || refreshing) return;
+    const el = contentEl();
+    if(!el || el.scrollTop > 0) { startY = null; return; }
+    startY = ev.touches[0].clientY;
+    pulling = true;
+  }, {passive:true});
+
+  document.addEventListener('touchmove', (ev)=>{
+    if(!pulling || startY===null || refreshing) return;
+    const dy = ev.touches[0].clientY - startY;
+    if(dy <= 0){ indicator.style.transform='translate(-50%,-100%)'; indicator.classList.remove('visible'); return; }
+    ev.preventDefault();
+    const dist = Math.min(dy, PULL_THRESHOLD*1.6);
+    indicator.classList.add('visible');
+    indicator.style.transform = `translate(-50%, ${dist - 40}px)`;
+    indicator.textContent = dy > PULL_THRESHOLD ? '↑ Release to refresh' : '↓ Pull to refresh';
+  }, {passive:false});
+
+  document.addEventListener('touchend', (ev)=>{
+    if(!pulling || startY===null) { pulling=false; startY=null; return; }
+    const dy = (ev.changedTouches && ev.changedTouches[0]) ? ev.changedTouches[0].clientY - startY : 0;
+    pulling = false; startY = null;
+    if(dy > PULL_THRESHOLD){
+      refreshing = true;
+      indicator.classList.remove('visible');
+      indicator.style.transform = 'translate(-50%, 20px)';
+      indicator.innerHTML = '<span class="spin">↻</span> Refreshing…';
+      doAppRefresh();
+    } else {
+      indicator.classList.remove('visible');
+      indicator.style.transform = 'translate(-50%,-100%)';
+    }
+  }, {passive:true});
+})();
+
 // One persistent listener for the whole app's lifetime (rather than re-registering per
 // render) so the hamburger menu and nav ellipsis menus reliably close on outside click
 // or Escape — not just by clicking their own toggle button again.
@@ -5977,6 +6080,7 @@ render();
         if(u){
           u.authId = profile.id;
           if(!u.emailClient) u.emailClient = profile.email_client;
+          if(profile.widget_order) state.widgetOrder = profile.widget_order;
           if(u.emailClient){
             state.currentUser = u;
             state.screen = 'app';
