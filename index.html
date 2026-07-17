@@ -496,6 +496,9 @@ let state = {
   showUserMenu:false,
   addUsersPrompt:null,          // {listId, clientId} — shown right after creating a new Client/Listing
   showArchivedClients:false,
+  listsCollapsed:false,
+  globalSearchQuery:'',
+  globalSearchFocused:false,
   newTodoModal:null,            // {context:{...}} when open
   contactModal:null,            // 'master' | {id} for detail
   selectedContactIds:[],
@@ -2368,7 +2371,11 @@ function renderSidebar(){
         <span class="nav-icon">${showAll?'▲':'▼'}</span><span class="nav-label">${showAll? 'Show fewer':'Show '+hiddenCount+' more'}</span>
       </button>` : ''}
     </div>
-    <div class="nav-section-label">Lists <button class="nav-add" data-action="addList">+</button></div>
+    <div class="nav-section-label" style="cursor:pointer;" data-action="toggleListsCollapsed">
+      <span>${state.listsCollapsed?'▸':'▾'} Lists</span>
+      <button class="nav-add" data-action="addList" onclick="event.stopPropagation()">+</button>
+    </div>
+    ${!state.listsCollapsed ? `
     <div class="nav-list">
       ${db.lists.map(l=>{
         const active = state.mainView.type==='list' && state.mainView.id===l.id;
@@ -2390,7 +2397,14 @@ function renderSidebar(){
           <span class="nav-count gray" style="background:var(--line-soft);color:var(--ink-soft);">${db.contacts.length + PHOENIX_BROKER_LIST.length}</span>
         </button>
       </div>
-    </div>
+      ${state.currentUser.role==='Admin' ? `
+      <div class="nav-row-wrap ${state.mainView.type==='archived-clients'?'active':''}">
+        <button class="nav-row" data-nav="archived-clients">
+          <span class="nav-icon">🗄️</span><span class="nav-label">Archived</span>
+          <span class="nav-count gray" style="background:var(--line-soft);color:var(--ink-soft);">${(db.archivedClients||[]).length}</span>
+        </button>
+      </div>` : ''}
+    </div>` : ''}
     <div class="sidebar-footer">
       <div style="font-size:11px;color:var(--ink-soft);line-height:1.5;">Southwest Edge Portal · prototype build</div>
       <div style="font-size:10px;color:var(--edge);font-weight:700;margin-top:2px;">Build: persistence-check-v3</div>
@@ -2411,10 +2425,13 @@ function renderTopbar(){
   } else if(state.mainView.type==='contacts'){
     title='Contacts';
     eyebrow = 'Directory';
+  } else if(state.mainView.type==='archived-clients'){
+    title='Archived'; eyebrow='Clients & Listings';
   }
   const teamCapableIds = ['week','month'];
   const showTodoToggle = state.mainView.type==='smart' && teamCapableIds.includes(state.mainView.id);
   const showBack = state.isMobile && state.mobileScreen==='main';
+  const searchResults = state.globalSearchQuery ? computeGlobalSearchResults(state.globalSearchQuery) : [];
   return `
   <div class="topbar">
     ${showBack ? `<button class="icon-btn" data-action="mobileBack" style="color:var(--ink);margin-right:2px;">←</button>` : ''}
@@ -2423,12 +2440,70 @@ function renderTopbar(){
       <div class="topbar-title">${title}</div>
     </div>
     <div class="topbar-spacer"></div>
+    <div class="autocomplete-box" style="position:relative;width:280px;">
+      <input id="globalSearchBox" placeholder="🔍 Search everything…" value="${escapeAttr(state.globalSearchQuery||'')}"
+        style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px;">
+      ${searchResults.length ? `
+      <div class="suggest-list" style="max-height:360px;overflow-y:auto;">
+        ${searchResults.map(r=>`
+          <div class="suggest-item" data-searchresult="${r.idx}">
+            <b>${escapeHtml(r.label)}</b>
+            <div class="sub"><span class="pill gray" style="margin-right:6px;">${r.kind}</span>${escapeHtml(r.sublabel||'')}</div>
+          </div>`).join('')}
+      </div>` : (state.globalSearchQuery ? `<div class="suggest-list"><div class="suggest-item" style="cursor:default;">No matches.</div></div>` : '')}
+    </div>
     ${showTodoToggle ? `
     <div class="segmented">
       <button class="${state.todoView==='mine'?'active':''}" data-action="todoViewMine">My To-Do's</button>
       <button class="${state.todoView==='team'?'active':''}" data-action="todoViewTeam">Team</button>
     </div>` : ''}
   </div>`;
+}
+function computeGlobalSearchResults(query){
+  const q = query.toLowerCase().trim();
+  if(!q) return [];
+  const results = [];
+  db.contacts.forEach(c=>{
+    const hay = `${c.first} ${c.last} ${c.company||''} ${c.email||''}`.toLowerCase();
+    if(hay.includes(q)) results.push({kind:'Contact', label:`${c.first} ${c.last}`, sublabel:c.company||c.email||'', action:{type:'contact', id:c.id}});
+  });
+  PHOENIX_BROKER_LIST.forEach(b=>{
+    const hay = `${b.name} ${b.company||''}`.toLowerCase();
+    if(hay.includes(q)) results.push({kind:'Broker', label:b.name, sublabel:b.company||'', action:{type:'broker', id:b.id}});
+  });
+  db.lists.filter(l=>l.type==='deep').forEach(l=>{
+    l.clients.forEach(c=>{
+      if(c.name.toLowerCase().includes(q)) results.push({kind:l.id==='listings'?'Listing':'Client', label:c.name, sublabel:'', action:{type:'client', listId:l.id, clientId:c.id}});
+      c.deals.forEach(d=>{
+        if(d.name.toLowerCase().includes(q)) results.push({kind:'Deal', label:d.name, sublabel:c.name, action:{type:'deal', listId:l.id, clientId:c.id, dealId:d.id}});
+      });
+      (c.prospects||[]).forEach(p=>{
+        if(p.tenantName.toLowerCase().includes(q)) results.push({kind:'Prospect', label:p.tenantName, sublabel:c.name, action:{type:'prospect', clientId:c.id, prospectId:p.id}});
+      });
+    });
+  });
+  db.todos.filter(t=>!t.completed).forEach(t=>{
+    if(t.title.toLowerCase().includes(q)) results.push({kind:'To-Do', label:t.title, sublabel:t.category||'', action:{type:'todo', id:t.id}});
+  });
+  return results.slice(0,30).map((r,i)=>({...r, idx:i}));
+}
+function goToGlobalSearchResult(action){
+  state.globalSearchQuery=''; state.globalSearchFocused=false;
+  if(action.type==='contact'){
+    state.mainView={type:'contacts'}; state.contactsSubView='contacts'; state.contactSearchQuery = db.contacts.find(c=>c.id===action.id)?.first || '';
+  } else if(action.type==='broker'){
+    state.mainView={type:'contacts'}; state.contactsSubView='brokers'; state.brokerListSearchQuery = PHOENIX_BROKER_LIST.find(b=>b.id===action.id)?.name || '';
+  } else if(action.type==='client'){
+    openClientModal(action.listId, action.clientId);
+  } else if(action.type==='deal'){
+    state.modalStack=[{kind:'client', listId:action.listId, clientId:action.clientId, viewMode:'all'}, {kind:'deal', listId:action.listId, clientId:action.clientId, dealId:action.dealId}];
+  } else if(action.type==='prospect'){
+    state.modalStack=[{kind:'client', listId:'listings', clientId:action.clientId, viewMode:'prospecting'}];
+    openLSRProspect(action.clientId, action.prospectId);
+  } else if(action.type==='todo'){
+    openTodoDetail(action.id);
+  }
+  render();
 }
 
 let weatherCache = null; // {tempF, code, fetchedAt} | {error:true, fetchedAt} | null
@@ -2963,6 +3038,7 @@ function renderContactsScreen(){
 }
 function renderMainContent(){
   if(state.mainView.type==='contacts') return renderContactsScreen();
+  if(state.mainView.type==='archived-clients') return renderArchivedClientsMain();
   if(state.mainView.type==='list') return renderListMain(state.mainView.id);
   // smart list
   const id = state.mainView.id;
@@ -2979,6 +3055,22 @@ function renderMainContent(){
   const archiveBar = id==='completed' && list.length ?
     `<button class="btn secondary sm" data-action="archiveAllCompleted" style="margin-bottom:12px;">🗄️ Archive All Completed (${list.length})</button>` : '';
   return archiveBar + renderBulkBar() + renderTodoList(list);
+}
+function renderArchivedClientsMain(){
+  const archived = db.archivedClients||[];
+  if(!archived.length) return `<div class="empty-state"><div class="big">Nothing archived.</div><div class="tiny">Archived Clients and Listings will show up here.</div></div>`;
+  return archived.map(c=>{
+    const list = db.lists.find(x=>x.id===c.archivedListId);
+    return `
+    <div class="row-card" style="opacity:.8;">
+      <div class="nav-icon" style="font-size:20px;">🗄️</div>
+      <div class="row-body">
+        <div class="row-title">${escapeHtml(c.name)}</div>
+        <div class="row-meta"><span class="pill gray">${list?escapeHtml(list.name):''}</span></div>
+      </div>
+      <button class="btn secondary sm" data-restoreclient="${c.id}" data-listid="${c.archivedListId}">Restore</button>
+    </div>`;
+  }).join('');
 }
 function renderCAStatusMain(){
   const clientsList = db.lists.find(x=>x.id==='clients');
@@ -3173,21 +3265,7 @@ function renderListMain(listId){
   const singular = l.name.endsWith('s') ? l.name.slice(0,-1) : l.name;
   if(l.type==='deep'){
     const addBtn = `<button class="btn sm" data-action="addClient" data-listid="${l.id}" style="margin-bottom:14px;">+ New ${singular}</button>`;
-    const archivedHere = (db.archivedClients||[]).filter(c=>c.archivedListId===l.id);
-    const isAdmin = state.currentUser.role==='Admin';
-    const archivedSection = (isAdmin && archivedHere.length) ? `
-      <div style="margin-top:20px;">
-        <button class="btn ghost sm" data-action="toggleShowArchivedClients">
-          ${state.showArchivedClients?'▾':'▸'} ${archivedHere.length} archived
-        </button>
-        ${state.showArchivedClients ? archivedHere.map(c=>`
-          <div class="row-card" style="opacity:.7;">
-            <div class="nav-icon" style="font-size:20px;">🗄️</div>
-            <div class="row-body"><div class="row-title">${escapeHtml(c.name)}</div></div>
-            <button class="btn secondary sm" data-restoreclient="${c.id}" data-listid="${l.id}">Restore</button>
-          </div>`).join('') : ''}
-      </div>` : '';
-    if(!l.clients.length) return addBtn + `<div class="empty-state"><div class="big">No ${l.name.toLowerCase()} yet.</div><div class="tiny">Add your first one to get moving.</div></div>` + archivedSection;
+    if(!l.clients.length) return addBtn + `<div class="empty-state"><div class="big">No ${l.name.toLowerCase()} yet.</div><div class="tiny">Add your first one to get moving.</div></div>`;
     return addBtn + l.clients.map(c=>{
       const dealCount = c.deals.length;
       const openDeals = c.deals.filter(d=>!d.complete).length;
@@ -3206,7 +3284,7 @@ function renderListMain(listId){
           <button class="btn sm" data-openlisting="all" data-client="${c.id}" data-listid="${l.id}">Open All</button>
         </div>` : ''}
       </div>`;
-    }).join('') + archivedSection;
+    }).join('');
   } else {
     const isAdmin = state.currentUser.role==='Admin';
     const visibleEntries = isAdmin ? l.entries : l.entries.filter(e=>e.ownerId===state.currentUser.id);
@@ -3278,6 +3356,7 @@ function attachShellHandlers(){
     if(type==='smart'){ state.mainView={type:'smart',id}; }
     else if(type==='list'){ state.mainView={type:'list',id}; }
     else if(el.dataset.nav==='contacts'){ state.mainView={type:'contacts'}; }
+    else if(el.dataset.nav==='archived-clients'){ state.mainView={type:'archived-clients'}; }
     state.expandedTeamUser=null;
     state.todoView='mine';
     state.selectedTodoIds=[];
@@ -3301,6 +3380,23 @@ function attachShellHandlers(){
     openClientModal(el.dataset.listid, el.dataset.client, el.dataset.openlisting);
     render();
   });
+  const globalSearchBox = document.getElementById('globalSearchBox');
+  if(globalSearchBox){
+    globalSearchBox.oninput=()=>{ state.globalSearchQuery = globalSearchBox.value; render(); };
+    if(state.globalSearchFocused){ globalSearchBox.focus(); const len=globalSearchBox.value.length; globalSearchBox.setSelectionRange(len,len); }
+    globalSearchBox.onfocus=()=>{ state.globalSearchFocused=true; };
+    globalSearchBox.onblur=()=>{ setTimeout(()=>{ state.globalSearchFocused=false; },150); };
+  }
+  document.querySelectorAll('[data-searchresult]').forEach(el=>el.onmousedown=(ev)=>{
+    ev.preventDefault();
+    const idx = parseInt(el.dataset.searchresult);
+    const results = computeGlobalSearchResults(state.globalSearchQuery);
+    const r = results[idx];
+    if(r) goToGlobalSearchResult(r.action);
+  });
+  const toggleListsBtn = document.querySelector('[data-action="toggleListsCollapsed"]'); if(toggleListsBtn) toggleListsBtn.onclick=()=>{
+    state.listsCollapsed = !state.listsCollapsed; render();
+  };
   const toggleArchivedBtn = document.querySelector('[data-action="toggleShowArchivedClients"]'); if(toggleArchivedBtn) toggleArchivedBtn.onclick=()=>{
     state.showArchivedClients = !state.showArchivedClients; render();
   };
