@@ -57,7 +57,7 @@
   .login-logo img{height:64px;width:auto;display:block;margin:0 auto;}
   .login-title{font-size:30px;font-weight:600;margin-top:14px;color:var(--edge);}
   .login-title-sub{font-size:16px;font-weight:600;margin-top:2px;color:var(--edge);}
-  .login-tag{color:var(--ink-soft);margin-top:8px;font-size:12px;letter-spacing:.12em;text-transform:uppercase;}
+  .login-tag{color:var(--ink);margin-top:8px;font-size:12px;letter-spacing:.04em;font-style:italic;font-weight:600;}
   .login-card{
     background:var(--paper);border-radius:16px;box-shadow:var(--shadow);width:420px;max-width:100%;
     padding:30px 30px 26px;margin-top:34px;
@@ -504,6 +504,9 @@ let state = {
   sidePanelWidgets:{calendar:true, weather:true, news:true},
   showWidgetPicker:false,
   editContactModal:null,
+  editBrokerModal:null,
+  brokerListSearchQuery:'',
+  brokerListSearchFocused:false,
   recentlyCompletedIds:[],
   undoToast:null,
   importTodosModal:null,
@@ -515,11 +518,14 @@ let state = {
   calendarCursor:null,        // {year, month} — used in Month mode
   calendarViewMode:'month',   // 'month' | 'week' | '2week'
   calendarWeekStart:null,     // Date (always a Sunday) — anchor for Week/2 Week modes
+  marketingListWizard:null,   // {step, clientId, selectedCategoryIds, reviewItems}
   lsrNewProspectModal:null,   // creation state
   lsrConvertModal:null,       // {clientId, prospectId} — Lease/Sale conversion in progress
   lsrSearchFocused:false,
   contactPickerOpen:null,       // {clientId, slot:'primary'|'secondary1'|'secondary2'} while searching
   contactPickerQuery:'',
+  brokerPickerOpen:null,        // {lsrClientId, lsrProspectId} while searching
+  brokerPickerQuery:'',
   duplicatePrompt:null,         // {match, pending} when a possible duplicate is found
 };
 
@@ -588,10 +594,13 @@ let adminDefaultSchedule = {type:'weekly', days:['sunday'], time:'00:00'};
 
 /* ---------------- LEASING / PROSPECTING REPORT (LSR) MODEL ---------------- */
 const DEFAULT_PROPERTY_CATEGORIES = [
-  {id:'qsr', name:'QSR'},
+  {id:'qsrfastfood', name:'QSR - Fast Food'},
+  {id:'qsrfastcasual', name:'QSR - Fast Casual'},
+  {id:'qsrcoffee', name:'QSR - Coffee'},
   {id:'shopspace', name:'Shop Space'},
   {id:'sitdown', name:'Sit Down Restaurant'},
   {id:'freestanding', name:'Free Standing Building - Other'},
+  {id:'padusers', name:'Pad Users'},
   {id:'medical', name:'Medical'},
   {id:'hospitality', name:'Hospitality'},
   {id:'fuel', name:'Fuel Center'},
@@ -624,6 +633,587 @@ function lsrStagesForTrack(dealType){
   if(dealType==='sale') return ['loi','signedLOI','inEscrow','closedEscrow'];
   return ['loi','signedLOI','negotiating','signedLease'];
 }
+// Baked-in Phoenix retail tenant roster — a standing reference list, not re-uploaded per listing.
+const TENANT_ROSTER = [
+  {id:'roster0', name:'AJ\'s Fine Foods', categoryId:'anchor', tenantType:'Grocery', notes:'Specialty/upscale grocery anchor.'},
+  {id:'roster1', name:'Albertsons', categoryId:'anchor', tenantType:'Grocery', notes:'Grocery anchor.'},
+  {id:'roster2', name:'ALDI', categoryId:'anchor', tenantType:'Grocery', notes:'Discount grocery anchor.'},
+  {id:'roster3', name:'AMC Theatres', categoryId:'anchor', tenantType:'Entertainment', notes:'Cinema anchor / traffic driver.'},
+  {id:'roster4', name:'Asiana Market', categoryId:'anchor', tenantType:'Grocery', notes:'Ethnic grocery anchor.'},
+  {id:'roster5', name:'Bashas\'', categoryId:'anchor', tenantType:'Grocery', notes:'Grocery anchor.'},
+  {id:'roster6', name:'Cardenas Markets', categoryId:'anchor', tenantType:'Grocery', notes:'Hispanic grocery anchor.'},
+  {id:'roster7', name:'Costco Wholesale', categoryId:'anchor', tenantType:'Warehouse club', notes:'Warehouse club anchor.'},
+  {id:'roster8', name:'Dave & Buster\'s', categoryId:'anchor', tenantType:'Entertainment', notes:'Entertainment anchor.'},
+  {id:'roster9', name:'El Super', categoryId:'anchor', tenantType:'Grocery', notes:'Hispanic grocery anchor.'},
+  {id:'roster10', name:'EoS Fitness Large Format', categoryId:'anchor', tenantType:'Fitness', notes:'Can function as center anchor where occupying large boxes.'},
+  {id:'roster11', name:'Extra Space Storage', categoryId:'anchor', tenantType:'Self storage', notes:'Storage anchor/service user.'},
+  {id:'roster12', name:'Food City', categoryId:'anchor', tenantType:'Grocery', notes:'Hispanic grocery anchor.'},
+  {id:'roster13', name:'Fry\'s Food Stores', categoryId:'anchor', tenantType:'Grocery', notes:'Kroger banner grocery anchor.'},
+  {id:'roster14', name:'H Mart', categoryId:'anchor', tenantType:'Grocery', notes:'Asian grocery anchor.'},
+  {id:'roster15', name:'Harkins Theatres', categoryId:'anchor', tenantType:'Entertainment', notes:'Cinema anchor / traffic driver.'},
+  {id:'roster16', name:'Lee Lee International Supermarkets', categoryId:'anchor', tenantType:'Grocery', notes:'International grocery anchor.'},
+  {id:'roster17', name:'Life Time', categoryId:'anchor', tenantType:'Fitness / wellness', notes:'Large-format athletic resort/fitness anchor.'},
+  {id:'roster18', name:'Lowe\'s', categoryId:'anchor', tenantType:'Home improvement', notes:'Home improvement anchor.'},
+  {id:'roster19', name:'Main Event', categoryId:'anchor', tenantType:'Entertainment', notes:'Entertainment anchor.'},
+  {id:'roster20', name:'Public Storage', categoryId:'anchor', tenantType:'Self storage', notes:'Storage anchor/service user.'},
+  {id:'roster21', name:'Ranch Market / Los Altos Ranch Market', categoryId:'anchor', tenantType:'Grocery', notes:'Hispanic grocery anchor.'},
+  {id:'roster22', name:'Round1 Bowling & Arcade', categoryId:'anchor', tenantType:'Entertainment', notes:'Entertainment anchor.'},
+  {id:'roster23', name:'Safeway', categoryId:'anchor', tenantType:'Grocery', notes:'Grocery anchor.'},
+  {id:'roster24', name:'Sam\'s Club', categoryId:'anchor', tenantType:'Warehouse club', notes:'Warehouse club anchor.'},
+  {id:'roster25', name:'Smart & Final Extra!', categoryId:'anchor', tenantType:'Grocery / warehouse', notes:'Grocery/warehouse-style anchor.'},
+  {id:'roster26', name:'Sprouts Farmers Market', categoryId:'anchor', tenantType:'Grocery', notes:'Specialty grocery anchor.'},
+  {id:'roster27', name:'Superstition Ranch Market', categoryId:'anchor', tenantType:'Grocery', notes:'Produce/grocery anchor.'},
+  {id:'roster28', name:'The Home Depot', categoryId:'anchor', tenantType:'Home improvement', notes:'Home improvement anchor.'},
+  {id:'roster29', name:'Trader Joe\'s', categoryId:'anchor', tenantType:'Grocery', notes:'Specialty grocery anchor.'},
+  {id:'roster30', name:'U-Haul Moving & Storage', categoryId:'anchor', tenantType:'Storage / moving', notes:'Large-format service/retail user.'},
+  {id:'roster31', name:'VASA Fitness', categoryId:'anchor', tenantType:'Fitness', notes:'Large-format fitness anchor.'},
+  {id:'roster32', name:'Walmart / Walmart Supercenter', categoryId:'anchor', tenantType:'General merchandise / grocery', notes:'Supercenter/neighborhood market anchor.'},
+  {id:'roster33', name:'Whole Foods Market', categoryId:'anchor', tenantType:'Grocery', notes:'Specialty grocery anchor.'},
+  {id:'roster34', name:'WinCo Foods', categoryId:'anchor', tenantType:'Grocery', notes:'Grocery anchor.'},
+  {id:'roster35', name:'Academy Sports + Outdoors', categoryId:'bigbox', tenantType:'Sporting goods', notes:'Sporting goods big-box.'},
+  {id:'roster36', name:'American Furniture Warehouse', categoryId:'bigbox', tenantType:'Furniture', notes:'Furniture big-box.'},
+  {id:'roster37', name:'Ashley Store', categoryId:'bigbox', tenantType:'Furniture', notes:'Furniture big-box.'},
+  {id:'roster38', name:'At Home', categoryId:'bigbox', tenantType:'Home goods', notes:'Home decor big-box.'},
+  {id:'roster39', name:'Best Buy', categoryId:'bigbox', tenantType:'Electronics', notes:'Electronics big-box retailer.'},
+  {id:'roster40', name:'BevMo!', categoryId:'bigbox', tenantType:'Beverage retail', notes:'Beverage retailer.'},
+  {id:'roster41', name:'Big 5 Sporting Goods', categoryId:'bigbox', tenantType:'Sporting goods', notes:'Sporting goods small-box/big-box.'},
+  {id:'roster42', name:'Big Lots', categoryId:'bigbox', tenantType:'Discount retail', notes:'Verify store status due recent chain restructuring.'},
+  {id:'roster43', name:'Bob\'s Discount Furniture', categoryId:'bigbox', tenantType:'Furniture', notes:'Furniture big-box.'},
+  {id:'roster44', name:'Burlington', categoryId:'bigbox', tenantType:'Off-price apparel', notes:'Off-price soft goods big-box.'},
+  {id:'roster45', name:'Conn\'s HomePlus', categoryId:'bigbox', tenantType:'Furniture / electronics', notes:'Home goods/electronics big-box.'},
+  {id:'roster46', name:'Crate & Barrel', categoryId:'bigbox', tenantType:'Home furnishings', notes:'Home furnishings big-box.'},
+  {id:'roster47', name:'dd\'s Discounts', categoryId:'bigbox', tenantType:'Off-price apparel', notes:'Off-price soft goods box.'},
+  {id:'roster48', name:'Deseret Industries', categoryId:'bigbox', tenantType:'Thrift retail', notes:'Thrift big-box.'},
+  {id:'roster49', name:'Dick\'s Sporting Goods', categoryId:'bigbox', tenantType:'Sporting goods', notes:'Sporting goods big-box.'},
+  {id:'roster50', name:'DSW', categoryId:'bigbox', tenantType:'Shoes', notes:'Shoe big-box.'},
+  {id:'roster51', name:'Floor & Decor', categoryId:'bigbox', tenantType:'Home improvement', notes:'Home flooring big-box.'},
+  {id:'roster52', name:'Goodwill Retail Store', categoryId:'bigbox', tenantType:'Thrift retail', notes:'Thrift retail; numerous Phoenix stores.'},
+  {id:'roster53', name:'Harbor Freight Tools', categoryId:'bigbox', tenantType:'Tools', notes:'Tool retailer / small-box.'},
+  {id:'roster54', name:'Hobby Lobby', categoryId:'bigbox', tenantType:'Arts and crafts', notes:'Crafts big-box.'},
+  {id:'roster55', name:'HomeGoods', categoryId:'bigbox', tenantType:'Home goods', notes:'Home goods big-box.'},
+  {id:'roster56', name:'JOANN', categoryId:'bigbox', tenantType:'Fabric / crafts', notes:'Crafts/fabric big-box; verify individual status due sector closures.'},
+  {id:'roster57', name:'La-Z-Boy Furniture Galleries', categoryId:'bigbox', tenantType:'Furniture', notes:'Furniture retail box.'},
+  {id:'roster58', name:'Living Spaces', categoryId:'bigbox', tenantType:'Furniture', notes:'Furniture big-box.'},
+  {id:'roster59', name:'Macy\'s Backstage', categoryId:'bigbox', tenantType:'Off-price apparel', notes:'Off-price soft goods format.'},
+  {id:'roster60', name:'Marshalls', categoryId:'bigbox', tenantType:'Off-price apparel', notes:'Off-price soft goods big-box.'},
+  {id:'roster61', name:'Michaels', categoryId:'bigbox', tenantType:'Arts and crafts', notes:'Crafts big-box.'},
+  {id:'roster62', name:'Mor Furniture for Less', categoryId:'bigbox', tenantType:'Furniture', notes:'Furniture big-box.'},
+  {id:'roster63', name:'Nordstrom Rack', categoryId:'bigbox', tenantType:'Off-price apparel', notes:'Off-price apparel junior anchor.'},
+  {id:'roster64', name:'Office Depot / OfficeMax', categoryId:'bigbox', tenantType:'Office supplies', notes:'Office supplies big-box.'},
+  {id:'roster65', name:'Old Navy', categoryId:'bigbox', tenantType:'Apparel', notes:'Soft goods big-box/junior anchor.'},
+  {id:'roster66', name:'Petco', categoryId:'bigbox', tenantType:'Pet retail', notes:'Pet specialty big-box.'},
+  {id:'roster67', name:'Pottery Barn', categoryId:'bigbox', tenantType:'Home furnishings', notes:'Home furnishings retailer.'},
+  {id:'roster68', name:'REI', categoryId:'bigbox', tenantType:'Outdoor retail', notes:'Outdoor specialty big-box.'},
+  {id:'roster69', name:'Ross Dress for Less', categoryId:'bigbox', tenantType:'Off-price apparel', notes:'Off-price soft goods big-box.'},
+  {id:'roster70', name:'Savers', categoryId:'bigbox', tenantType:'Thrift retail', notes:'Thrift big-box.'},
+  {id:'roster71', name:'Sportsman\'s Warehouse', categoryId:'bigbox', tenantType:'Sporting goods', notes:'Outdoor/sporting goods big-box.'},
+  {id:'roster72', name:'Staples', categoryId:'bigbox', tenantType:'Office supplies', notes:'Office supplies big-box.'},
+  {id:'roster73', name:'T.J. Maxx', categoryId:'bigbox', tenantType:'Off-price apparel', notes:'Off-price soft goods big-box.'},
+  {id:'roster74', name:'Target', categoryId:'bigbox', tenantType:'General merchandise', notes:'Big-box general merchandise; can also anchor centers.'},
+  {id:'roster75', name:'The Container Store', categoryId:'bigbox', tenantType:'Home organization', notes:'Home organization big-box.'},
+  {id:'roster76', name:'Total Wine & More', categoryId:'bigbox', tenantType:'Beverage retail', notes:'Beverage big-box.'},
+  {id:'roster77', name:'Ulta Beauty', categoryId:'bigbox', tenantType:'Beauty', notes:'Beauty big-box / junior anchor.'},
+  {id:'roster78', name:'West Elm', categoryId:'bigbox', tenantType:'Home furnishings', notes:'Home furnishings retailer.'},
+  {id:'roster79', name:'World Market', categoryId:'bigbox', tenantType:'Home goods', notes:'Home goods/specialty big-box.'},
+  {id:'roster80', name:'A&W Restaurants', categoryId:'qsrfastfood', tenantType:'Restaurant', notes:'Drive-thru fast food.'},
+  {id:'roster81', name:'Arby\'s', categoryId:'qsrfastfood', tenantType:'Restaurant', notes:'Drive-thru fast food.'},
+  {id:'roster82', name:'Burger King', categoryId:'qsrfastfood', tenantType:'Restaurant', notes:'Drive-thru fast food.'},
+  {id:'roster83', name:'Carl\'s Jr.', categoryId:'qsrfastfood', tenantType:'Restaurant', notes:'Drive-thru fast food.'},
+  {id:'roster84', name:'Chick-fil-A', categoryId:'qsrfastfood', tenantType:'Restaurant', notes:'Drive-thru fast food.'},
+  {id:'roster85', name:'Church\'s Texas Chicken', categoryId:'qsrfastfood', tenantType:'Restaurant', notes:'Drive-thru chicken fast food.'},
+  {id:'roster86', name:'Culver\'s', categoryId:'qsrfastfood', tenantType:'Restaurant', notes:'Drive-thru burger/frozen custard restaurant.'},
+  {id:'roster87', name:'Dairy Queen', categoryId:'qsrfastfood', tenantType:'Restaurant', notes:'Fast food / treats.'},
+  {id:'roster88', name:'Del Taco', categoryId:'qsrfastfood', tenantType:'Restaurant', notes:'Drive-thru Mexican fast food.'},
+  {id:'roster89', name:'Domino\'s', categoryId:'qsrfastfood', tenantType:'Restaurant', notes:'Pizza delivery/carryout QSR.'},
+  {id:'roster90', name:'Eegee\'s', categoryId:'qsrfastfood', tenantType:'Restaurant', notes:'Regional fast food/drive-thru.'},
+  {id:'roster91', name:'El Pollo Loco', categoryId:'qsrfastfood', tenantType:'Restaurant', notes:'Listed at Fountain Square.'},
+  {id:'roster92', name:'Filiberto\'s Mexican Food', categoryId:'qsrfastfood', tenantType:'Restaurant', notes:'Local/regional 24-hour Mexican fast food.'},
+  {id:'roster93', name:'In-N-Out Burger', categoryId:'qsrfastfood', tenantType:'Restaurant', notes:'Drive-thru burger restaurant.'},
+  {id:'roster94', name:'Jack in the Box', categoryId:'qsrfastfood', tenantType:'Restaurant', notes:'Drive-thru fast food.'},
+  {id:'roster95', name:'KFC', categoryId:'qsrfastfood', tenantType:'Restaurant', notes:'Drive-thru chicken fast food.'},
+  {id:'roster96', name:'Little Caesars', categoryId:'qsrfastfood', tenantType:'Restaurant', notes:'Pizza carryout QSR.'},
+  {id:'roster97', name:'Long John Silver\'s', categoryId:'qsrfastfood', tenantType:'Restaurant', notes:'Drive-thru seafood fast food.'},
+  {id:'roster98', name:'McDonald\'s', categoryId:'qsrfastfood', tenantType:'Restaurant', notes:'Drive-thru fast food.'},
+  {id:'roster99', name:'Papa Johns', categoryId:'qsrfastfood', tenantType:'Restaurant', notes:'Pizza delivery/carryout QSR.'},
+  {id:'roster100', name:'Peter Piper Pizza', categoryId:'qsrfastfood', tenantType:'Restaurant', notes:'Family pizza/arcade restaurant.'},
+  {id:'roster101', name:'Pizza Hut', categoryId:'qsrfastfood', tenantType:'Restaurant', notes:'Pizza delivery/carryout QSR.'},
+  {id:'roster102', name:'Pizza Patron', categoryId:'qsrfastfood', tenantType:'Restaurant', notes:'Pizza carryout QSR.'},
+  {id:'roster103', name:'Popeyes', categoryId:'qsrfastfood', tenantType:'Restaurant', notes:'Drive-thru chicken fast food.'},
+  {id:'roster104', name:'Raising Cane\'s', categoryId:'qsrfastfood', tenantType:'Restaurant', notes:'Drive-thru chicken fast food.'},
+  {id:'roster105', name:'Sonic Drive-In', categoryId:'qsrfastfood', tenantType:'Restaurant', notes:'Drive-in/drive-thru fast food.'},
+  {id:'roster106', name:'Taco Bell', categoryId:'qsrfastfood', tenantType:'Restaurant', notes:'Drive-thru fast food.'},
+  {id:'roster107', name:'Taco John\'s', categoryId:'qsrfastfood', tenantType:'Restaurant', notes:'Mexican fast food.'},
+  {id:'roster108', name:'Wendy\'s', categoryId:'qsrfastfood', tenantType:'Restaurant', notes:'Drive-thru fast food.'},
+  {id:'roster109', name:'Whataburger', categoryId:'qsrfastfood', tenantType:'Restaurant', notes:'Drive-thru burger restaurant.'},
+  {id:'roster110', name:'White Castle', categoryId:'qsrfastfood', tenantType:'Restaurant', notes:'Fast food burger restaurant.'},
+  {id:'roster111', name:'Ageless Men\'s Health', categoryId:'medical', tenantType:'Medical clinic', notes:'Men\'s health clinic.'},
+  {id:'roster112', name:'Any Lab Test Now', categoryId:'medical', tenantType:'Lab', notes:'Retail lab testing tenant.'},
+  {id:'roster113', name:'Arizona Arthritis & Rheumatology Associates', categoryId:'medical', tenantType:'Medical clinic', notes:'Specialty medical clinic.'},
+  {id:'roster114', name:'Arizona Digestive Health', categoryId:'medical', tenantType:'Medical clinic', notes:'Specialty medical clinic.'},
+  {id:'roster115', name:'Arizona Eye Specialists', categoryId:'medical', tenantType:'Eye care', notes:'Eye care medical offices.'},
+  {id:'roster116', name:'Arizona Oncology', categoryId:'medical', tenantType:'Medical clinic', notes:'Specialty medical clinic.'},
+  {id:'roster117', name:'Arizona Pain', categoryId:'medical', tenantType:'Medical clinic', notes:'Pain management clinic.'},
+  {id:'roster118', name:'Arizona Urology Specialists', categoryId:'medical', tenantType:'Medical clinic', notes:'Specialty medical clinic.'},
+  {id:'roster119', name:'Aspen Dental', categoryId:'medical', tenantType:'Dental', notes:'Dental office chain.'},
+  {id:'roster120', name:'Associated Dental Care Providers', categoryId:'medical', tenantType:'Dental', notes:'Dental office tenant.'},
+  {id:'roster121', name:'Athletico Physical Therapy', categoryId:'medical', tenantType:'Physical therapy', notes:'Outpatient physical therapy tenant.'},
+  {id:'roster122', name:'ATI Physical Therapy', categoryId:'medical', tenantType:'Physical therapy', notes:'Outpatient physical therapy tenant.'},
+  {id:'roster123', name:'Banner Physical Therapy', categoryId:'medical', tenantType:'Physical therapy', notes:'Outpatient physical therapy tenant.'},
+  {id:'roster124', name:'Banner Urgent Care', categoryId:'medical', tenantType:'Urgent care', notes:'Urgent care clinic chain.'},
+  {id:'roster125', name:'Bright Now! Dental', categoryId:'medical', tenantType:'Dental', notes:'Dental office tenant.'},
+  {id:'roster126', name:'Canyon Vista Dentistry and Orthodontics', categoryId:'medical', tenantType:'Dental', notes:'Dental office tenant.'},
+  {id:'roster127', name:'ClearChoice Dental Implant Center', categoryId:'medical', tenantType:'Dental', notes:'Dental specialty tenant.'},
+  {id:'roster128', name:'Comfort Dental', categoryId:'medical', tenantType:'Dental', notes:'Dental office tenant.'},
+  {id:'roster129', name:'Desert Hand and Physical Therapy', categoryId:'medical', tenantType:'Physical therapy', notes:'Outpatient therapy tenant.'},
+  {id:'roster130', name:'Desert Ridge Family Physicians', categoryId:'medical', tenantType:'Medical clinic', notes:'Medical office tenant.'},
+  {id:'roster131', name:'Dignity Health Urgent Care', categoryId:'medical', tenantType:'Urgent care', notes:'Urgent care clinic.'},
+  {id:'roster132', name:'FastMed Urgent Care', categoryId:'medical', tenantType:'Urgent care', notes:'Urgent care clinic.'},
+  {id:'roster133', name:'FastMed Urgent Care / HonorHealth', categoryId:'medical', tenantType:'Urgent care', notes:'Urgent care clinic; brand relationships may vary by location.'},
+  {id:'roster134', name:'Foothills Sports Medicine Physical Therapy', categoryId:'medical', tenantType:'Physical therapy', notes:'Outpatient physical therapy tenant.'},
+  {id:'roster135', name:'Gateway Dental Group', categoryId:'medical', tenantType:'Dental', notes:'Dental office tenant.'},
+  {id:'roster136', name:'Gentle Dental', categoryId:'medical', tenantType:'Dental', notes:'Dental office chain.'},
+  {id:'roster137', name:'HonorHealth Medical Group', categoryId:'medical', tenantType:'Medical clinic', notes:'Outpatient medical clinic tenant.'},
+  {id:'roster138', name:'HonorHealth Urgent Care', categoryId:'medical', tenantType:'Urgent care', notes:'Urgent care clinic.'},
+  {id:'roster139', name:'Iora Primary Care / One Medical Seniors', categoryId:'medical', tenantType:'Medical clinic', notes:'Primary care clinic tenant.'},
+  {id:'roster140', name:'KidMed Pediatric Urgent Care', categoryId:'medical', tenantType:'Urgent care', notes:'Pediatric urgent care tenant.'},
+  {id:'roster141', name:'Labcorp', categoryId:'medical', tenantType:'Lab', notes:'Medical lab / patient service centers.'},
+  {id:'roster142', name:'My Kid\'s Dentist & Orthodontics', categoryId:'medical', tenantType:'Dental', notes:'Pediatric dental/orthodontics tenant.'},
+  {id:'roster143', name:'Next Level Urgent Care', categoryId:'medical', tenantType:'Urgent care', notes:'Urgent care clinic tenant.'},
+  {id:'roster144', name:'NextCare Urgent Care', categoryId:'medical', tenantType:'Urgent care', notes:'Urgent care clinic chain.'},
+  {id:'roster145', name:'Pacific Dental Services / Smile Generation', categoryId:'medical', tenantType:'Dental', notes:'Dental office platform with Phoenix practices.'},
+  {id:'roster146', name:'Phoenix Children\'s Pediatrics', categoryId:'medical', tenantType:'Medical clinic', notes:'Pediatric outpatient clinic tenant.'},
+  {id:'roster147', name:'Quest Diagnostics', categoryId:'medical', tenantType:'Lab', notes:'Medical lab / patient service centers.'},
+  {id:'roster148', name:'Risas Dental and Braces', categoryId:'medical', tenantType:'Dental', notes:'Dental offices including Arcadia, Phoenix Central, South Mountain, Metro, Alhambra, Phoenix West, Desert Sky, Westgate.'},
+  {id:'roster149', name:'SimonMed Imaging', categoryId:'medical', tenantType:'Medical imaging', notes:'Outpatient imaging clinics.'},
+  {id:'roster150', name:'Sonora Quest Laboratories', categoryId:'medical', tenantType:'Lab', notes:'Medical lab / patient service centers.'},
+  {id:'roster151', name:'Southwest Behavioral & Health Services', categoryId:'medical', tenantType:'Behavioral health', notes:'Behavioral health clinic tenant.'},
+  {id:'roster152', name:'Spooner Physical Therapy', categoryId:'medical', tenantType:'Physical therapy', notes:'Outpatient physical therapy tenant.'},
+  {id:'roster153', name:'Team Select Home Care', categoryId:'medical', tenantType:'Medical services', notes:'Medical service office tenant.'},
+  {id:'roster154', name:'Valleywise Community Health Center', categoryId:'medical', tenantType:'Medical clinic', notes:'Community health clinic tenant.'},
+  {id:'roster155', name:'Village Medical', categoryId:'medical', tenantType:'Medical clinic', notes:'Primary care clinic tenant.'},
+  {id:'roster156', name:'Western Dental', categoryId:'medical', tenantType:'Dental', notes:'Dental office chain.'},
+  {id:'roster157', name:'7-Eleven', categoryId:'padusers', tenantType:'Convenience store', notes:'Convenience store/gas pad user.'},
+  {id:'roster158', name:'76', categoryId:'padusers', tenantType:'Convenience / gas', notes:'Convenience/gas pad user.'},
+  {id:'roster159', name:'AAMCO Transmissions & Total Car Care', categoryId:'padusers', tenantType:'Auto service', notes:'Transmission/auto service user.'},
+  {id:'roster160', name:'ACE Cash Express', categoryId:'padusers', tenantType:'Financial services', notes:'Check-cashing/payday loan tenant.'},
+  {id:'roster161', name:'Advance Auto Parts', categoryId:'padusers', tenantType:'Auto parts', notes:'Auto parts retailer; verify local banner/location status.'},
+  {id:'roster162', name:'Arco ampm', categoryId:'padusers', tenantType:'Convenience / gas', notes:'Convenience/gas pad user.'},
+  {id:'roster163', name:'Audio Express', categoryId:'padusers', tenantType:'Auto accessories', notes:'Car audio/accessories user.'},
+  {id:'roster164', name:'AutoNation', categoryId:'padusers', tenantType:'Auto dealership / service', notes:'Automotive sales/service user; large pad or standalone format.'},
+  {id:'roster165', name:'AutoZone', categoryId:'padusers', tenantType:'Auto parts', notes:'Auto parts retailer; Phoenix locator source available.'},
+  {id:'roster166', name:'Avis Car Sales', categoryId:'padusers', tenantType:'Used auto sales', notes:'Used car sales user.'},
+  {id:'roster167', name:'Batteries Plus Auto Battery', categoryId:'padusers', tenantType:'Auto battery / specialty', notes:'Battery specialty user with automotive demand.'},
+  {id:'roster168', name:'Bell Road Toyota', categoryId:'padusers', tenantType:'Auto dealership / service', notes:'Auto dealership/service user.'},
+  {id:'roster169', name:'Big Brand Tire & Service', categoryId:'padusers', tenantType:'Tire / auto service', notes:'Tire/auto service pad user.'},
+  {id:'roster170', name:'Big O Tires', categoryId:'padusers', tenantType:'Auto service', notes:'Tire/auto service tenant.'},
+  {id:'roster171', name:'Brake Masters', categoryId:'padusers', tenantType:'Auto service', notes:'Brake/auto service pad user.'},
+  {id:'roster172', name:'Brakes Plus', categoryId:'padusers', tenantType:'Auto service', notes:'Auto service tenant.'},
+  {id:'roster173', name:'Bumper to Bumper Auto Parts', categoryId:'padusers', tenantType:'Auto parts', notes:'Auto parts retailer/distributor.'},
+  {id:'roster174', name:'Caliber Collision', categoryId:'padusers', tenantType:'Collision repair', notes:'Collision repair user.'},
+  {id:'roster175', name:'Camelback Toyota', categoryId:'padusers', tenantType:'Auto dealership / service', notes:'Auto dealership/service user.'},
+  {id:'roster176', name:'Camelback Volkswagen Subaru', categoryId:'padusers', tenantType:'Auto dealership / service', notes:'Auto dealership/service user.'},
+  {id:'roster177', name:'CarMax', categoryId:'padusers', tenantType:'Used auto sales', notes:'Large-format used car sales/service user.'},
+  {id:'roster178', name:'CARSTAR', categoryId:'padusers', tenantType:'Collision repair', notes:'Collision repair user.'},
+  {id:'roster179', name:'Carvana', categoryId:'padusers', tenantType:'Used auto sales', notes:'Used car sales/vending machine format.'},
+  {id:'roster180', name:'Chapman Automotive Group', categoryId:'padusers', tenantType:'Auto dealership / service', notes:'Local dealership/service group.'},
+  {id:'roster181', name:'CheckSmart', categoryId:'padusers', tenantType:'Financial services', notes:'Financial services shop tenant.'},
+  {id:'roster182', name:'Chevron ExtraMile', categoryId:'padusers', tenantType:'Convenience / gas', notes:'Convenience/gas pad user.'},
+  {id:'roster183', name:'Christian Brothers Automotive', categoryId:'padusers', tenantType:'Auto service', notes:'Automotive service pad user.'},
+  {id:'roster184', name:'Circle K', categoryId:'padusers', tenantType:'Convenience store', notes:'Convenience store/gas pad user.'},
+  {id:'roster185', name:'Circle K Car Wash', categoryId:'padusers', tenantType:'Convenience / car wash', notes:'Convenience/gas pad user with car wash component.'},
+  {id:'roster186', name:'Clean Freak Car Wash', categoryId:'padusers', tenantType:'Car wash', notes:'Express car wash pad user.'},
+  {id:'roster187', name:'Cobblestone Auto Spa', categoryId:'padusers', tenantType:'Car wash', notes:'Car wash and detail pad user; locator source available.'},
+  {id:'roster188', name:'Cobblestone Auto Spa Express', categoryId:'padusers', tenantType:'Car wash', notes:'Express wash pad format.'},
+  {id:'roster189', name:'Cobblestone Auto Spa Full Service', categoryId:'padusers', tenantType:'Car wash / detail / oil change', notes:'Full-service wash/detail plus automotive service format.'},
+  {id:'roster190', name:'Cobblestone Express', categoryId:'padusers', tenantType:'Car wash', notes:'Cobblestone express-only car wash format.'},
+  {id:'roster191', name:'Courtesy Automotive Group', categoryId:'padusers', tenantType:'Auto dealership / service', notes:'Auto dealership/service user.'},
+  {id:'roster192', name:'Crash Champions', categoryId:'padusers', tenantType:'Collision repair', notes:'Collision repair user.'},
+  {id:'roster193', name:'Danny\'s Family Car Wash', categoryId:'padusers', tenantType:'Car wash', notes:'Local car wash/detail user.'},
+  {id:'roster194', name:'Dent Wizard', categoryId:'padusers', tenantType:'Auto reconditioning', notes:'Auto reconditioning/service user.'},
+  {id:'roster195', name:'Discount Tire', categoryId:'padusers', tenantType:'Auto service', notes:'Tire retailer/service pad user; locator source available.'},
+  {id:'roster196', name:'DriveTime', categoryId:'padusers', tenantType:'Used auto sales', notes:'Used car sales user.'},
+  {id:'roster197', name:'Earnhardt Auto Centers', categoryId:'padusers', tenantType:'Auto dealership / service', notes:'Regional dealership/service group.'},
+  {id:'roster198', name:'Edward Jones', categoryId:'padusers', tenantType:'Financial services', notes:'Financial advisor office tenant.'},
+  {id:'roster199', name:'Electrify America', categoryId:'padusers', tenantType:'EV charging', notes:'EV charging pad/parking-field user.'},
+  {id:'roster200', name:'Enterprise Car Sales', categoryId:'padusers', tenantType:'Used auto sales', notes:'Used car sales user.'},
+  {id:'roster201', name:'EVgo', categoryId:'padusers', tenantType:'EV charging', notes:'EV charging pad/parking-field user.'},
+  {id:'roster202', name:'Express Oil Change & Tire Engineers', categoryId:'padusers', tenantType:'Oil change / tire', notes:'Oil change/tire service user.'},
+  {id:'roster203', name:'Firestone Complete Auto Care', categoryId:'padusers', tenantType:'Auto service', notes:'Tire/auto service tenant.'},
+  {id:'roster204', name:'Fix Auto USA', categoryId:'padusers', tenantType:'Collision repair', notes:'Collision repair user.'},
+  {id:'roster205', name:'Francis & Sons Car Wash', categoryId:'padusers', tenantType:'Car wash', notes:'Local car wash/detail operator; Phoenix/Valley locations source available.'},
+  {id:'roster206', name:'Gerber Collision & Glass', categoryId:'padusers', tenantType:'Collision repair', notes:'Collision repair user.'},
+  {id:'roster207', name:'Goodyear Auto Service', categoryId:'padusers', tenantType:'Tire / auto service', notes:'Tire/auto service pad user.'},
+  {id:'roster208', name:'Grease Monkey', categoryId:'padusers', tenantType:'Oil change / auto service', notes:'Oil change/auto service pad user.'},
+  {id:'roster209', name:'Greulich\'s Automotive Repair', categoryId:'padusers', tenantType:'Auto service', notes:'Local/regional auto service tenant.'},
+  {id:'roster210', name:'H&R Block', categoryId:'padusers', tenantType:'Tax services', notes:'Tax preparation shop tenant.'},
+  {id:'roster211', name:'Hertz Car Sales', categoryId:'padusers', tenantType:'Used auto sales', notes:'Used car sales user.'},
+  {id:'roster212', name:'Jackson Hewitt', categoryId:'padusers', tenantType:'Tax services', notes:'Tax preparation shop tenant.'},
+  {id:'roster213', name:'Jacksons Car Wash', categoryId:'padusers', tenantType:'Car wash', notes:'Car wash / auto service tenant.'},
+  {id:'roster214', name:'Jiffy Lube', categoryId:'padusers', tenantType:'Auto service', notes:'Automotive service pad user.'},
+  {id:'roster215', name:'Larry H. Miller Dealerships', categoryId:'padusers', tenantType:'Auto dealership / service', notes:'Auto dealership/service group.'},
+  {id:'roster216', name:'Les Schwab Tire Center', categoryId:'padusers', tenantType:'Tire / auto service', notes:'Tire/auto service pad user.'},
+  {id:'roster217', name:'Liberty Tax', categoryId:'padusers', tenantType:'Tax services', notes:'Tax preparation shop tenant.'},
+  {id:'roster218', name:'Lindstrom Family Auto Wash', categoryId:'padusers', tenantType:'Car wash', notes:'Local car wash pad user.'},
+  {id:'roster219', name:'Maaco', categoryId:'padusers', tenantType:'Collision / paint', notes:'Auto paint/collision user.'},
+  {id:'roster220', name:'Mail & More / PostalAnnex', categoryId:'padusers', tenantType:'Shipping / services', notes:'Shipping/mailbox shop tenant.'},
+  {id:'roster221', name:'Mavis Tires & Brakes', categoryId:'padusers', tenantType:'Auto service', notes:'Tire/auto service tenant.'},
+  {id:'roster222', name:'Meineke Car Care Center', categoryId:'padusers', tenantType:'Auto service', notes:'Auto service tenant.'},
+  {id:'roster223', name:'Midas', categoryId:'padusers', tenantType:'Auto service', notes:'Auto service tenant.'},
+  {id:'roster224', name:'Midway Chevrolet', categoryId:'padusers', tenantType:'Auto dealership / service', notes:'Auto dealership/service user.'},
+  {id:'roster225', name:'Mister Car Wash', categoryId:'padusers', tenantType:'Car wash', notes:'Express car wash pad user; official locator source.'},
+  {id:'roster226', name:'Mobil', categoryId:'padusers', tenantType:'Convenience / gas', notes:'Convenience/gas pad user.'},
+  {id:'roster227', name:'NAPA Auto Parts', categoryId:'padusers', tenantType:'Auto parts', notes:'Auto parts retailer; often freestanding or endcap/pad-adjacent.'},
+  {id:'roster228', name:'O\'Reilly Auto Parts', categoryId:'padusers', tenantType:'Auto parts', notes:'Auto parts retailer; Phoenix locator source available.'},
+  {id:'roster229', name:'OneMain Financial', categoryId:'padusers', tenantType:'Financial services', notes:'Consumer finance office tenant.'},
+  {id:'roster230', name:'Pak Mail', categoryId:'padusers', tenantType:'Shipping / services', notes:'Shipping/mailbox shop tenant.'},
+  {id:'roster231', name:'Pep Boys', categoryId:'padusers', tenantType:'Auto service / parts', notes:'Automotive service/parts user.'},
+  {id:'roster232', name:'Precision Tune Auto Care', categoryId:'padusers', tenantType:'Auto service', notes:'Automotive service user.'},
+  {id:'roster233', name:'Quick Quack Car Wash', categoryId:'padusers', tenantType:'Car wash', notes:'Express car wash pad user; Arizona locator lists Phoenix locations.'},
+  {id:'roster234', name:'Quick Quack Phoenix Bell', categoryId:'padusers', tenantType:'Car wash', notes:'Representative Quick Quack Phoenix car wash site.'},
+  {id:'roster235', name:'Quick Quack Phoenix Cactus', categoryId:'padusers', tenantType:'Car wash', notes:'Representative Quick Quack Phoenix car wash site.'},
+  {id:'roster236', name:'Quick Quack Phoenix Cave Creek', categoryId:'padusers', tenantType:'Car wash', notes:'Representative Quick Quack Phoenix car wash site.'},
+  {id:'roster237', name:'Quick Quack Phoenix Deer Valley', categoryId:'padusers', tenantType:'Car wash', notes:'Representative Quick Quack Phoenix car wash site.'},
+  {id:'roster238', name:'Quick Quack Phoenix Indian School', categoryId:'padusers', tenantType:'Car wash', notes:'Representative Quick Quack Phoenix car wash site.'},
+  {id:'roster239', name:'QuikTrip', categoryId:'padusers', tenantType:'Convenience store', notes:'Convenience store/gas pad user.'},
+  {id:'roster240', name:'Raceway Car Wash', categoryId:'padusers', tenantType:'Car wash', notes:'Car wash pad user.'},
+  {id:'roster241', name:'Raceway Express Car Wash', categoryId:'padusers', tenantType:'Car wash', notes:'Express car wash pad user.'},
+  {id:'roster242', name:'Safelite AutoGlass', categoryId:'padusers', tenantType:'Auto glass', notes:'Auto glass repair/replacement user.'},
+  {id:'roster243', name:'Sanderson Ford', categoryId:'padusers', tenantType:'Auto dealership / service', notes:'Auto dealership/service user.'},
+  {id:'roster244', name:'Shell', categoryId:'padusers', tenantType:'Convenience / gas', notes:'Convenience/gas pad user.'},
+  {id:'roster245', name:'Strickland Brothers 10 Minute Oil Change', categoryId:'padusers', tenantType:'Oil change', notes:'Oil change pad user.'},
+  {id:'roster246', name:'Sun Devil Auto', categoryId:'padusers', tenantType:'Auto service', notes:'Local/regional automotive service user.'},
+  {id:'roster247', name:'Super Star Car Wash', categoryId:'padusers', tenantType:'Car wash', notes:'Car wash pad user; Phoenix locator source available.'},
+  {id:'roster248', name:'Super Star Express Car Wash', categoryId:'padusers', tenantType:'Car wash', notes:'Super Star express car wash format.'},
+  {id:'roster249', name:'Super Star Full Service Car Wash', categoryId:'padusers', tenantType:'Car wash / detail', notes:'Super Star full-service car wash/detail format.'},
+  {id:'roster250', name:'Super Wash', categoryId:'padusers', tenantType:'Car wash', notes:'Self-serve/express car wash user.'},
+  {id:'roster251', name:'Take 5 Oil Change', categoryId:'padusers', tenantType:'Auto service', notes:'Automotive service pad user.'},
+  {id:'roster252', name:'Tesla Supercharger', categoryId:'padusers', tenantType:'EV charging', notes:'EV charging pad/parking-field user.'},
+  {id:'roster253', name:'The UPS Store', categoryId:'padusers', tenantType:'Shipping / services', notes:'Common neighborhood shop-space tenant.'},
+  {id:'roster254', name:'Tint World', categoryId:'padusers', tenantType:'Auto accessories / tint', notes:'Auto tint/accessories user.'},
+  {id:'roster255', name:'Tire Choice Auto Service Centers', categoryId:'padusers', tenantType:'Tire / auto service', notes:'Tire/auto service pad user.'},
+  {id:'roster256', name:'Tire Works', categoryId:'padusers', tenantType:'Tire / auto service', notes:'Tire/auto service pad user.'},
+  {id:'roster257', name:'Ultra Suds Car Wash', categoryId:'padusers', tenantType:'Car wash', notes:'Local/express car wash pad user.'},
+  {id:'roster258', name:'Valero', categoryId:'padusers', tenantType:'Convenience / gas', notes:'Convenience/gas pad user.'},
+  {id:'roster259', name:'Valvoline Instant Oil Change', categoryId:'padusers', tenantType:'Auto service', notes:'Oil change pad user; locator source available.'},
+  {id:'roster260', name:'Wash Werks Express', categoryId:'padusers', tenantType:'Car wash', notes:'Express car wash pad user.'},
+  {id:'roster261', name:'Weiss Guys Car Wash', categoryId:'padusers', tenantType:'Car wash', notes:'Local car wash pad user.'},
+  {id:'roster262', name:'Wheel Works', categoryId:'padusers', tenantType:'Tire / auto service', notes:'Tire/auto service pad user.'},
+  {id:'roster263', name:'Wilhelm Automotive', categoryId:'padusers', tenantType:'Auto service', notes:'Local/regional automotive service user.'},
+  {id:'roster264', name:'Ziebart', categoryId:'padusers', tenantType:'Auto appearance', notes:'Auto appearance/protection user.'},
+  {id:'roster265', name:'Bad Ass Coffee of Hawaii', categoryId:'qsrcoffee', tenantType:'Coffee / beverage', notes:'CityScape source cites Bad Ass Coffee.'},
+  {id:'roster266', name:'Bikini Beans Coffee', categoryId:'qsrcoffee', tenantType:'Coffee / beverage', notes:'Local coffee drive-thru/shop tenant.'},
+  {id:'roster267', name:'Black Rock Coffee Bar', categoryId:'qsrcoffee', tenantType:'Coffee / beverage', notes:'Coffee chain with drive-thru and inline formats.'},
+  {id:'roster268', name:'Bosa Donuts', categoryId:'qsrcoffee', tenantType:'Coffee / bakery', notes:'Local donut/coffee shop with multiple units.'},
+  {id:'roster269', name:'Coffee Bean & Tea Leaf', categoryId:'qsrcoffee', tenantType:'Coffee / beverage', notes:'Coffee shop tenant.'},
+  {id:'roster270', name:'Dunkin\'', categoryId:'qsrcoffee', tenantType:'Coffee / beverage', notes:'Coffee/donut QSR.'},
+  {id:'roster271', name:'Dutch Bros Coffee', categoryId:'qsrcoffee', tenantType:'Coffee / beverage', notes:'Drive-thru coffee.'},
+  {id:'roster272', name:'Human Bean', categoryId:'qsrcoffee', tenantType:'Coffee / beverage', notes:'Drive-thru coffee tenant.'},
+  {id:'roster273', name:'Press Coffee', categoryId:'qsrcoffee', tenantType:'Coffee / beverage', notes:'Local/regional coffee shop.'},
+  {id:'roster274', name:'Scooter\'s Coffee', categoryId:'qsrcoffee', tenantType:'Coffee / beverage', notes:'Drive-thru coffee kiosk/pad user.'},
+  {id:'roster275', name:'Starbucks', categoryId:'qsrcoffee', tenantType:'Coffee / beverage', notes:'Coffee chain; inline, endcap and drive-thru formats.'},
+  {id:'roster276', name:'Angie\'s Burger', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Local quick-service burger concept.'},
+  {id:'roster277', name:'Angie\'s Lobster', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Local quick-service seafood drive-thru concept.'},
+  {id:'roster278', name:'Angie\'s Prime Grill', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Local fast-casual grill concept.'},
+  {id:'roster279', name:'Baja Fresh', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Fast-casual Mexican.'},
+  {id:'roster280', name:'Barro\'s Pizza', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Local/regional pizza tenant.'},
+  {id:'roster281', name:'Biscuits Cafe', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Breakfast/lunch cafe tenant.'},
+  {id:'roster282', name:'Black Bear Diner', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Family dining tenant; often pad/endcap.'},
+  {id:'roster283', name:'Blaze Pizza', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Fast-casual pizza.'},
+  {id:'roster284', name:'Bonchon', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Fast-casual Korean fried chicken.'},
+  {id:'roster285', name:'Bruegger\'s Bagels', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Bagel/breakfast shop.'},
+  {id:'roster286', name:'Cafe Rio', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Fast-casual Mexican.'},
+  {id:'roster287', name:'Capriotti\'s Sandwich Shop', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Sandwich fast-casual.'},
+  {id:'roster288', name:'CAVA', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Mediterranean fast-casual tenant.'},
+  {id:'roster289', name:'Chipotle', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Fast-casual Mexican; shop/inline and pad formats.'},
+  {id:'roster290', name:'Chompie\'s', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Local deli/bakery restaurant.'},
+  {id:'roster291', name:'Chronic Tacos', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Fast-casual taco shop.'},
+  {id:'roster292', name:'Cold Beers & Cheeseburgers', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Local/regional casual restaurant tenant.'},
+  {id:'roster293', name:'Cousins Subs', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Sandwich shop tenant.'},
+  {id:'roster294', name:'Crumbl Cookies', categoryId:'qsrfastcasual', tenantType:'Dessert / bakery', notes:'Cookie dessert shop.'},
+  {id:'roster295', name:'Culinary Dropout', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Fox Restaurant Concepts casual dining user.'},
+  {id:'roster296', name:'Dave\'s Hot Chicken', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Chicken fast-casual.'},
+  {id:'roster297', name:'Detroit Coney Grill', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Fast-casual hot dog/burger restaurant.'},
+  {id:'roster298', name:'Dickey\'s Barbecue Pit', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Barbecue fast-casual.'},
+  {id:'roster299', name:'Dog Haus', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'CityScape source cites Dog Haus Biergarten.'},
+  {id:'roster300', name:'Einstein Bros. Bagels', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Bagel/breakfast shop.'},
+  {id:'roster301', name:'Firehouse Subs', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Sub sandwich chain; typical inline shop tenant.'},
+  {id:'roster302', name:'Five Guys', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'CityScape source cites Five Guys in Downtown Phoenix.'},
+  {id:'roster303', name:'Flower Child', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Fast-casual healthy restaurant.'},
+  {id:'roster304', name:'Freddy\'s Frozen Custard & Steakburgers', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Fast-casual burger/custard.'},
+  {id:'roster305', name:'Hawaiian Bros Island Grill', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Fast-casual Hawaiian plate lunch.'},
+  {id:'roster306', name:'Ike\'s Love & Sandwiches', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Sandwich fast-casual.'},
+  {id:'roster307', name:'Jamba', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Smoothie shop tenant.'},
+  {id:'roster308', name:'Jersey Mike\'s Subs', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Sub sandwich chain; typical inline shop tenant.'},
+  {id:'roster309', name:'Jimmy John\'s', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Listed at Fountain Square; broader Phoenix presence via chain locator.'},
+  {id:'roster310', name:'Kneaders Bakery & Cafe', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Bakery-cafe tenant.'},
+  {id:'roster311', name:'Koibito Poke', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Poke bowl fast-casual.'},
+  {id:'roster312', name:'L&L Hawaiian Barbecue', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Hawaiian barbecue fast-casual.'},
+  {id:'roster313', name:'MAD Greens', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Salad fast-casual.'},
+  {id:'roster314', name:'MOD Pizza', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Fast-casual pizza.'},
+  {id:'roster315', name:'MOOYAH Burgers, Fries & Shakes', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Fast-casual burger restaurant.'},
+  {id:'roster316', name:'Nekter Juice Bar', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Juice and smoothie shop.'},
+  {id:'roster317', name:'Noodles & Company', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Noodle/pasta fast-casual.'},
+  {id:'roster318', name:'Original ChopShop', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Local fast-casual healthy restaurant.'},
+  {id:'roster319', name:'Panda Express', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Fast-casual Chinese; inline, pad, airport and campus formats.'},
+  {id:'roster320', name:'Panera Bread', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Bakery-cafe chain with Phoenix-area stores.'},
+  {id:'roster321', name:'Pei Wei Asian Kitchen', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Asian fast-casual.'},
+  {id:'roster322', name:'Portillo\'s', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Fast-casual Chicago-style hot dogs and beef.'},
+  {id:'roster323', name:'Potbelly Sandwich Shop', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'CityScape source cites Potbelly in Downtown Phoenix.'},
+  {id:'roster324', name:'Qdoba', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Fast-casual Mexican.'},
+  {id:'roster325', name:'Raising Cane\'s Chicken Fingers', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Chicken finger fast-casual; overlaps with fast food category depending on format.'},
+  {id:'roster326', name:'Rubio\'s Coastal Grill', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Fast-casual seafood/Mexican.'},
+  {id:'roster327', name:'Salad and Go', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Drive-thru salad QSR; very active in Phoenix market.'},
+  {id:'roster328', name:'Sauce Pizza & Wine', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Local/regional fast-casual pizza/pasta.'},
+  {id:'roster329', name:'Shake Shack', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Fast-casual burger restaurant.'},
+  {id:'roster330', name:'Smashburger', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Fast-casual burger restaurant.'},
+  {id:'roster331', name:'Someburros', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Local/regional Mexican restaurant.'},
+  {id:'roster332', name:'Subway', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Sandwich QSR; small shop and embedded locations.'},
+  {id:'roster333', name:'Sweetgreen', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Salad fast-casual.'},
+  {id:'roster334', name:'Tropical Smoothie Cafe', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Smoothie/sandwich fast-casual.'},
+  {id:'roster335', name:'Urban Plates', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Fast-casual restaurant.'},
+  {id:'roster336', name:'Venezia\'s Pizzeria', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Local pizza restaurant.'},
+  {id:'roster337', name:'Wingstop', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Chicken wing QSR/fast-casual.'},
+  {id:'roster338', name:'Yogi\'s Grill', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'CityScape source cites Yogi\'s Grill.'},
+  {id:'roster339', name:'Yoshinoya', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Japanese bowl QSR.'},
+  {id:'roster340', name:'Zupas', categoryId:'qsrfastcasual', tenantType:'Restaurant', notes:'Soup/salad/sandwich fast casual.'},
+  {id:'roster341', name:'24 Hour Fitness', categoryId:'shopspace', tenantType:'Fitness', notes:'Fitness club tenant.'},
+  {id:'roster342', name:'99 Cents Only Stores', categoryId:'shopspace', tenantType:'Value retail', notes:'Verify status due chain closure/liquidation history.'},
+  {id:'roster343', name:'9Round', categoryId:'shopspace', tenantType:'Fitness', notes:'Boutique fitness tenant.'},
+  {id:'roster344', name:'AAA', categoryId:'shopspace', tenantType:'Insurance / travel', notes:'Insurance/travel services tenant.'},
+  {id:'roster345', name:'Allstate', categoryId:'shopspace', tenantType:'Insurance', notes:'Insurance agency office tenant.'},
+  {id:'roster346', name:'Amazing Cuts', categoryId:'shopspace', tenantType:'Hair salon', notes:'Local hair salon tenant.'},
+  {id:'roster347', name:'Amazing Lash Studio', categoryId:'shopspace', tenantType:'Personal care', notes:'Beauty/personal service tenant.'},
+  {id:'roster348', name:'America\'s Best Contacts & Eyeglasses', categoryId:'shopspace', tenantType:'Optical', notes:'Optical retail tenant.'},
+  {id:'roster349', name:'Anytime Fitness', categoryId:'shopspace', tenantType:'Fitness', notes:'Fitness club tenant.'},
+  {id:'roster350', name:'As You Wish Pottery', categoryId:'shopspace', tenantType:'Entertainment / hobby', notes:'Paint-your-own pottery tenant.'},
+  {id:'roster351', name:'AT&T', categoryId:'shopspace', tenantType:'Wireless', notes:'Wireless retailer; inline/endcap shop space.'},
+  {id:'roster352', name:'Bank of America', categoryId:'shopspace', tenantType:'Bank / financial', notes:'Bank branch / pad tenant.'},
+  {id:'roster353', name:'Bath & Body Works', categoryId:'shopspace', tenantType:'Beauty retail', notes:'Specialty beauty/fragrance retailer.'},
+  {id:'roster354', name:'Batteries Plus', categoryId:'shopspace', tenantType:'Specialty retail', notes:'Battery/device specialty shop.'},
+  {id:'roster355', name:'Beltone', categoryId:'shopspace', tenantType:'Hearing care', notes:'Hearing care retail/service tenant.'},
+  {id:'roster356', name:'Benjamin Moore Retailers', categoryId:'shopspace', tenantType:'Paint retail', notes:'Independent/dealer paint retail.'},
+  {id:'roster357', name:'Blo Blow Dry Bar', categoryId:'shopspace', tenantType:'Personal care', notes:'Beauty service tenant.'},
+  {id:'roster358', name:'Bookmans', categoryId:'shopspace', tenantType:'Books / media', notes:'Used books/media retailer.'},
+  {id:'roster359', name:'Boost Mobile', categoryId:'shopspace', tenantType:'Wireless', notes:'Wireless retailer.'},
+  {id:'roster360', name:'Boot Barn', categoryId:'shopspace', tenantType:'Apparel / western', notes:'Western/work apparel retailer.'},
+  {id:'roster361', name:'Carter\'s', categoryId:'shopspace', tenantType:'Children\'s apparel', notes:'Children\'s apparel retailer.'},
+  {id:'roster362', name:'Cato Fashions', categoryId:'shopspace', tenantType:'Apparel', notes:'Apparel retailer.'},
+  {id:'roster363', name:'Chase Bank', categoryId:'shopspace', tenantType:'Bank / financial', notes:'Bank branch / pad tenant.'},
+  {id:'roster364', name:'Club Pilates', categoryId:'shopspace', tenantType:'Fitness', notes:'Boutique fitness shop-space tenant.'},
+  {id:'roster365', name:'CPR Cell Phone Repair', categoryId:'shopspace', tenantType:'Device repair', notes:'Phone/electronics repair shop.'},
+  {id:'roster366', name:'Cricket Wireless', categoryId:'shopspace', tenantType:'Wireless', notes:'Wireless retailer.'},
+  {id:'roster367', name:'CycleBar', categoryId:'shopspace', tenantType:'Fitness', notes:'Boutique fitness tenant.'},
+  {id:'roster368', name:'Daiso', categoryId:'shopspace', tenantType:'Value retail', notes:'Value/general merchandise shop tenant.'},
+  {id:'roster369', name:'Desert Financial Credit Union', categoryId:'shopspace', tenantType:'Bank / financial', notes:'Financial services branch tenant.'},
+  {id:'roster370', name:'Dollar General', categoryId:'shopspace', tenantType:'Value retail', notes:'High-count value retailer.'},
+  {id:'roster371', name:'Dollar Tree', categoryId:'shopspace', tenantType:'Value retail', notes:'High-count small-box/shop-space value retailer.'},
+  {id:'roster372', name:'Drybar', categoryId:'shopspace', tenantType:'Personal care', notes:'Beauty service tenant.'},
+  {id:'roster373', name:'Dunn-Edwards Paints', categoryId:'shopspace', tenantType:'Paint retail', notes:'Regional paint store tenant.'},
+  {id:'roster374', name:'Edible Arrangements', categoryId:'shopspace', tenantType:'Specialty food/gifts', notes:'Specialty gift/food shop.'},
+  {id:'roster375', name:'EOS Fitness', categoryId:'shopspace', tenantType:'Fitness', notes:'Fitness club tenant.'},
+  {id:'roster376', name:'European Wax Center', categoryId:'shopspace', tenantType:'Personal care', notes:'Personal service tenant.'},
+  {id:'roster377', name:'Eyebrow Threading Studios', categoryId:'shopspace', tenantType:'Personal care', notes:'Representative independent beauty service category.'},
+  {id:'roster378', name:'Eyeglass World', categoryId:'shopspace', tenantType:'Optical', notes:'Optical retail tenant.'},
+  {id:'roster379', name:'F45 Training', categoryId:'shopspace', tenantType:'Fitness', notes:'Boutique fitness tenant.'},
+  {id:'roster380', name:'Family Dollar', categoryId:'shopspace', tenantType:'Value retail', notes:'High-count value retailer.'},
+  {id:'roster381', name:'Famous Footwear', categoryId:'shopspace', tenantType:'Footwear', notes:'Footwear retailer.'},
+  {id:'roster382', name:'Fantastic Sams', categoryId:'shopspace', tenantType:'Hair salon', notes:'Hair salon chain.'},
+  {id:'roster383', name:'Farmers Insurance', categoryId:'shopspace', tenantType:'Insurance', notes:'Insurance agency office tenant.'},
+  {id:'roster384', name:'FedEx Office', categoryId:'shopspace', tenantType:'Printing / shipping', notes:'Print/ship services.'},
+  {id:'roster385', name:'Five Below', categoryId:'shopspace', tenantType:'Value retail', notes:'Value retailer / junior box.'},
+  {id:'roster386', name:'Floyd\'s 99 Barbershop', categoryId:'shopspace', tenantType:'Hair salon', notes:'Barber/salon tenant.'},
+  {id:'roster387', name:'GameStop', categoryId:'shopspace', tenantType:'Specialty retail', notes:'Video game specialty retailer.'},
+  {id:'roster388', name:'GNC', categoryId:'shopspace', tenantType:'Health retail', notes:'Vitamin/supplement retailer.'},
+  {id:'roster389', name:'Great Clips', categoryId:'shopspace', tenantType:'Hair salon', notes:'Hair salon chain; inline shop space.'},
+  {id:'roster390', name:'Hand & Stone Massage and Facial Spa', categoryId:'shopspace', tenantType:'Personal care', notes:'Spa/personal service tenant.'},
+  {id:'roster391', name:'LA Fitness', categoryId:'shopspace', tenantType:'Fitness', notes:'Large-format fitness tenant.'},
+  {id:'roster392', name:'Lane Bryant', categoryId:'shopspace', tenantType:'Apparel', notes:'Apparel retailer.'},
+  {id:'roster393', name:'LensCrafters', categoryId:'shopspace', tenantType:'Optical', notes:'Optical retail tenant.'},
+  {id:'roster394', name:'Leslie\'s Pool Supplies', categoryId:'shopspace', tenantType:'Pool supply retail', notes:'Phoenix-market pool supply retailer.'},
+  {id:'roster395', name:'Massage Envy', categoryId:'shopspace', tenantType:'Personal care', notes:'Wellness/personal service tenant.'},
+  {id:'roster396', name:'Mattress Firm', categoryId:'shopspace', tenantType:'Mattress retail', notes:'Mattress retailer.'},
+  {id:'roster397', name:'Maurices', categoryId:'shopspace', tenantType:'Apparel', notes:'Apparel retailer.'},
+  {id:'roster398', name:'Miracle-Ear', categoryId:'shopspace', tenantType:'Hearing care', notes:'Hearing care retail/service tenant.'},
+  {id:'roster399', name:'Mountainside Fitness', categoryId:'shopspace', tenantType:'Fitness', notes:'Local/regional fitness club.'},
+  {id:'roster400', name:'Nail Spa / Nail Salon Operators', categoryId:'shopspace', tenantType:'Personal care', notes:'Representative independent nail salon tenant category.'},
+  {id:'roster401', name:'Natural Grocers', categoryId:'shopspace', tenantType:'Grocery / health retail', notes:'Specialty grocery/health retailer; may function as small anchor.'},
+  {id:'roster402', name:'Nothing Bundt Cakes', categoryId:'shopspace', tenantType:'Bakery', notes:'Bakery shop tenant.'},
+  {id:'roster403', name:'Orangetheory Fitness', categoryId:'shopspace', tenantType:'Fitness', notes:'Boutique fitness shop-space tenant.'},
+  {id:'roster404', name:'Pearle Vision', categoryId:'shopspace', tenantType:'Optical', notes:'Optical retail tenant.'},
+  {id:'roster405', name:'PetSmart', categoryId:'shopspace', tenantType:'Pet retail', notes:'Large shop/small-box pet retailer.'},
+  {id:'roster406', name:'Planet Fitness', categoryId:'shopspace', tenantType:'Fitness', notes:'Listed at Fountain Square; often occupies large shop/small-box space.'},
+  {id:'roster407', name:'Poolwerx', categoryId:'shopspace', tenantType:'Pool supply retail', notes:'Pool service/supply retailer.'},
+  {id:'roster408', name:'Pure Barre', categoryId:'shopspace', tenantType:'Fitness', notes:'Boutique fitness tenant.'},
+  {id:'roster409', name:'Roosters Men\'s Grooming Center', categoryId:'shopspace', tenantType:'Hair salon', notes:'Barber tenant.'},
+  {id:'roster410', name:'Sally Beauty', categoryId:'shopspace', tenantType:'Beauty retail', notes:'Beauty supply shop.'},
+  {id:'roster411', name:'Scrubs & Beyond', categoryId:'shopspace', tenantType:'Medical apparel', notes:'Medical uniform retailer.'},
+  {id:'roster412', name:'See\'s Candies', categoryId:'shopspace', tenantType:'Specialty food', notes:'Candy shop tenant.'},
+  {id:'roster413', name:'Sephora', categoryId:'shopspace', tenantType:'Beauty retail', notes:'Beauty retail; mall and shop-space formats.'},
+  {id:'roster414', name:'Sherwin-Williams', categoryId:'shopspace', tenantType:'Paint retail', notes:'Paint store tenant.'},
+  {id:'roster415', name:'Skechers', categoryId:'shopspace', tenantType:'Footwear', notes:'Footwear retailer.'},
+  {id:'roster416', name:'Sleep Number', categoryId:'shopspace', tenantType:'Mattress retail', notes:'Mattress specialty retailer.'},
+  {id:'roster417', name:'Sport Clips', categoryId:'shopspace', tenantType:'Hair salon', notes:'Hair salon chain; inline shop space.'},
+  {id:'roster418', name:'State Farm', categoryId:'shopspace', tenantType:'Insurance', notes:'Insurance agency office tenant.'},
+  {id:'roster419', name:'StretchLab', categoryId:'shopspace', tenantType:'Fitness / wellness', notes:'Assisted-stretch wellness tenant.'},
+  {id:'roster420', name:'Supercuts', categoryId:'shopspace', tenantType:'Hair salon', notes:'Hair salon chain; inline shop space.'},
+  {id:'roster421', name:'T-Mobile', categoryId:'shopspace', tenantType:'Wireless', notes:'Wireless retailer; inline/endcap shop space.'},
+  {id:'roster422', name:'The Joint Chiropractic', categoryId:'shopspace', tenantType:'Chiropractic', notes:'Chiropractic wellness tenant; often inline.'},
+  {id:'roster423', name:'The Vitamin Shoppe', categoryId:'shopspace', tenantType:'Health retail', notes:'Vitamin/supplement retailer.'},
+  {id:'roster424', name:'Torrid', categoryId:'shopspace', tenantType:'Apparel', notes:'Apparel retailer.'},
+  {id:'roster425', name:'U.S. Bank', categoryId:'shopspace', tenantType:'Bank / financial', notes:'Listed at Fountain Square.'},
+  {id:'roster426', name:'uBreakiFix by Asurion', categoryId:'shopspace', tenantType:'Device repair', notes:'Phone/electronics repair shop.'},
+  {id:'roster427', name:'Ulta Salon inside Ulta Beauty', categoryId:'shopspace', tenantType:'Personal care', notes:'Salon component within larger beauty retail locations.'},
+  {id:'roster428', name:'Verizon', categoryId:'shopspace', tenantType:'Wireless', notes:'Wireless retailer; inline/endcap shop space.'},
+  {id:'roster429', name:'Visionworks', categoryId:'shopspace', tenantType:'Optical', notes:'Optical retail tenant.'},
+  {id:'roster430', name:'Waxing the City', categoryId:'shopspace', tenantType:'Personal care', notes:'Personal care tenant.'},
+  {id:'roster431', name:'Wells Fargo', categoryId:'shopspace', tenantType:'Bank / financial', notes:'Bank branch / pad tenant.'},
+  {id:'roster432', name:'Zia Records', categoryId:'shopspace', tenantType:'Entertainment retail', notes:'Local/regional music/media retailer.'}
+];
+// Phoenix Broker List — a standing, cross-listing roster of brokers (distinct from both
+// the tenant roster above and the general Contacts directory). Attaching a "Broker" to a
+// prospect pulls from and updates this list specifically. Seeded from a real Phoenix
+// retail broker roster (138 brokers); add/edit more as you go, same as any other list here.
+let PHOENIX_BROKER_LIST = [
+  {id:'brokerseed0', name:'Regan Amato', company:'JLL — Senior Managing Director', email:'regan.amato@jll.com', mobile:'', phone:'+1 602 282 6322'},
+  {id:'brokerseed1', name:'Ryan Tanner', company:'JLL — Vice President', email:'', mobile:'', phone:'+1 602 282 6318'},
+  {id:'brokerseed2', name:'Todd Folger', company:'CBRE — First Vice President', email:'', mobile:'', phone:'+1 602 735 1749'},
+  {id:'brokerseed3', name:'Michael Hackett', company:'CBRE — Executive Vice President', email:'', mobile:'', phone:'+1 602 735 1946'},
+  {id:'brokerseed4', name:'Ryan Schubert', company:'CBRE — Executive Vice President', email:'', mobile:'', phone:'+1 602 735 1945'},
+  {id:'brokerseed5', name:'Zach Aulick', company:'CBRE — Investment Sales Consultant', email:'', mobile:'', phone:'+1 602 735 5751'},
+  {id:'brokerseed6', name:'Benjamin Farthing', company:'CBRE — Senior Vice President', email:'benjamin.farthing@cbre.com', mobile:'+1 602 206 0784', phone:''},
+  {id:'brokerseed7', name:'Glenn Smigiel', company:'CBRE — Senior Vice President', email:'', mobile:'', phone:'+1 602 735 5604'},
+  {id:'brokerseed8', name:'Cam Stanton', company:'CBRE — Broker', email:'', mobile:'', phone:'+1 602 538 3127'},
+  {id:'brokerseed9', name:'Bob Young', company:'CBRE — Broker', email:'', mobile:'', phone:'+1 602 735 5555'},
+  {id:'brokerseed10', name:'Bill Bones', company:'CBRE — Broker', email:'', mobile:'', phone:'+1 602 735 5555'},
+  {id:'brokerseed11', name:'Rick Abraham', company:'CBRE — Broker', email:'', mobile:'', phone:'+1 602 735 5555'},
+  {id:'brokerseed12', name:'Brent Mallonee', company:'Cushman & Wakefield — Executive Director', email:'brent.mallonee@cushwake.com', mobile:'', phone:'+1 602 224 4437'},
+  {id:'brokerseed13', name:'Chris Hollenbeck', company:'Cushman & Wakefield — Vice Chair', email:'', mobile:'', phone:'+1 602 224 4475'},
+  {id:'brokerseed14', name:'Shane Carter', company:'Cushman & Wakefield — Director', email:'', mobile:'', phone:'+1 602 224 4442'},
+  {id:'brokerseed15', name:'Tate Blalock', company:'Cushman & Wakefield — Senior Associate', email:'', mobile:'', phone:'+1 602 682 8294'},
+  {id:'brokerseed16', name:'Robbie Petty', company:'SRS Real Estate Partners — EVP & Managing Principal', email:'robbie.petty@srsre.com', mobile:'', phone:'+1 602 682 6025'},
+  {id:'brokerseed17', name:'Ed Beeh', company:'SRS Real Estate Partners — EVP & Managing Principal', email:'ed.beeh@srsre.com', mobile:'', phone:'+1 602 682 6040'},
+  {id:'brokerseed18', name:'Chuck Gibson', company:'SRS Real Estate Partners — SVP & Principal', email:'chuck.gibson@srsre.com', mobile:'', phone:'+1 602 682 6035'},
+  {id:'brokerseed19', name:'Brian Polachek', company:'SRS Real Estate Partners — SVP & Principal', email:'brian.polachek@srsre.com', mobile:'', phone:'+1 602 682 6045'},
+  {id:'brokerseed20', name:'Scott Ellsworth', company:'SRS Real Estate Partners — SVP & Principal', email:'scott.ellsworth@srsre.com', mobile:'', phone:'+1 602 682 6063'},
+  {id:'brokerseed21', name:'Alan Houston', company:'SRS Real Estate Partners — SVP & Principal', email:'alan.houston@srsre.com', mobile:'', phone:'+1 602 682 6022'},
+  {id:'brokerseed22', name:'Brad Balbo', company:'SRS Real Estate Partners — Senior Vice President', email:'brad.balbo@srsre.com', mobile:'', phone:'+1 602 682 6016'},
+  {id:'brokerseed23', name:'Stephanie Davis', company:'SRS Real Estate Partners — Senior Vice President', email:'stephanie.davis@srsre.com', mobile:'', phone:'+1 602 682 6054'},
+  {id:'brokerseed24', name:'Karisa Burke', company:'SRS Real Estate Partners — Associate', email:'karisa.burke@srsre.com', mobile:'', phone:'+1 602 682 6099'},
+  {id:'brokerseed25', name:'Matt Murray', company:'SRS Real Estate Partners — Transaction Associate', email:'matt.murray@srsre.com', mobile:'', phone:'+1 602 682 6010'},
+  {id:'brokerseed26', name:'Gregory White', company:'SRS Real Estate Partners — Senior Vice President', email:'gregory.white@srsre.com', mobile:'', phone:'+1 602 910 3799'},
+  {id:'brokerseed27', name:'Chris Abdayem, CCIM', company:'SRS Real Estate Partners — Senior Associate', email:'chris.abdayem@srsre.com', mobile:'', phone:'+1 602 682 6052'},
+  {id:'brokerseed28', name:'Eric Termansen', company:'Western Retail Advisors — Founding Partner', email:'etermansen@w-retail.com', mobile:'', phone:'+1 602 778 3745'},
+  {id:'brokerseed29', name:'Ryan Desmond', company:'Western Retail Advisors — Partner', email:'rdesmond@w-retail.com', mobile:'', phone:'+1 602 931 4489'},
+  {id:'brokerseed30', name:'Neil Board', company:'Western Retail Advisors — Partner', email:'nboard@w-retail.com', mobile:'', phone:'+1 602 778 3781'},
+  {id:'brokerseed31', name:'Chris Stamets', company:'Western Retail Advisors — Partner', email:'cstamets@w-retail.com', mobile:'', phone:'+1 602 778 3748'},
+  {id:'brokerseed32', name:'Jason Fessinger', company:'Western Retail Advisors — Executive Vice President & Principal', email:'jfessinger@w-retail.com', mobile:'', phone:'+1 602 368 1090'},
+  {id:'brokerseed33', name:'Kalen Rickard', company:'Western Retail Advisors — Executive Vice President & Principal', email:'krickard@w-retail.com', mobile:'', phone:'+1 602 931 4492'},
+  {id:'brokerseed34', name:'Jared Cauffield', company:'Western Retail Advisors — Associate Vice President', email:'jcauffield@w-retail.com', mobile:'', phone:'+1 330 571 5833'},
+  {id:'brokerseed35', name:'Alex DeSoto', company:'Matthews Real Estate Investment Services — Senior Vice President & Director', email:'alex.desoto@matthews.com', mobile:'', phone:'+1 602 898 8499'},
+  {id:'brokerseed36', name:'Simon Assaf', company:'Matthews Real Estate Investment Services — Senior Vice President & Director', email:'simon.assaf@matthews.com', mobile:'', phone:'+1 949 873 0275'},
+  {id:'brokerseed37', name:'Ayman Sultan', company:'Matthews Real Estate Investment Services — Senior Associate', email:'ayman.sultan@matthews.com', mobile:'', phone:'+1 623 887 9651'},
+  {id:'brokerseed38', name:'Cayson Fincher', company:'Matthews Real Estate Investment Services — Associate Vice President', email:'cayson.fincher@matthews.com', mobile:'', phone:'+1 602 313 8175'},
+  {id:'brokerseed39', name:'Cole Solis', company:'Matthews Real Estate Investment Services — Associate', email:'cole.solis@matthews.com', mobile:'', phone:'+1 480 896 2149'},
+  {id:'brokerseed40', name:'Haidyn DeJean', company:'Matthews Real Estate Investment Services — Associate', email:'haidyn.dejean@matthews.com', mobile:'', phone:'+1 404 960 4638'},
+  {id:'brokerseed41', name:'Hudson DeJean', company:'Matthews Real Estate Investment Services — Associate Vice President', email:'hudson.dejean@matthews.com', mobile:'', phone:'+1 602 218 5242'},
+  {id:'brokerseed42', name:'Josh Jenkins', company:'Matthews Real Estate Investment Services — Associate', email:'joshua.jenkins@matthews.com', mobile:'', phone:'+1 602 932 5916'},
+  {id:'brokerseed43', name:'Josh Lesaca', company:'Matthews Real Estate Investment Services — Senior Associate', email:'josh.lesaca@matthews.com', mobile:'', phone:'+1 602 412 3775'},
+  {id:'brokerseed44', name:'Justin Corrales', company:'Matthews Real Estate Investment Services — Associate', email:'justin.corrales@matthews.com', mobile:'', phone:'+1 602 894 8439'},
+  {id:'brokerseed45', name:'Marco Romero', company:'Matthews Real Estate Investment Services — Associate', email:'marco.romero@matthews.com', mobile:'', phone:'+1 480 674 8208'},
+  {id:'brokerseed46', name:'Matthew Schmidt', company:'Matthews Real Estate Investment Services — Senior Associate', email:'matthew.schmidt@matthews.com', mobile:'', phone:'+1 602 609 3523'},
+  {id:'brokerseed47', name:'Patrick Ehrhardt', company:'Matthews Real Estate Investment Services — Associate', email:'patrick.ehrhardt@matthews.com', mobile:'', phone:'+1 602 715 2149'},
+  {id:'brokerseed48', name:'Samuel Griffeth', company:'Matthews Real Estate Investment Services — Senior Associate', email:'samuel.griffeth@matthews.com', mobile:'', phone:'+1 602 807 6971'},
+  {id:'brokerseed49', name:'Trevor Von Behren', company:'Matthews Real Estate Investment Services — Associate', email:'trevor.vonbehren@matthews.com', mobile:'', phone:'+1 602 946 4855'},
+  {id:'brokerseed50', name:'Zach Stevens', company:'Matthews Real Estate Investment Services — Associate', email:'zach.stevens@matthews.com', mobile:'', phone:'+1 602 922 3427'},
+  {id:'brokerseed51', name:'Brian Woods', company:'Colliers — Executive Vice President', email:'', mobile:'', phone:'+1 602 222 5000'},
+  {id:'brokerseed52', name:'Tom Woods', company:'Colliers — Senior Executive Vice President', email:'', mobile:'', phone:'Colliers Phoenix: +1 602 222 5000'},
+  {id:'brokerseed53', name:'Dave Cheatham', company:'Velocity Retail Group — President', email:'', mobile:'', phone:'+1 602 682 6060'},
+  {id:'brokerseed54', name:'Brian Gast', company:'Velocity Retail Group — Executive Vice President & Principal', email:'', mobile:'', phone:'Main: +1 602 682 8100'},
+  {id:'brokerseed55', name:'Brian Harpel', company:'Velocity Retail Group — Senior Vice President', email:'', mobile:'', phone:'Office: +1 602 682 8150; Cell: +1 520 909 8505'},
+  {id:'brokerseed56', name:'Dean Ingram', company:'Velocity Retail Group — Vice President', email:'dean.ingram@velocityretail.com', mobile:'', phone:'+1 602 703 3326'},
+  {id:'brokerseed57', name:'Paige Keefer', company:'Velocity Retail Group — Senior Associate', email:'paige.keefer@velocityretail.com', mobile:'', phone:'+1 602 682 8167'},
+  {id:'brokerseed58', name:'Ryan Lane', company:'Velocity Retail Group — Associate', email:'', mobile:'', phone:'+1 971 777 0669'},
+  {id:'brokerseed59', name:'Parker Jones', company:'Velocity Retail Group — Associate', email:'', mobile:'', phone:'+1 602 682 8182'},
+  {id:'brokerseed60', name:'Victor Moreno', company:'Velocity Retail Group — Associate', email:'', mobile:'', phone:'+1 602 682 8181'},
+  {id:'brokerseed61', name:'Bret Olson', company:'Velocity Retail Group — Associate', email:'', mobile:'Phone: +1 602 682 8135; +1 480 848 9485', phone:''},
+  {id:'brokerseed62', name:'Greg Laing', company:'Phoenix Commercial Advisors — Broker', email:'glaing@pcaemail.com', mobile:'', phone:'+1 602 957 9800'},
+  {id:'brokerseed63', name:'Zachary Pace', company:'Phoenix Commercial Advisors — Broker', email:'zpace@pcaemail.com', mobile:'', phone:'+1 602 734 7212'},
+  {id:'brokerseed64', name:'Cameron Warren', company:'Phoenix Commercial Advisors — Broker', email:'cwarren@pcaemail.com', mobile:'', phone:'+1 602 288 3471'},
+  {id:'brokerseed65', name:'Courtney Van Loo', company:'Phoenix Commercial Advisors — Broker', email:'cauther@pcaemail.com', mobile:'', phone:'+1 602 288 3466'},
+  {id:'brokerseed66', name:'Teale Bloom', company:'Phoenix Commercial Advisors — Associate Vice President', email:'tbloom@pcaemail.com', mobile:'', phone:'+1 602 288 3476'},
+  {id:'brokerseed67', name:'Nick DeDona', company:'Phoenix Commercial Advisors — Broker', email:'ndedona@pcaemail.com', mobile:'', phone:'+1 602 734 7208'},
+  {id:'brokerseed68', name:'John Schweikert', company:'Phoenix Commercial Advisors — Broker', email:'jschweikert@pcaemail.com', mobile:'', phone:'+1 602 734 7218'},
+  {id:'brokerseed69', name:'Chad Tiedeman', company:'Phoenix Commercial Advisors — Broker', email:'ctiedeman@pcaemail.com', mobile:'', phone:'+1 602 288 3472'},
+  {id:'brokerseed70', name:'Lance Umble', company:'Phoenix Commercial Advisors — Senior Vice President', email:'lumble@pcaemail.com', mobile:'Office: +1 602 734 7206; +1 602 421 5204', phone:''},
+  {id:'brokerseed71', name:'Danny Gardiner', company:'Phoenix Commercial Advisors — Managing Director', email:'dannygardiner@pcaemail.com', mobile:'', phone:'+1 602 385 1328'},
+  {id:'brokerseed72', name:'Dan Gardiner', company:'Phoenix Commercial Advisors — Principal', email:'dgardiner@pcaemail.com', mobile:'', phone:'+1 602 734 7204'},
+  {id:'brokerseed73', name:'Dillon Young', company:'Phoenix Commercial Advisors — Associate', email:'dyoung@pcaemail.com', mobile:'', phone:'+1 602 288 3474'},
+  {id:'brokerseed74', name:'Jackson Dragon', company:'Phoenix Commercial Advisors — Associate', email:'', mobile:'', phone:'+1 602 288 3468'},
+  {id:'brokerseed75', name:'John Warren', company:'Phoenix Commercial Advisors — Associate', email:'jwarren@pcaemail.com', mobile:'', phone:'+1 602 734 7219'},
+  {id:'brokerseed76', name:'Steven Underwood', company:'Phoenix Commercial Advisors — Senior Managing Director', email:'sunderwood@pcaemail.com', mobile:'', phone:'+1 602 288 3477'},
+  {id:'brokerseed77', name:'Ali Hill', company:'Phoenix Commercial Advisors — Broker', email:'ahill@pcaemail.com', mobile:'', phone:'+1 602 734 7205'},
+  {id:'brokerseed78', name:'Chris Schmitt', company:'Phoenix Commercial Advisors — Senior Associate', email:'cschmitt@pcaemail.com', mobile:'', phone:'+1 602 288 3464'},
+  {id:'brokerseed79', name:'Isaiah Clayton', company:'Phoenix Commercial Advisors — Broker', email:'iclayton@pcaemail.com', mobile:'', phone:'+1 602 342 9931'},
+  {id:'brokerseed80', name:'Kennedy Gamez', company:'Phoenix Commercial Advisors — Broker', email:'', mobile:'', phone:'+1 602 288 3460'},
+  {id:'brokerseed81', name:'Torrey Briegel', company:'Phoenix Commercial Advisors — Associate Vice President', email:'tbriegel@pcaemail.com', mobile:'', phone:''},
+  {id:'brokerseed82', name:'Morey Fishel', company:'De Rito Partners — Designated Broker Manager', email:'Email via profile button / marketing@derito.com', mobile:'', phone:'+1 602 553 2925'},
+  {id:'brokerseed83', name:'Steve Bonnell', company:'De Rito Partners — Brokerage Department', email:'Email via profile button / marketing@derito.com', mobile:'', phone:'+1 602 553 2930'},
+  {id:'brokerseed84', name:'Michael Franks', company:'De Rito Partners — Brokerage Department', email:'Email via profile button / marketing@derito.com', mobile:'', phone:'+1 602 393 0140'},
+  {id:'brokerseed85', name:'Paul Serafin', company:'De Rito Partners — Brokerage Department', email:'Email via profile button / marketing@derito.com', mobile:'', phone:'+1 602 553 2943'},
+  {id:'brokerseed86', name:'Matt Morrell', company:'De Rito Partners — Brokerage Department', email:'Email via profile button / marketing@derito.com', mobile:'', phone:'+1 480 834 8500'},
+  {id:'brokerseed87', name:'Chuck Wells', company:'Kidder Mathews — Senior Vice President', email:'chuck.wells@kidder.com', mobile:'', phone:'+1 602 513 5141'},
+  {id:'brokerseed88', name:'Tim Hurley', company:'Kidder Mathews — Vice President', email:'tim.hurley@kidder.com', mobile:'', phone:'T: +1 602 513 5168; C: +1 760 861 1100'},
+  {id:'brokerseed89', name:'Trask Switzenberg', company:'Kidder Mathews — First Vice President', email:'trask.switzenberg@kidder.com', mobile:'', phone:'T: +1 602 513 5144; C: +1 480 363 0670'},
+  {id:'brokerseed90', name:'Brad Douglass', company:'Kidder Mathews — Senior Vice President', email:'brad.douglass@kidder.com', mobile:'', phone:'T: +1 602 513 5169; C: +1 602 882 9412'},
+  {id:'brokerseed91', name:'Emma Barreca', company:'Diversified Partners — SVP Brokerage & Development', email:'emma@dpcre.com', mobile:'', phone:'+1 610 469 4000'},
+  {id:'brokerseed92', name:'Marti Weinstein', company:'Diversified Partners — Partner', email:'marti@dpcre.com', mobile:'', phone:'+1 224 612 2332'},
+  {id:'brokerseed93', name:'Scott Hintze', company:'Diversified Partners — Broker/Agent', email:'scott@dpcre.com', mobile:'', phone:'+1 602 549 4173'},
+  {id:'brokerseed94', name:'Delaney McGroarty', company:'Diversified Partners — Broker/Agent', email:'delaney.mcgroarty@dpcre.com', mobile:'', phone:'+1 909 524 9669'},
+  {id:'brokerseed95', name:'Kristina Remon', company:'Diversified Partners — Broker/Agent', email:'kristina.remon@dpcre.com', mobile:'', phone:'+1 602 621 1529'},
+  {id:'brokerseed96', name:'John K. Jackson', company:'Diversified Partners — Broker/Agent', email:'john.jackson@dpcre.com', mobile:'', phone:'+1 602 400 5084'},
+  {id:'brokerseed97', name:'Megan Adamic', company:'Diversified Partners — Broker/Agent', email:'megan.adamic@dpcre.com', mobile:'', phone:'+1 440 867 6440'},
+  {id:'brokerseed98', name:'Greg Saltz', company:'GPS Commercial Advisors — President', email:'gsaltz@gpsaz.com', mobile:'', phone:'+1 480 231 3473'},
+  {id:'brokerseed99', name:'Marty Olejarczyk', company:'GPS Commercial Advisors — Principal', email:'martyo@gpsaz.com', mobile:'', phone:'+1 602 762 0754'},
+  {id:'brokerseed100', name:'Jennifer Hill', company:'GPS Commercial Advisors — Vice President of Leasing and Sales', email:'jhill@gpsaz.com', mobile:'', phone:'+1 602 616 4477'},
+  {id:'brokerseed101', name:'Jordan Mishlove', company:'GPS Commercial Advisors — Associate', email:'jmishlove@gpsaz.com', mobile:'', phone:'+1 602 931 2191'},
+  {id:'brokerseed102', name:'Jeff Harris', company:'Helix Properties — Commercial Leasing & Sales', email:'jharris@helixaz.com', mobile:'', phone:'+1 602 648 2005'},
+  {id:'brokerseed103', name:'Sarah Thompson', company:'Helix Properties — Brokerage & Property Manager', email:'sthompson@helixaz.com', mobile:'', phone:'+1 602 648 2020'},
+  {id:'brokerseed104', name:'Jeff Alba', company:'Helix Properties — Commercial Leasing & Sales', email:'jalba@helixaz.com', mobile:'', phone:'+1 602 648 2004'},
+  {id:'brokerseed105', name:'Michael Waxman', company:'LevRose Commercial Real Estate — Partner', email:'mwaxman@levrose.com', mobile:'', phone:'+1 480 294 6004'},
+  {id:'brokerseed106', name:'Trevor White', company:'LevRose Commercial Real Estate — Advisor', email:'twhite@levrose.com', mobile:'', phone:'+1 480 508 7449'},
+  {id:'brokerseed107', name:'Michael Feldman', company:'LevRose Commercial Real Estate — Senior Vice President', email:'mfeldman@levrose.com', mobile:'', phone:'+1 480 294 6002'},
+  {id:'brokerseed108', name:'Greg Vanlerberghe', company:'LevRose Commercial Real Estate — Partner', email:'gvanlerberghe@levrose.com', mobile:'', phone:'+1 480 289 4222'},
+  {id:'brokerseed109', name:'Danielle Davis', company:'LevRose Commercial Real Estate — Partner', email:'ddavis@levrose.com', mobile:'', phone:'+1 480 294 6017'},
+  {id:'brokerseed110', name:'Branden Mondragon', company:'LevRose Commercial Real Estate — Partner', email:'bmondragon@levrose.com', mobile:'', phone:'+1 480 289 4234'},
+  {id:'brokerseed111', name:'Trent McCullough', company:'LevRose Commercial Real Estate — Partner', email:'tmccullough@levrose.com', mobile:'', phone:'+1 480 294 6582'},
+  {id:'brokerseed112', name:'Perry Laufenberg', company:'SVN Desert Commercial Advisors — Designated Broker / Advisor', email:'perry.laufenberg@svn.com', mobile:'', phone:'+1 480 425 5500'},
+  {id:'brokerseed113', name:'Carrick Sears', company:'SVN Desert Commercial Advisors — Senior Advisor', email:'Email via chamber profile', mobile:'', phone:'+1 480 425 5529'},
+  {id:'brokerseed114', name:'Bobbie Mastracci', company:'Phoenix West Commercial — Designated Broker, Principal', email:'bmastracci@phxwc.com', mobile:'', phone:'+1 623 748 1958'},
+  {id:'brokerseed115', name:'Giuseppe Mastracci', company:'Phoenix West Commercial — Senior Associate, Principal', email:'giuseppe@phxwc.com', mobile:'', phone:'+1 623 227 0074'},
+  {id:'brokerseed116', name:'Eli Mastracci', company:'Phoenix West Commercial — Vice President, Principal', email:'eli@phxwc.com', mobile:'', phone:'C: +1 623 226 8771; Office: +1 623 535 9707'},
+  {id:'brokerseed117', name:'Reuben Nach', company:'ROI Properties — Broker', email:'info@roiproperties.com', mobile:'', phone:'+1 602 319 1326'},
+  {id:'brokerseed118', name:'Aaron Gutierrez', company:'ROI Properties — Broker', email:'info@roiproperties.com', mobile:'', phone:'+1 602 396 8004'},
+  {id:'brokerseed119', name:'Jason Butler', company:'ROI Properties — Vice President, Commercial Division', email:'info@roiproperties.com', mobile:'', phone:'+1 602 319 1326'},
+  {id:'brokerseed120', name:'Tommy Moore', company:'ROI Properties — Broker', email:'info@roiproperties.com', mobile:'', phone:'+1 602 397 4886'},
+  {id:'brokerseed121', name:'Sydney Holzer', company:'ROI Properties — Broker', email:'info@roiproperties.com', mobile:'', phone:'+1 602 920 2285'},
+  {id:'brokerseed122', name:'Nic Chavira', company:'Rein & Grossoehme Commercial Real Estate — Senior Associate', email:'Nic@RGcre.com', mobile:'', phone:'+1 480 214 9409'},
+  {id:'brokerseed123', name:'Jake Ertle', company:'Rein & Grossoehme Commercial Real Estate — Vice President, Power Broker', email:'Jake@RGcre.com', mobile:'', phone:'+1 480 214 9419'},
+  {id:'brokerseed124', name:'Jared Lively', company:'Rein & Grossoehme Commercial Real Estate — Vice President, Power Broker', email:'Jared@RGcre.com', mobile:'', phone:'+1 480 214 9411'},
+  {id:'brokerseed125', name:'Mark Rein', company:'Rein & Grossoehme Commercial Real Estate — Principal, Designated Broker', email:'Mark@RGcre.com', mobile:'', phone:'+1 480 214 9414'},
+  {id:'brokerseed126', name:'Kevin Roessler', company:'Rein & Grossoehme Commercial Real Estate — Senior Associate', email:'Kevin@RGcre.com', mobile:'', phone:'+1 480 214 9425'},
+  {id:'brokerseed127', name:'Trent Rustan', company:'Commercial Properties Inc. (CPI) — Vice President - Retail Sales & Leasing', email:'trustan@cpiaz.com', mobile:'Direct: +1 480 966 5155; +1 602 550 0709', phone:''},
+  {id:'brokerseed128', name:'Caleb Diaz', company:'Commercial Properties Inc. (CPI) — Sales & Leasing Associate', email:'cdiaz@cpiaz.com', mobile:'Direct: +1 480 634 2341; +1 480 559 5156', phone:''},
+  {id:'brokerseed129', name:'Gavin Cooper', company:'Commercial Properties Inc. (CPI) — Sales & Leasing Agent - Retail Group', email:'gcooper@cpiaz.com', mobile:'Direct: +1 480 966 0419; +1 602 793 6947', phone:''},
+  {id:'brokerseed130', name:'Homer Savard, CCIM', company:'Commercial Properties Inc. (CPI) — Sales & Leasing Agent - Retail Group', email:'hsavard@cpiaz.com', mobile:'Direct: +1 480 522 2787; +1 602 363 5703', phone:''},
+  {id:'brokerseed131', name:'Kyle Davis', company:'Commercial Properties Inc. (CPI) — Vice President - Sales & Leasing', email:'kdavis@cpiaz.com', mobile:'Direct: +1 480 889 2566; +1 203 419 5385', phone:''},
+  {id:'brokerseed132', name:'Dallin Pace, CCIM', company:'Commercial Properties Inc. (CPI) — Vice President - Sales & Leasing', email:'dpace@cpiaz.com', mobile:'Direct: +1 480 522 2774; +1 480 815 8275', phone:''},
+  {id:'brokerseed133', name:'Brandon Koplin', company:'Commercial Properties Inc. (CPI) — Senior Vice President - Sales & Leasing', email:'bkoplin@cpiaz.com', mobile:'Direct: +1 480 214 1103; +1 602 373 4717', phone:''},
+  {id:'brokerseed134', name:'Chad R. Merwin', company:'Commercial Properties Inc. (CPI) — Vice President - Sales & Leasing', email:'cmerwin@cpiaz.com', mobile:'Direct: +1 480 522 2767; +1 602 684 7707', phone:''},
+  {id:'brokerseed135', name:'Matt Zaccardi', company:'Commercial Properties Inc. (CPI) — Senior Vice President - Sales, Leasing & Investments', email:'mzaccardi@cpiaz.com', mobile:'Direct: +1 480 966 7625; +1 602 561 1339', phone:''},
+  {id:'brokerseed136', name:'Katy Haug', company:'Commercial Properties Inc. (CPI) — Sales & Leasing Associate', email:'khaug@cpiaz.com', mobile:'Direct: +1 480 623 2328; +1 816 808 7347', phone:''},
+  {id:'brokerseed137', name:'Craig Trbovich', company:'Commercial Properties Inc. (CPI) — Vice President - Sales & Leasing', email:'ctrbovich@cpiaz.com', mobile:'Direct: +1 480 522 2799; +1 602 549 4676', phone:''}
+];
+
 function newLSRCategoryConfig(){
   return { order: DEFAULT_PROPERTY_CATEGORIES.map(c=>c.id), hidden: [], custom: [] };
 }
@@ -678,30 +1268,30 @@ let db = {
         ],
         categoryConfig: newLSRCategoryConfig(),
         prospects: [
-          {id:'p1', tenantName:'Maverik', contactId:null, categoryId:'fuel', stage:'signedLease', dealType:'lease',
+          {id:'p1', tenantName:'Maverik', contactId:null, brokerId:null, categoryId:'fuel', stage:'signedLease', dealType:'lease',
             dateOfContact: addDays(todayDate(),-90), notes:'(3/24/26) - Under Contract. Slated to close in December.',
             building:'Pad A', spaceNum:'', size:'3,200 SF', rent:'$3.25', term:'15 yrs + 3x5yr options', tiAllowance:'$0 (build to suit)', dealNotes:'',
             edgeTracker:'mclark', deadDate:null, commission1Paid:true, commission2Paid:false},
-          {id:'p2', tenantName:'KT Development (Hyatt Studios)', contactId:null, categoryId:'hospitality', stage:'signedLease', dealType:'lease',
+          {id:'p2', tenantName:'KT Development (Hyatt Studios)', contactId:null, brokerId:null, categoryId:'hospitality', stage:'signedLease', dealType:'lease',
             dateOfContact: addDays(todayDate(),-80), notes:'(3/24/26) - Under Contract.',
             building:'Pad B', spaceNum:'', size:'1.2 AC', rent:'$4.00', term:'20 yrs', tiAllowance:'$0', dealNotes:'',
             edgeTracker:'mclark', deadDate:null, commission1Paid:false, commission2Paid:false},
-          {id:'p3', tenantName:"Huey Magoo's", contactId:null, categoryId:'qsr', stage:'loi', dealType:null,
+          {id:'p3', tenantName:"Huey Magoo's", contactId:null, brokerId:null, categoryId:'qsrfastcasual', stage:'loi', dealType:null,
             dateOfContact: addDays(todayDate(),-30), notes:"(10/7/25) Not ready to respond until we have site plan finalized.",
             building:'', spaceNum:'', size:'', rent:'', term:'', tiAllowance:'', dealNotes:'',
             edgeTracker:'nault', deadDate:null, commission1Paid:false, commission2Paid:false},
-          {id:'p4', tenantName:'Element Nail Bar', contactId:null, categoryId:'specialty', stage:'loi', dealType:null,
+          {id:'p4', tenantName:'Element Nail Bar', contactId:null, brokerId:null, categoryId:'specialty', stage:'loi', dealType:null,
             dateOfContact: addDays(todayDate(),-14), notes:'(12/8/25) - Received proposal.',
             building:'', spaceNum:'', size:'', rent:'', term:'', tiAllowance:'', dealNotes:'',
             edgeTracker:'nault', deadDate:null, commission1Paid:false, commission2Paid:false},
-          {id:'p5', tenantName:'H-TeaO', contactId:null, categoryId:'qsr', stage:'loi', dealType:null,
+          {id:'p5', tenantName:'H-TeaO', contactId:null, brokerId:null, categoryId:'qsrcoffee', stage:'loi', dealType:null,
             dateOfContact: addDays(todayDate(),-5), notes:'(2/23/26) - Offer received and sent to Scott and William for review.',
             building:'', spaceNum:'', size:'', rent:'', term:'', tiAllowance:'', dealNotes:'',
             edgeTracker:'mclark', deadDate:null, commission1Paid:false, commission2Paid:false},
-          {id:'p6', tenantName:'Banner Health', contactId:null, categoryId:'medical', stage:'interested',
+          {id:'p6', tenantName:'Banner Health', contactId:null, brokerId:null, categoryId:'medical', stage:'interested',
             dateOfContact: addDays(todayDate(),-9), notes:'(4/16/26) - Followed up. Awaiting feedback from Banner.',
             edgeTracker:'mclark', deadDate:null, commission1Paid:false, commission2Paid:false},
-          {id:'p7', tenantName:'Longhorn Steakhouse', contactId:null, categoryId:'sitdown', stage:'interested',
+          {id:'p7', tenantName:'Longhorn Steakhouse', contactId:null, brokerId:null, categoryId:'sitdown', stage:'interested',
             dateOfContact: addDays(todayDate(),-126), notes:'(3/11/26) - Followed up.',
             edgeTracker:'nault', deadDate:null, commission1Paid:false, commission2Paid:false},
         ]}
@@ -875,11 +1465,13 @@ function render(){
   if(state.duplicatePrompt) renderDuplicatePrompt();
   if(state.todoDetailModal) renderTodoDetailModal();
   if(state.editContactModal) renderEditContactModal();
+  if(state.editBrokerModal) renderEditBrokerModal();
   if(state.importTodosModal) renderImportTodosModal();
   if(state.lsrNewProspectModal) renderLSRNewProspectModal();
   if(state.lsrConvertModal) renderLSRConvertModal();
   if(state.lsrCategoryManagerOpen) renderLSRCategoryManagerModal();
   if(state.calendarViewOpen && !state.isMobile) renderCalendarViewModal();
+  if(state.marketingListWizard) renderMarketingListWizard();
   if(state.newSmartListModal) renderNewSmartListModal();
   if(state.notifSettingsOpen) renderNotifSettingsModal();
   if(state.pendingUsersModalOpen) renderPendingUsersModal();
@@ -898,7 +1490,7 @@ function renderLogin(){
     <div class="login-logo"><img src="${EDGE_LOGO_DATA_URI}" alt="Edge"></div>
     <div class="login-title">Southwest Edge</div>
     <div class="login-title-sub">Portal</div>
-    <div class="login-tag">Built by Brokers, for Brokers</div>
+    <div class="login-tag">Built by brokers, for brokers</div>
     <div class="login-card">
       <div class="login-card-title">Sign in</div>
       ${USERS.map(u=>`
@@ -910,10 +1502,12 @@ function renderLogin(){
           </div>
         </div>
       `).join('')}
+      <input type="email" id="loginUsername" value="${escapeAttr(sel.email)}" autocomplete="username" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0;">
       <input type="password" class="login-password-field" id="loginPw" placeholder="${sel.passwordSet?'Password':'Create a password'}" autocomplete="${sel.passwordSet?'current-password':'new-password'}">
       ${!sel.passwordSet? `<input type="password" class="login-password-field" id="loginPw2" placeholder="Confirm password" autocomplete="new-password" style="margin-top:8px;">`:''}
       <button class="login-submit-btn" id="loginSubmitBtn">${sel.passwordSet?'Sign in':'Create Password & Sign In'}</button>
       <div class="login-hint">First sign-in requires setting a password. New teammates need an admin to admit them first.</div>
+      <div style="text-align:center;font-size:9.5px;color:var(--ink-soft);margin-top:6px;">Build: persistence-check-v3</div>
       ${state.showRegisterForm ? `
         <div class="login-register-panel">
           <div class="field"><label>Full Name</label><input id="regName" placeholder="e.g., Jordan Reyes"></div>
@@ -954,7 +1548,7 @@ function renderEmailClientPicker(){
     u.emailClient = el.dataset.pickclient;
     state.showEmailClientPicker=false;
     state.pendingLoginUser=null;
-    state.currentUser=u; state.screen='app'; seedAll();
+    state.currentUser=u; state.screen='app'; if(!appStateWasLoaded) seedAll();
     render();
   });
 }
@@ -1159,6 +1753,21 @@ function openEmailDraft(toUser, subject, body){
   if(client==='outlookWeb' || client==='gmail') a.target='_blank';
   document.body.appendChild(a); a.click(); a.remove();
 }
+function openBlankEmailDraft(){
+  const client = (state.currentUser && state.currentUser.emailClient) || 'other';
+  let url;
+  if(client==='outlookWeb'){
+    url = `https://outlook.office.com/mail/deeplink/compose`;
+  } else if(client==='gmail'){
+    url = `https://mail.google.com/mail/?view=cm&fs=1`;
+  } else {
+    url = `mailto:`;
+  }
+  const a = document.createElement('a');
+  a.href = url;
+  if(client==='outlookWeb' || client==='gmail') a.target='_blank';
+  document.body.appendChild(a); a.click(); a.remove();
+}
 
 function passwordIsStrong(pw){
   return pw.length>=8 && /[0-9]/.test(pw) && /[^A-Za-z0-9]/.test(pw);
@@ -1187,7 +1796,7 @@ function attachLoginHandlers(){
       render();
       return;
     }
-    state.currentUser=u; state.screen='app'; seedAll(); state.loginTarget=null;
+    state.currentUser=u; state.screen='app'; if(!appStateWasLoaded) seedAll(); state.loginTarget=null;
     render();
   };
   const showReg = document.getElementById('showRegisterBtn');
@@ -1251,6 +1860,7 @@ function renderSidebar(){
         <div class="sidebar-sub">${cu.role}</div>
       </div>
       <div class="sidebar-topicons">
+        <button class="icon-btn" data-action="openBlankEmail" title="New Email">✉️</button>
         ${!state.isMobile ? `<button class="icon-btn" data-action="openCalendarView" title="Calendar View">📅</button>` : ''}
         ${cu.role==='Admin' ? `<button class="icon-btn" data-action="toggleAdmin" title="Admin menu">☰</button>` : ''}
         <button class="icon-btn" data-action="openNotifSettings" title="Notification settings">⚙️</button>
@@ -1302,10 +1912,16 @@ function renderSidebar(){
           <span class="nav-count gray" style="background:var(--line-soft);color:var(--ink-soft);">${db.contacts.length}</span>
         </button>
       </div>
+      <div class="nav-row-wrap">
+        <button class="nav-row" data-nav="brokerlist">
+          <span class="nav-icon">🧑‍💼</span><span class="nav-label">Broker List</span>
+          <span class="nav-count gray" style="background:var(--line-soft);color:var(--ink-soft);">${PHOENIX_BROKER_LIST.length}</span>
+        </button>
+      </div>
     </div>
     <div class="sidebar-footer">
       <div style="font-size:11px;color:var(--ink-soft);line-height:1.5;">Southwest Edge Portal · prototype build</div>
-      <div style="font-size:10px;color:var(--edge);font-weight:700;margin-top:2px;">Build: LSR-direct-v2</div>
+      <div style="font-size:10px;color:var(--edge);font-weight:700;margin-top:2px;">Build: persistence-check-v3</div>
     </div>
   </div>`;
 }
@@ -1629,6 +2245,169 @@ function wireCalendarViewHandlers(overlay){
     };
   });
 }
+/* ==================== CREATE MARKETING LIST WIZARD ==================== */
+function openMarketingListWizard(clientId){
+  state.marketingListWizard = { step:1, clientId, selectedCategoryIds: [], reviewItems: null };
+}
+function renderMarketingListWizard(){
+  const m = state.marketingListWizard;
+  const listing = db.lists.find(x=>x.id==='listings').clients.find(c=>c.id===m.clientId);
+  lsrEnsureListing(listing);
+  const allCats = DEFAULT_PROPERTY_CATEGORIES.concat(listing.categoryConfig.custom);
+  const overlay = document.createElement('div');
+  overlay.className='modal-overlay'; overlay.style.zIndex=280;
+
+  let bodyHtml = '', footHtml = '', titleText = '';
+  if(m.step===1){
+    titleText = 'Create Marketing List — Step 1: Categories';
+    bodyHtml = `
+      <p style="font-size:12.5px;color:var(--ink-soft);margin-top:0;">
+        Pull tenants from the standing Phoenix retail roster (${TENANT_ROSTER.length} tenants) into ${escapeHtml(listing.name)}.
+        Choose which categories to review.
+      </p>
+      ${allCats.map(c=>{
+        const count = TENANT_ROSTER.filter(r=>r.categoryId===c.id).length;
+        if(count===0) return '';
+        return `<label style="display:flex;align-items:center;gap:8px;padding:8px 2px;border-bottom:1px solid var(--line-soft);font-size:13px;cursor:pointer;">
+          <input type="checkbox" class="mlwCategoryCheck" value="${c.id}" ${m.selectedCategoryIds.includes(c.id)?'checked':''} style="width:auto;">
+          ${escapeHtml(c.name)} <span style="color:var(--ink-soft);margin-left:auto;">${count} in roster</span>
+        </label>`;
+      }).join('')}
+    `;
+    footHtml = `
+      <button class="btn secondary" data-action="mlwCancel">Cancel</button>
+      <button class="btn" data-action="mlwNext">Next: Review Tenants →</button>
+    `;
+  } else {
+    titleText = `Create Marketing List — Step 2: Review (${m.reviewItems.filter(i=>i.keep && !i.prohibited).length} will be added)`;
+    const byCat = {};
+    m.reviewItems.forEach(item=>{ (byCat[item.categoryId]=byCat[item.categoryId]||[]).push(item); });
+    bodyHtml = `
+      <div style="border:1.5px dashed var(--line);border-radius:10px;padding:12px;margin-bottom:16px;">
+        <div style="font-size:12.5px;font-weight:600;margin-bottom:8px;">+ Add a tenant not on this list</div>
+        <div class="field-row">
+          <div class="field"><input id="mlwNewName" placeholder="Tenant name"></div>
+          <div class="field">
+            <select id="mlwNewCategory">
+              <option value="">— choose category (required) —</option>
+              ${allCats.map(c=>`<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('')}
+            </select>
+          </div>
+          <button class="btn sm" data-action="mlwAddNewTenant" style="flex-shrink:0;">Add</button>
+        </div>
+        <div id="mlwNewTenantError" style="color:var(--bad);font-size:11.5px;margin-top:6px;display:none;"></div>
+      </div>
+      ${Object.keys(byCat).map(catId=>{
+        const cat = allCats.find(c=>c.id===catId);
+        const items = byCat[catId];
+        return `
+        <div class="section-label" style="margin-top:18px;">${cat?escapeHtml(cat.name):'Other'} (${items.length})</div>
+        ${items.map(item=>`
+          <div class="row-card" style="align-items:center;">
+            <div class="row-body">
+              <div class="row-title">${escapeHtml(item.name)}</div>
+              <div class="row-meta"><span>${escapeHtml(item.tenantType)}</span></div>
+            </div>
+            <div style="display:flex;gap:14px;flex-shrink:0;flex-wrap:wrap;">
+              <label style="display:flex;align-items:center;gap:5px;font-size:11.5px;"><input type="radio" name="mlwstatus_${item.rosterId}" data-mlwflag="keep" data-rosterid="${item.rosterId}" ${item.keep?'checked':''} style="width:auto;"> Keep</label>
+              <label style="display:flex;align-items:center;gap:5px;font-size:11.5px;"><input type="radio" name="mlwstatus_${item.rosterId}" data-mlwflag="tradeArea" data-rosterid="${item.rosterId}" ${item.tradeArea?'checked':''} style="width:auto;"> In Trade Area</label>
+              <label style="display:flex;align-items:center;gap:5px;font-size:11.5px;"><input type="radio" name="mlwstatus_${item.rosterId}" data-mlwflag="prohibited" data-rosterid="${item.rosterId}" ${item.prohibited?'checked':''} style="width:auto;"> Prohibited</label>
+            </div>
+          </div>`).join('')}
+        `;
+      }).join('')}
+    `;
+    footHtml = `
+      <button class="btn secondary" data-action="mlwBack">← Back</button>
+      <button class="btn" data-action="mlwSave">Save to ${escapeHtml(listing.name)}</button>
+    `;
+  }
+
+  overlay.innerHTML = `
+  <div class="modal-card wide" style="max-height:90vh;">
+    <div class="modal-head"><div class="modal-title">${titleText}</div><button class="modal-close" data-action="mlwCancel">✕</button></div>
+    <div class="modal-body">${bodyHtml}</div>
+    <div class="modal-foot">${footHtml}</div>
+  </div>`;
+  document.getElementById('app').appendChild(overlay);
+  wireMarketingListWizard(overlay, listing, allCats);
+}
+function wireMarketingListWizard(overlay, listing, allCats){
+  const m = state.marketingListWizard;
+  overlay.querySelectorAll('[data-action="mlwCancel"]').forEach(b=>b.onclick=()=>{ state.marketingListWizard=null; render(); });
+  if(m.step===1){
+    overlay.querySelectorAll('.mlwCategoryCheck').forEach(cb=>cb.onchange=()=>{
+      if(cb.checked) m.selectedCategoryIds.push(cb.value);
+      else m.selectedCategoryIds = m.selectedCategoryIds.filter(id=>id!==cb.value);
+    });
+    overlay.querySelector('[data-action="mlwNext"]').onclick=()=>{
+      if(!m.selectedCategoryIds.length){ flashToast('Pick at least one category first.'); return; }
+      const existingNames = new Set(listing.prospects.map(p=>p.tenantName.toLowerCase().trim()));
+      m.reviewItems = TENANT_ROSTER
+        .filter(r=>m.selectedCategoryIds.includes(r.categoryId))
+        .map(r=>({rosterId:r.id, name:r.name, categoryId:r.categoryId, tenantType:r.tenantType, notes:r.notes,
+                   keep:true, tradeArea:false, prohibited:false, alreadyOnListing: existingNames.has(r.name.toLowerCase().trim())}));
+      m.step = 2;
+      render();
+    };
+  } else {
+    overlay.querySelectorAll('[data-mlwflag]').forEach(cb=>cb.onclick=(ev)=>{
+      ev.stopPropagation();
+      const item = m.reviewItems.find(i=>i.rosterId===cb.dataset.rosterid);
+      if(!item) return;
+      item.keep = (cb.dataset.mlwflag==='keep');
+      item.tradeArea = (cb.dataset.mlwflag==='tradeArea');
+      item.prohibited = (cb.dataset.mlwflag==='prohibited');
+    });
+    overlay.querySelector('[data-action="mlwBack"]').onclick=()=>{ m.step=1; render(); };
+    overlay.querySelector('[data-action="mlwAddNewTenant"]').onclick=()=>{
+      const nameInput = document.getElementById('mlwNewName');
+      const catSelect = document.getElementById('mlwNewCategory');
+      const errBox = document.getElementById('mlwNewTenantError');
+      const name = nameInput.value.trim();
+      const categoryId = catSelect.value;
+      if(!name || !categoryId){
+        errBox.textContent = !categoryId ? 'Choose a category before adding this tenant.' : 'Enter a tenant name.';
+        errBox.style.display = 'block';
+        return;
+      }
+      errBox.style.display = 'none';
+      const newRoster = {id:'roster'+uid(), name, categoryId, tenantType:'', notes:''};
+      TENANT_ROSTER.push(newRoster); // added to the permanent, cross-listing roster
+      if(!m.selectedCategoryIds.includes(categoryId)) m.selectedCategoryIds.push(categoryId);
+      const alreadyOnListing = listing.prospects.some(p=>p.tenantName.toLowerCase().trim()===name.toLowerCase().trim());
+      m.reviewItems.push({rosterId:newRoster.id, name, categoryId, tenantType:'', notes:'', keep:true, tradeArea:false, prohibited:false, alreadyOnListing});
+      flashToast(`"${name}" added to the roster and this review.`);
+      render();
+    };
+    overlay.querySelector('[data-action="mlwSave"]').onclick=()=>{
+      const existingNames = new Set(listing.prospects.map(p=>p.tenantName.toLowerCase().trim()));
+      let added=0, skippedDup=0, discarded=0;
+      m.reviewItems.forEach(item=>{
+        if(!item.keep || item.prohibited){ discarded++; return; }
+        const key = item.name.toLowerCase().trim();
+        if(existingNames.has(key)){ skippedDup++; return; }
+        listing.prospects.push({
+          id:'prospect'+uid(), tenantName:item.name, contactId:null, brokerId:null, categoryId:item.categoryId,
+          stage:'contacted', dealType:null, dateOfContact:null,
+          notes: [item.tenantType, item.notes].filter(Boolean).join(' — '),
+          edgeTracker: state.currentUser.id, deadDate:null,
+          building:'', spaceNum:'', size:'', rent:'', price:'', term:'', tiAllowance:'', dealNotes:'',
+          commission1Paid:false, commission2Paid:false, attachments:[],
+          inTradeArea: item.tradeArea
+        });
+        existingNames.add(key);
+        added++;
+      });
+      state.marketingListWizard = null;
+      let msg = `Added ${added} tenant${added===1?'':'s'} to ${listing.name}.`;
+      if(skippedDup) msg += ` Skipped ${skippedDup} already on this listing.`;
+      if(discarded) msg += ` Discarded ${discarded}.`;
+      flashToast(msg);
+      render();
+    };
+  }
+}
 function renderSidePanel(){
   if(state.isMobile) return ''; // widgets are desktop-only, full stop — no markup, no weather fetch
   const w = state.sidePanelWidgets;
@@ -1694,6 +2473,7 @@ function renderActiveDealsMain(){
 }
 function renderMainContent(){
   if(state.mainView.type==='contacts') return renderContactsMain();
+  if(state.mainView.type==='brokerlist') return renderBrokerListMain();
   if(state.mainView.type==='list') return renderListMain(state.mainView.id);
   // smart list
   const id = state.mainView.id;
@@ -1995,6 +2775,7 @@ function attachShellHandlers(){
     if(type==='smart'){ state.mainView={type:'smart',id}; }
     else if(type==='list'){ state.mainView={type:'list',id}; }
     else if(el.dataset.nav==='contacts'){ state.mainView={type:'contacts'}; }
+    else if(el.dataset.nav==='brokerlist'){ state.mainView={type:'brokerlist'}; }
     state.expandedTeamUser=null;
     state.todoView='mine';
     state.selectedTodoIds=[];
@@ -2070,6 +2851,11 @@ function attachShellHandlers(){
   };
   const notifBtn=document.querySelector('[data-action="openNotifSettings"]'); if(notifBtn) notifBtn.onclick=()=>{
     state.notifSettingsOpen=true; render();
+  };
+  const newEmailBtn=document.querySelector('[data-action="openBlankEmail"]'); if(newEmailBtn) newEmailBtn.onclick=()=>{
+    openBlankEmailDraft();
+    flashToast('Opening a new email draft…');
+    render();
   };
   const calBtn=document.querySelector('[data-action="openCalendarView"]'); if(calBtn) calBtn.onclick=()=>{
     openCalendarView(); render();
@@ -2611,6 +3397,16 @@ function contactRow(contactId){
   ${c.website ? `<div class="contact-line"><span>Website</span><b>${escapeHtml(c.website)}</b></div>`:''}
   ${addrParts ? `<div class="contact-line"><span>Address</span><b>${escapeHtml(addrParts)}</b></div>`:''}`;
 }
+function brokerRow(brokerId){
+  const b = PHOENIX_BROKER_LIST.find(x=>x.id===brokerId);
+  if(!b) return `<div class="tiny" style="color:var(--ink-soft);font-size:12px;">No broker attached.</div>`;
+  return `
+  <div class="contact-line"><span>Name</span><b>${escapeHtml(b.name)}</b></div>
+  <div class="contact-line"><span>Company</span><b>${escapeHtml(b.company||'—')}</b></div>
+  <div class="contact-line"><span>Email</span><b>${escapeHtml(b.email||'—')}</b></div>
+  <div class="contact-line"><span>Mobile</span><b>${escapeHtml(b.mobile||'—')}</b></div>
+  <div class="contact-line"><span>Phone</span><b>${escapeHtml(b.phone||'—')}</b></div>`;
+}
 function renderClientModalBody(l,c,viewMode){
   viewMode = viewMode || 'all';
   const openDeals = c.deals.filter(d=>!d.complete);
@@ -2742,6 +3538,7 @@ function renderLSRInline(listing, mode){
         ${USERS.map(u=>`<option value="${u.id}" ${state.lsrTrackerFilter===u.id?'selected':''}>${u.name}</option>`).join('')}
       </select>
       <button class="btn secondary sm" data-action="lsrManageCategories" data-client="${listing.id}">⚙️ Categories</button>
+      <button class="btn secondary sm" data-action="lsrCreateMarketingList" data-client="${listing.id}">📋 Create Marketing List</button>
       <button class="btn sm" data-action="lsrNewDeal" data-client="${listing.id}">+ New Deal (direct to LOI)</button>
       <button class="btn" data-action="lsrExportPdf">📄 Create Leasing Report</button>
     </div>
@@ -2763,7 +3560,7 @@ function renderLSRInline(listing, mode){
   }
   if(showCategories){
     cats.forEach(cat=>{
-      const rows = lsrSortRows(visible.filter(p=>p.categoryId===cat.id && (p.stage==='contacted'||p.stage==='interested')));
+      const rows = lsrSortRows(visible.filter(p=>p.categoryId===cat.id && (p.stage==='contacted'||p.stage==='interested') && !p.inTradeArea));
       html += renderLSRSectionInline({key:'cat_'+cat.id, title:cat.name, color:'#8B5CF6', rows, listing, kind:'prospect', categoryId:cat.id});
     });
     const deadRows = lsrSortRows(visible.filter(p=>p.stage==='dead'));
@@ -2771,7 +3568,12 @@ function renderLSRInline(listing, mode){
     html += renderLSRSectionInline({key:'dead', title:'Dead Deals', color:'#8A8378', rows:deadRows, listing, kind:'dead'});
     html += renderLSRSectionInline({key:'notInterested', title:'Prospects - Not Interested', color:'#B9B4AD', rows:niRows, listing, kind:'dead'});
   }
-  return `${toolbarHtml}<div id="lsrPrintArea">${html}</div>`;
+  let tradeAreaHtml = '';
+  if(showCategories){
+    const tradeAreaRows = lsrSortRows(visible.filter(p=>p.inTradeArea && (p.stage==='contacted'||p.stage==='interested')));
+    tradeAreaHtml = `<div class="no-print">${renderLSRSectionInline({key:'tradeArea', title:'Trade Area Tenants', color:'#B08B3F', rows:tradeAreaRows, listing, kind:'prospect', categoryId:null})}</div>`;
+  }
+  return `${toolbarHtml}<div id="lsrPrintArea">${html}</div>${tradeAreaHtml}`;
 }
 function renderLSRSectionInline(opts){
   const collapsed = !!state.lsrCollapsed[opts.key];
@@ -2782,7 +3584,7 @@ function renderLSRSectionInline(opts){
     } else {
       body = opts.rows.map(p=>renderLSRRowCard(p, opts.listing, opts.kind)).join('');
     }
-    if(opts.kind==='prospect'){
+    if(opts.kind==='prospect' && opts.categoryId){
       body += `<button class="btn ghost sm" data-action="lsrAddProspect" data-category="${opts.categoryId}" data-client="${opts.listing.id}" style="margin-top:4px;">+ Add tenant</button>`;
     }
   }
@@ -2866,6 +3668,11 @@ function renderLSRProspectBody(l, listing, p){
     <div class="label">Contact</div>
     ${contactRow(p.contactId)}
     <button class="btn secondary sm" style="margin-top:10px;" data-action="lsrPickContact">${p.contactId?'Change contact':'Attach contact'}</button>
+  </div>
+  <div class="contact-card" style="background:#F3F0FB;border-color:#DCD3F5;">
+    <div class="label" style="color:#6B46C1;">Broker</div>
+    ${brokerRow(p.brokerId)}
+    <button class="btn secondary sm" style="margin-top:10px;" data-action="lsrPickBroker">${p.brokerId?'Change broker':'Attach broker'}</button>
   </div>
   <div class="field">
     <label>Category</label>
@@ -2982,7 +3789,7 @@ function renderLSRNewProspectModal(){
     const notes = document.getElementById('npNotes').value.trim();
     const edgeTracker = document.getElementById('npTracker').value;
     const newProspect = {
-      id:'prospect'+uid(), tenantName:name, contactId:null, categoryId,
+      id:'prospect'+uid(), tenantName:name, contactId:null, brokerId:null, categoryId,
       stage: m.directToLOI? 'loi' : 'interested',
       dealType: m.directToLOI? m.dealType : null,
       dateOfContact: m.directToLOI? new Date() : parseNaturalDate(document.getElementById('npDate').value.trim()),
@@ -3205,6 +4012,9 @@ function wireLSRInlineHandlers(root){
   const mgmtBtn = root.querySelector('[data-action="lsrManageCategories"]'); if(mgmtBtn) mgmtBtn.onclick=()=>{
     state.lsrCategoryManagerOpen = mgmtBtn.dataset.client; render();
   };
+  const mktBtn = root.querySelector('[data-action="lsrCreateMarketingList"]'); if(mktBtn) mktBtn.onclick=()=>{
+    openMarketingListWizard(mktBtn.dataset.client); render();
+  };
   const pdfBtn = root.querySelector('[data-action="lsrExportPdf"]'); if(pdfBtn) pdfBtn.onclick=()=>{ window.print(); };
 }
 function notifyNewLSRTracker(newTrackerId, p, listing){
@@ -3230,6 +4040,9 @@ function wireLSRProspectBodyHandlers(root, l, listing, p){
   wireCategoryCreateOption(root.querySelector('#lpCategory'), listing);
   const pickBtn = root.querySelector('[data-action="lsrPickContact"]'); if(pickBtn) pickBtn.onclick=()=>{
     openContactPicker({lsrClientId: listing.id, lsrProspectId: p.id}); render();
+  };
+  const pickBrokerBtn = root.querySelector('[data-action="lsrPickBroker"]'); if(pickBrokerBtn) pickBrokerBtn.onclick=()=>{
+    openBrokerPicker({lsrClientId: listing.id, lsrProspectId: p.id}); render();
   };
   const delBtn = root.querySelector('[data-action="lsrDeleteProspect"]'); if(delBtn) delBtn.onclick=()=>{
     if(confirm(`Delete ${p.tenantName}? This can't be undone.`)){
@@ -3391,6 +4204,52 @@ function convertEntryToDeal(listId, entryId){
 /* ---------------- CONTACT PICKER (inline typeahead within modal) ---------------- */
 function openContactPicker(ctx){
   state.contactPickerOpen = ctx; state.contactPickerQuery='';
+}
+function openBrokerPicker(ctx){
+  state.brokerPickerOpen = ctx; state.brokerPickerQuery='';
+}
+function renderBrokerPickerPanel(){
+  if(!state.brokerPickerOpen) return '';
+  const q = state.brokerPickerQuery.toLowerCase();
+  const matches = q ? PHOENIX_BROKER_LIST.filter(b=>b.name.toLowerCase().includes(q) || (b.company||'').toLowerCase().includes(q)) : [];
+  return `
+  <div class="modal-overlay" style="z-index:600;" id="brokerPickerOverlay">
+    <div class="modal-card">
+      <div class="modal-head"><div class="modal-title">Attach Broker</div><button class="modal-close" data-action="closeBrokerPicker">✕</button></div>
+      <div class="modal-body">
+        <div class="field autocomplete-box">
+          <label>Search the Phoenix Broker List</label>
+          <input id="brokerSearchInput" placeholder="Start typing a name or company…" value="${escapeAttr(state.brokerPickerQuery)}">
+          ${matches.length? `<div class="suggest-list">${matches.map(b=>`
+            <div class="suggest-item" data-selectbroker="${b.id}">
+              <b>${escapeHtml(b.name)}</b>
+              <div class="sub">${escapeHtml(b.company||'No company')} · ${escapeHtml(b.mobile||b.phone||'No number')}</div>
+            </div>`).join('')}</div>` : ''}
+        </div>
+        <div style="margin-top:14px;border-top:1px solid var(--line);padding-top:14px;">
+          <div style="font-size:12px;font-weight:600;color:var(--ink-soft);margin-bottom:8px;">Or add a new broker to the list</div>
+          <div class="field"><label>Name</label><input id="newBrokerName"></div>
+          <div class="field"><label>Company</label><input id="newBrokerCompany"></div>
+          <div class="field-row">
+            <div class="field"><label>Email</label><input id="newBrokerEmail"></div>
+            <div class="field"><label>Mobile</label><input id="newBrokerMobile"></div>
+          </div>
+          <div class="field"><label>Phone</label><input id="newBrokerPhone"></div>
+          <button class="btn sm" data-action="createNewBroker">Add Broker</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+function finishBrokerPick(brokerId){
+  if(state.brokerPickerOpen){
+    const {lsrClientId, lsrProspectId} = state.brokerPickerOpen;
+    const listing = db.lists.find(x=>x.id==='listings').clients.find(c=>c.id===lsrClientId);
+    const p = listing.prospects.find(x=>x.id===lsrProspectId);
+    if(p) p.brokerId = brokerId;
+  }
+  state.brokerPickerOpen = null;
+  render();
 }
 function attachContactPickerHandlers(root){
   // rendered separately as an overlay panel appended after modal renders; handled in renderContactPickerPanel
@@ -3782,6 +4641,106 @@ function attachContactsHandlers(){
     }
   };
 }
+function renderBrokerListMain(){
+  const q = (state.brokerListSearchQuery||'').toLowerCase().trim();
+  const filtered = q ? PHOENIX_BROKER_LIST.filter(b=>{
+    const hay = `${b.name} ${b.company||''} ${b.email||''}`.toLowerCase();
+    return hay.includes(q);
+  }) : PHOENIX_BROKER_LIST;
+  return `
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:12px;flex-wrap:wrap;">
+    <input id="brokerListSearchBox" placeholder="🔍 Search by name, company, or email…" value="${escapeAttr(state.brokerListSearchQuery||'')}"
+      style="flex:1;min-width:220px;padding:9px 12px;border:1px solid var(--line);border-radius:8px;font-size:13.5px;">
+    <div style="font-size:12.5px;color:var(--ink-soft);white-space:nowrap;">${filtered.length} of ${PHOENIX_BROKER_LIST.length} brokers</div>
+    <button class="btn sm" id="newBrokerListBtn">+ New Broker</button>
+  </div>
+  ${!PHOENIX_BROKER_LIST.length ? `
+    <div class="empty-state"><div class="big">No brokers yet.</div><div class="tiny">Add brokers here, or attach one from any prospect's detail view — either way, they land in this same shared list.</div></div>
+  ` : `
+  <div style="max-height:calc(100vh - 200px);overflow-y:auto;border:1px solid var(--line);border-radius:10px;">
+  <table class="contacts-table">
+    <thead><tr><th>Name</th><th>Company</th><th>Email</th><th>Mobile</th><th>Phone</th><th></th></tr></thead>
+    <tbody>
+      ${filtered.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(b=>`
+        <tr>
+          <td>${escapeHtml(b.name)}</td><td>${escapeHtml(b.company||'')}</td>
+          <td>${escapeHtml(b.email||'')}</td><td>${escapeHtml(b.mobile||'')}</td><td>${escapeHtml(b.phone||'')}</td>
+          <td><button class="row-trash" style="opacity:.7;" data-editbroker="${b.id}" title="Edit">✏️</button></td>
+        </tr>`).join('')}
+    </tbody>
+  </table>
+  </div>`}
+  `;
+}
+function attachBrokerListHandlers(){
+  const searchBox = document.getElementById('brokerListSearchBox');
+  if(searchBox){
+    searchBox.oninput=()=>{ state.brokerListSearchQuery=searchBox.value; render(); };
+    if(state.brokerListSearchFocused){ searchBox.focus(); const len=searchBox.value.length; searchBox.setSelectionRange(len,len); }
+    searchBox.onfocus=()=>{ state.brokerListSearchFocused=true; };
+    searchBox.onblur=()=>{ state.brokerListSearchFocused=false; };
+  }
+  const newBtn = document.getElementById('newBrokerListBtn');
+  if(newBtn) newBtn.onclick=()=>{ state.editBrokerModal = {id:null}; render(); };
+  document.querySelectorAll('[data-editbroker]').forEach(el=>el.onclick=()=>{
+    state.editBrokerModal = {id: el.dataset.editbroker}; render();
+  });
+}
+function renderEditBrokerModal(){
+  const isNew = !state.editBrokerModal.id;
+  const b = isNew ? {name:'',company:'',email:'',mobile:'',phone:''} : PHOENIX_BROKER_LIST.find(x=>x.id===state.editBrokerModal.id);
+  if(!b){ state.editBrokerModal=null; return; }
+  const overlay = document.createElement('div');
+  overlay.className='modal-overlay'; overlay.style.zIndex=195;
+  overlay.innerHTML = `
+  <div class="modal-card">
+    <div class="modal-head"><div class="modal-title">${isNew?'New Broker':'Edit Broker'}</div><button class="modal-close" data-action="closeEditBroker">✕</button></div>
+    <div class="modal-body">
+      <div class="field"><label>Name</label><input id="ebName" value="${escapeAttr(b.name)}"></div>
+      <div class="field"><label>Company</label><input id="ebCompany" value="${escapeAttr(b.company||'')}"></div>
+      <div class="field-row">
+        <div class="field"><label>Email</label><input id="ebEmail" value="${escapeAttr(b.email||'')}"></div>
+        <div class="field"><label>Mobile</label><input id="ebMobile" value="${escapeAttr(b.mobile||'')}"></div>
+      </div>
+      <div class="field"><label>Phone</label><input id="ebPhone" value="${escapeAttr(b.phone||'')}"></div>
+    </div>
+    <div class="modal-foot" style="justify-content:space-between;">
+      ${!isNew? `<button class="btn danger" data-action="deleteBrokerFromEdit">🗑️ Delete</button>` : '<div></div>'}
+      <div style="display:flex;gap:8px;">
+        <button class="btn secondary" data-action="closeEditBroker">Cancel</button>
+        <button class="btn" data-action="saveEditBroker">Save</button>
+      </div>
+    </div>
+  </div>`;
+  document.getElementById('app').appendChild(overlay);
+  overlay.querySelectorAll('[data-action="closeEditBroker"]').forEach(btn=>btn.onclick=()=>{ state.editBrokerModal=null; render(); });
+  const delBtn = overlay.querySelector('[data-action="deleteBrokerFromEdit"]');
+  if(delBtn) delBtn.onclick=()=>{
+    if(confirm(`Delete ${b.name}? This can't be undone.`)){
+      PHOENIX_BROKER_LIST = PHOENIX_BROKER_LIST.filter(x=>x.id!==b.id);
+      state.editBrokerModal=null;
+      flashToast('Broker deleted.');
+      render();
+    }
+  };
+  overlay.querySelector('[data-action="saveEditBroker"]').onclick=()=>{
+    const name = document.getElementById('ebName').value.trim();
+    if(!name){ flashToast('Name is required.'); return; }
+    const company = document.getElementById('ebCompany').value.trim();
+    const email = document.getElementById('ebEmail').value.trim();
+    const mobile = document.getElementById('ebMobile').value.trim();
+    const phone = document.getElementById('ebPhone').value.trim();
+    if(isNew){
+      PHOENIX_BROKER_LIST.push({id:'broker'+uid(), name, company, email, mobile, phone});
+      flashToast(`${name} added to the Phoenix Broker List.`);
+    } else {
+      Object.assign(b, {name, company, email, mobile, phone});
+      flashToast('Broker updated everywhere it appears.');
+    }
+    state.editBrokerModal=null;
+    render();
+  };
+}
 function importCSV(file){
   const reader = new FileReader();
   reader.onload = (e)=>{
@@ -3985,7 +4944,9 @@ function escapeAttr(str){ return escapeHtml(str); }
 const _origRender = render;
 render = function(){
   _origRender();
+  saveAppState();
   if(state.mainView.type==='contacts') attachContactsHandlers();
+  if(state.mainView.type==='brokerlist') attachBrokerListHandlers();
   if(state.contactPickerOpen){
     const panelHost = document.createElement('div');
     panelHost.innerHTML = renderContactPickerPanel();
@@ -4027,6 +4988,41 @@ render = function(){
       }
     };
   }
+  if(state.brokerPickerOpen){
+    const panelHost = document.createElement('div');
+    panelHost.innerHTML = renderBrokerPickerPanel();
+    document.getElementById('app').appendChild(panelHost.firstElementChild);
+    const input = document.getElementById('brokerSearchInput');
+    if(input){
+      input.focus();
+      input.oninput=()=>{ state.brokerPickerQuery=input.value; render(); };
+    }
+    document.querySelectorAll('[data-selectbroker]').forEach(el=>el.onclick=()=>{
+      finishBrokerPick(el.dataset.selectbroker);
+    });
+    const closeBP = document.getElementById('brokerPickerOverlay')?.querySelector('[data-action="closeBrokerPicker"]');
+    if(closeBP) closeBP.onclick=()=>{ state.brokerPickerOpen=null; render(); };
+    const createBrokerBtn = document.querySelector('[data-action="createNewBroker"]');
+    if(createBrokerBtn) createBrokerBtn.onclick=()=>{
+      const name=document.getElementById('newBrokerName').value.trim();
+      const company=document.getElementById('newBrokerCompany').value.trim();
+      const email=document.getElementById('newBrokerEmail').value.trim();
+      const mobile=document.getElementById('newBrokerMobile').value.trim();
+      const phone=document.getElementById('newBrokerPhone').value.trim();
+      if(!name){ flashToast('Broker name is required.'); return; }
+      const existing = PHOENIX_BROKER_LIST.find(b=>b.name.toLowerCase().trim()===name.toLowerCase().trim());
+      if(existing){
+        Object.assign(existing, {company: company||existing.company, email: email||existing.email, mobile: mobile||existing.mobile, phone: phone||existing.phone});
+        flashToast(`Updated existing broker "${name}".`);
+        finishBrokerPick(existing.id);
+      } else {
+        const b = {id:'broker'+uid(), name, company, email, mobile, phone};
+        PHOENIX_BROKER_LIST.push(b);
+        flashToast(`"${name}" added to the Phoenix Broker List.`);
+        finishBrokerPick(b.id);
+      }
+    };
+  }
 };
 
 window.addEventListener('resize', ()=>{ state.isMobile = window.innerWidth<=820; render(); });
@@ -4055,6 +5051,72 @@ document.addEventListener('keydown', (ev)=>{
   if(state.showWidgetPicker){ state.showWidgetPicker=false; changed=true; }
   if(changed) render();
 });
+
+/* ---------------- PERSISTENCE (localStorage) ----------------
+   This app previously lived only in memory — a refresh wiped everything, which is
+   why passwords, contacts, and deals all had to be re-entered constantly. Since this
+   file runs as your own deployed app (not inside a Claude preview), real browser
+   storage is safe and appropriate here. We do NOT persist who's currently logged in
+   — the login screen always shows — but passwords, once set, now stick, along with
+   every contact/deal/to-do. File attachments are the one exception: their data lives
+   only in memory (this was flagged from the start), so they're intentionally not
+   carried across a save/reload. */
+const STORAGE_KEY = 'swe_portal_v1';
+function dateAwareReplacer(key, value){
+  const orig = this[key];
+  if(orig instanceof Date) return {__type:'Date', __value: orig.toISOString()};
+  return value;
+}
+function dateAwareReviver(key, value){
+  if(value && typeof value==='object' && value.__type==='Date') return new Date(value.__value);
+  return value;
+}
+function saveAppState(){
+  try{
+    // Strip attachment blob URLs before saving — they're invalid after a reload anyway.
+    const todosForSave = db.todos.map(td=>({...td, attachments: []}));
+    const archivedForSave = db.archivedTodos.map(td=>({...td, attachments: []}));
+    const snapshot = {
+      users: USERS,
+      pendingUsers,
+      lists: db.lists,
+      contacts: db.contacts,
+      todos: todosForSave,
+      archivedTodos: archivedForSave,
+      smartLists: smartListsArr,
+      adminDefaultSchedule,
+      tenantRoster: TENANT_ROSTER,
+      brokerList: PHOENIX_BROKER_LIST,
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot, dateAwareReplacer));
+  } catch(e){ /* private-browsing mode, storage full, etc. — fail quietly, app still works */ }
+}
+let appStateWasLoaded = false;
+function loadAppState(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(!raw) return;
+    const saved = JSON.parse(raw, dateAwareReviver);
+    if(saved.users){
+      USERS.length = 0;
+      saved.users.forEach(u=>USERS.push(u));
+    }
+    if(saved.pendingUsers) pendingUsers = saved.pendingUsers;
+    if(saved.lists) db.lists = saved.lists;
+    if(saved.contacts) db.contacts = saved.contacts;
+    if(saved.todos) db.todos = saved.todos;
+    if(saved.archivedTodos) db.archivedTodos = saved.archivedTodos;
+    if(saved.smartLists) smartListsArr = saved.smartLists;
+    if(saved.adminDefaultSchedule) adminDefaultSchedule = saved.adminDefaultSchedule;
+    if(saved.tenantRoster){
+      TENANT_ROSTER.length = 0;
+      saved.tenantRoster.forEach(r=>TENANT_ROSTER.push(r));
+    }
+    if(saved.brokerList) PHOENIX_BROKER_LIST = saved.brokerList;
+    appStateWasLoaded = true;
+  } catch(e){ /* corrupted/old save shape — just fall back to the seed data */ }
+}
+loadAppState();
 
 render();
 
