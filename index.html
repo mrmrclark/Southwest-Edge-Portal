@@ -694,15 +694,24 @@ function dealLocalToRow(d, clientId){
           ca_executed:!!d.caExecuted, due_date: d.dueDate? d.dueDate.toISOString().slice(0,10) : null};
 }
 async function fetchListsClientsDealsFromSupabase(){
-  const [{data:lists,error:e1}, {data:clients,error:e2}, {data:secConts,error:e3}, {data:deals,error:e4}, {data:authUsers,error:e5}] = await Promise.all([
-    supabaseClient.from('lists').select('*'),
+  let { data:lists, error:e1 } = await supabaseClient.from('lists').select('*');
+  if(e1){ console.error('fetchListsClientsDealsFromSupabase error:', e1); return; }
+  if(!lists.length){
+    // First time ever touching this table server-side — seed the four core lists
+    // that the rest of the app assumes always exist ('clients','listings','hotlist','hitlist'),
+    // using whatever's currently in the local default/seed structure as the source.
+    const seedRows = db.lists.map((l,i)=>({id:l.id, name:l.name, icon:l.icon, type:l.type, display_order:i, is_default:true}));
+    const { error: seedError } = await supabaseClient.from('lists').insert(seedRows);
+    if(seedError){ console.error('Seeding default lists failed:', seedError); return; }
+    lists = seedRows.map(r=>({id:r.id, name:r.name, icon:r.icon, type:r.type, is_default:r.is_default, display_order:r.display_order}));
+  }
+  const [{data:clients,error:e2}, {data:secConts,error:e3}, {data:deals,error:e4}, {data:authUsers,error:e5}] = await Promise.all([
     supabaseClient.from('clients').select('*'),
     supabaseClient.from('client_secondary_contacts').select('*'),
     supabaseClient.from('deals').select('*'),
     supabaseClient.from('client_authorized_users').select('*'),
   ]);
-  if(e1||e2||e3||e4){ console.error('fetchListsClientsDealsFromSupabase error:', e1||e2||e3||e4); return; }
-  if(!lists.length) return; // nothing seeded server-side yet — keep local defaults as the starting point
+  if(e2||e3||e4){ console.error('fetchListsClientsDealsFromSupabase error:', e2||e3||e4); return; }
   const newLists = lists.slice().sort((a,b)=>a.display_order-b.display_order).map(l=>({
     id:l.id, name:l.name, icon:l.icon, type:l.type, isDefault:l.is_default,
     clients: l.type==='deep' ? [] : undefined,
