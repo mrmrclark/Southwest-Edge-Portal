@@ -495,6 +495,7 @@ let state = {
   showAdminMenu:false,
   showUserMenu:false,
   addUsersPrompt:null,          // {listId, clientId} — shown right after creating a new Client/Listing
+  showArchivedClients:false,
   newTodoModal:null,            // {context:{...}} when open
   contactModal:null,            // 'master' | {id} for detail
   selectedContactIds:[],
@@ -683,10 +684,12 @@ async function supaSaveListingCategorySettings(listingId, categoryConfig){
 function clientRowToLocal(r){
   return {id:r.id, name:r.name, primary:r.primary_contact_id, secondary:[], deals:[],
           propertyType:r.property_type, squareFootage:r.square_footage, askingRate:r.asking_rate,
-          createdBy: authIdToLocalUserId(r.created_by) || r.created_by, authorizedUserIds:[]};
+          createdBy: authIdToLocalUserId(r.created_by) || r.created_by, authorizedUserIds:[],
+          archivedAt: r.archived_at ? new Date(r.archived_at) : null};
 }
 function clientLocalToRow(c, listId){
-  return {id:c.id, list_id:listId, name:c.name, primary_contact_id:c.primary||null, created_by: localUserIdToAuthId(c.createdBy)};
+  return {id:c.id, list_id:listId, name:c.name, primary_contact_id:c.primary||null, created_by: localUserIdToAuthId(c.createdBy),
+          archived_at: c.archivedAt ? c.archivedAt.toISOString() : null};
 }
 function dealRowToLocal(r){ return {id:r.id, name:r.name, complete:r.complete, activeDeal:r.active_deal, caExecuted:r.ca_executed, dueDate: r.due_date? new Date(r.due_date+'T00:00:00'):null}; }
 function dealLocalToRow(d, clientId){
@@ -694,29 +697,59 @@ function dealLocalToRow(d, clientId){
           ca_executed:!!d.caExecuted, due_date: d.dueDate? d.dueDate.toISOString().slice(0,10) : null};
 }
 async function fetchListsClientsDealsFromSupabase(){
+  const localSeedSnapshot = db.lists; // captured before anything below can overwrite db.lists
   let { data:lists, error:e1 } = await supabaseClient.from('lists').select('*');
   if(e1){ console.error('fetchListsClientsDealsFromSupabase error:', e1); return; }
   if(!lists.length){
     // First time ever touching this table server-side — seed the four core lists
     // that the rest of the app assumes always exist ('clients','listings','hotlist','hitlist'),
     // using whatever's currently in the local default/seed structure as the source.
-    const seedRows = db.lists.map((l,i)=>({id:l.id, name:l.name, icon:l.icon, type:l.type, display_order:i, is_default:true}));
+    const seedRows = localSeedSnapshot.map((l,i)=>({id:l.id, name:l.name, icon:l.icon, type:l.type, display_order:i, is_default:true}));
     const { error: seedError } = await supabaseClient.from('lists').insert(seedRows);
     if(seedError){ console.error('Seeding default lists failed:', seedError); return; }
     lists = seedRows.map(r=>({id:r.id, name:r.name, icon:r.icon, type:r.type, is_default:r.is_default, display_order:r.display_order}));
   }
-  const [{data:clients,error:e2}, {data:secConts,error:e3}, {data:deals,error:e4}, {data:authUsers,error:e5}] = await Promise.all([
-    supabaseClient.from('clients').select('*'),
+  let { data:clients, error:e2 } = await supabaseClient.from('clients').select('*');
+  if(e2){ console.error('fetchListsClientsDealsFromSupabase error:', e2); return; }
+  if(!clients.length){
+    // Also the first time — actually save the demo Clients/Listings (and their
+    // Deals/Prospects) to the real database instead of leaving them as local-only
+    // placeholders, same idea as seeding the lists above.
+    const clientRows=[], dealRows=[], prospectRows=[];
+    localSeedSnapshot.filter(l=>l.type==='deep').forEach(l=>{
+      (l.clients||[]).forEach(c=>{
+        clientRows.push({id:c.id, list_id:l.id, name:c.name, primary_contact_id:c.primary||null, created_by:null});
+        (c.deals||[]).forEach(d=>dealRows.push(dealLocalToRow(d, c.id)));
+        if(l.id==='listings' && c.prospects) c.prospects.forEach(p=>prospectRows.push(prospectLocalToRow(p, c.id)));
+      });
+    });
+    if(clientRows.length){
+      const { error: cErr } = await supabaseClient.from('clients').insert(clientRows);
+      if(cErr) console.error('Seeding demo clients failed:', cErr);
+    }
+    if(dealRows.length){
+      const { error: dErr } = await supabaseClient.from('deals').insert(dealRows);
+      if(dErr) console.error('Seeding demo deals failed:', dErr);
+    }
+    if(prospectRows.length){
+      const { error: pErr } = await supabaseClient.from('prospects').insert(prospectRows);
+      if(pErr) console.error('Seeding demo prospects failed:', pErr);
+    }
+    const refetch = await supabaseClient.from('clients').select('*');
+    clients = refetch.data || [];
+  }
+  const [{data:secConts,error:e3}, {data:deals,error:e4}, {data:authUsers,error:e5}] = await Promise.all([
     supabaseClient.from('client_secondary_contacts').select('*'),
     supabaseClient.from('deals').select('*'),
     supabaseClient.from('client_authorized_users').select('*'),
   ]);
-  if(e2||e3||e4){ console.error('fetchListsClientsDealsFromSupabase error:', e2||e3||e4); return; }
+  if(e3||e4){ console.error('fetchListsClientsDealsFromSupabase error:', e3||e4); return; }
   const newLists = lists.slice().sort((a,b)=>a.display_order-b.display_order).map(l=>({
     id:l.id, name:l.name, icon:l.icon, type:l.type, isDefault:l.is_default,
     clients: l.type==='deep' ? [] : undefined,
     entries: l.type==='flat' ? [] : undefined,
   }));
+  db.archivedClients = [];
   clients.forEach(cr=>{
     const list = newLists.find(l=>l.id===cr.list_id);
     if(!list) return;
@@ -725,7 +758,8 @@ async function fetchListsClientsDealsFromSupabase(){
     c.deals = deals.filter(d=>d.client_id===cr.id).map(dealRowToLocal);
     if(authUsers) c.authorizedUserIds = authUsers.filter(a=>a.client_id===cr.id).map(a=>authIdToLocalUserId(a.user_id)).filter(Boolean);
     if(list.id==='listings'){ c.prospects=[]; c.categoryConfig=newLSRCategoryConfig(); }
-    list.clients.push(c);
+    if(cr.archived_at){ c.archivedListId = list.id; db.archivedClients.push(c); }
+    else list.clients.push(c);
   });
   db.lists = newLists;
 }
@@ -741,6 +775,15 @@ async function supaCreateClient(c, listId){
 async function supaUpdateClientContact(c, listId){
   const { error } = await supabaseClient.from('clients').update(clientLocalToRow(c, listId)).eq('id', c.id);
   if(error) console.error('supaUpdateClientContact error:', error);
+}
+async function supaArchiveClient(c, listId, archived){
+  c.archivedAt = archived ? new Date() : null;
+  const { error } = await supabaseClient.from('clients').update({archived_at: c.archivedAt ? c.archivedAt.toISOString() : null}).eq('id', c.id);
+  if(error){ console.error('supaArchiveClient error:', error); flashToast('Saved here, but syncing to the server failed. (' + error.message + ')'); render(); }
+}
+async function supaDeleteClient(id){
+  const { error } = await supabaseClient.from('clients').delete().eq('id', id);
+  if(error){ console.error('supaDeleteClient error:', error); flashToast('Deleted here, but syncing to the server failed. (' + error.message + ')'); render(); }
 }
 async function supaAddAuthorizedUser(clientId, localUserId){
   const authId = localUserIdToAuthId(localUserId);
@@ -1613,6 +1656,7 @@ function lsrCategoriesFor(listingClient){
 }
 
 let db = {
+  archivedClients: [],
   contacts: [
     {id:'c1', first:'Greg', last:'Abbott', company:'Velocity Retail Group', email:'gabbott@velocityrg.com', mobile:'(602) 555-0101', phone:'(602) 682-8181'},
     {id:'c2', first:'Kristina', last:'Abel', company:"Draper's & Damon's", email:'kristinaa@drapers.com', mobile:'(949) 555-0102', phone:'(949) 784-3109'},
@@ -3159,7 +3203,21 @@ function renderListMain(listId){
   const singular = l.name.endsWith('s') ? l.name.slice(0,-1) : l.name;
   if(l.type==='deep'){
     const addBtn = `<button class="btn sm" data-action="addClient" data-listid="${l.id}" style="margin-bottom:14px;">+ New ${singular}</button>`;
-    if(!l.clients.length) return addBtn + `<div class="empty-state"><div class="big">No ${l.name.toLowerCase()} yet.</div><div class="tiny">Add your first one to get moving.</div></div>`;
+    const archivedHere = (db.archivedClients||[]).filter(c=>c.archivedListId===l.id);
+    const isAdmin = state.currentUser.role==='Admin';
+    const archivedSection = (isAdmin && archivedHere.length) ? `
+      <div style="margin-top:20px;">
+        <button class="btn ghost sm" data-action="toggleShowArchivedClients">
+          ${state.showArchivedClients?'▾':'▸'} ${archivedHere.length} archived
+        </button>
+        ${state.showArchivedClients ? archivedHere.map(c=>`
+          <div class="row-card" style="opacity:.7;">
+            <div class="nav-icon" style="font-size:20px;">🗄️</div>
+            <div class="row-body"><div class="row-title">${escapeHtml(c.name)}</div></div>
+            <button class="btn secondary sm" data-restoreclient="${c.id}" data-listid="${l.id}">Restore</button>
+          </div>`).join('') : ''}
+      </div>` : '';
+    if(!l.clients.length) return addBtn + `<div class="empty-state"><div class="big">No ${l.name.toLowerCase()} yet.</div><div class="tiny">Add your first one to get moving.</div></div>` + archivedSection;
     return addBtn + l.clients.map(c=>{
       const dealCount = c.deals.length;
       const openDeals = c.deals.filter(d=>!d.complete).length;
@@ -3178,7 +3236,7 @@ function renderListMain(listId){
           <button class="btn sm" data-openlisting="all" data-client="${c.id}" data-listid="${l.id}">Open All</button>
         </div>` : ''}
       </div>`;
-    }).join('');
+    }).join('') + archivedSection;
   } else {
     const isAdmin = state.currentUser.role==='Admin';
     const visibleEntries = isAdmin ? l.entries : l.entries.filter(e=>e.ownerId===state.currentUser.id);
@@ -3271,6 +3329,21 @@ function attachShellHandlers(){
   document.querySelectorAll('[data-openlisting]').forEach(el=>el.onclick=(ev)=>{
     ev.stopPropagation();
     openClientModal(el.dataset.listid, el.dataset.client, el.dataset.openlisting);
+    render();
+  });
+  const toggleArchivedBtn = document.querySelector('[data-action="toggleShowArchivedClients"]'); if(toggleArchivedBtn) toggleArchivedBtn.onclick=()=>{
+    state.showArchivedClients = !state.showArchivedClients; render();
+  };
+  document.querySelectorAll('[data-restoreclient]').forEach(el=>el.onclick=()=>{
+    const cid = el.dataset.restoreclient, listId = el.dataset.listid;
+    const idx = (db.archivedClients||[]).findIndex(x=>x.id===cid);
+    if(idx<0) return;
+    const [c] = db.archivedClients.splice(idx,1);
+    delete c.archivedListId;
+    supaArchiveClient(c, listId, false);
+    const l = db.lists.find(x=>x.id===listId);
+    l.clients.push(c);
+    flashToast(`${c.name} restored.`);
     render();
   });
   document.querySelectorAll('[data-opendealdirect]').forEach(el=>el.onclick=()=>{
@@ -3844,11 +3917,17 @@ function brandLogoImg(name){
 function renderTopModalCard(){
   const frame = state.modalStack[state.modalStack.length-1];
   const crumbs = breadcrumbFor(state.modalStack);
-  let bodyHtml='', titleText='', brandName='';
+  let bodyHtml='', titleText='', brandName='', clientAdminActions='';
   if(frame.kind==='client'){
     const l=db.lists.find(x=>x.id===frame.listId); const c=l.clients.find(x=>x.id===frame.clientId);
     titleText=c.name; brandName=c.name;
     bodyHtml = renderClientModalBody(l,c,frame.viewMode);
+    if(state.currentUser.role==='Admin'){
+      const noun = l.id==='listings' ? 'listing' : 'client';
+      clientAdminActions = `
+        <button class="btn secondary sm" data-action="archiveClient" data-listid="${l.id}" data-client="${c.id}">🗄️ Archive</button>
+        <button class="btn danger sm" data-action="deleteClient" data-listid="${l.id}" data-client="${c.id}" data-noun="${noun}">🗑️ Delete</button>`;
+    }
   } else if(frame.kind==='deal'){
     const l=db.lists.find(x=>x.id===frame.listId); const c=l.clients.find(x=>x.id===frame.clientId);
     const d=c.deals.find(x=>x.id===frame.dealId);
@@ -3873,6 +3952,7 @@ function renderTopModalCard(){
         </div>
         <div class="modal-title-row">${brandLogoImg(brandName)}<div class="modal-title">${escapeHtml(titleText)}</div></div>
       </div>
+      ${clientAdminActions}
       <button class="modal-close" data-action="closeModal">✕ Done</button>
     </div>
     <div class="modal-body">${bodyHtml}</div>
@@ -4648,6 +4728,32 @@ function attachModalHandlers(root){
     if(idx===-1) closeModalStack(); else popModalTo(idx);
   });
   const closeBtn = root.querySelector('[data-action="closeModal"]'); if(closeBtn) closeBtn.onclick=()=>closeModalStack();
+  const archiveClientBtn = root.querySelector('[data-action="archiveClient"]'); if(archiveClientBtn) archiveClientBtn.onclick=()=>{
+    const l=db.lists.find(x=>x.id===archiveClientBtn.dataset.listid); const c=l.clients.find(x=>x.id===archiveClientBtn.dataset.client);
+    const noun = l.id==='listings' ? 'listing' : 'client';
+    if(confirm(`Archive "${c.name}"? It'll move to the Archived section and stop showing in the main list — you can restore it later.`)){
+      supaArchiveClient(c, l.id, true);
+      l.clients = l.clients.filter(x=>x.id!==c.id);
+      if(!db.archivedClients) db.archivedClients=[];
+      db.archivedClients.push(Object.assign(c, {archivedListId:l.id}));
+      closeModalStack();
+      flashToast(`${c.name} archived.`);
+      render();
+    }
+  };
+  const deleteClientBtn = root.querySelector('[data-action="deleteClient"]'); if(deleteClientBtn) deleteClientBtn.onclick=()=>{
+    const l=db.lists.find(x=>x.id===deleteClientBtn.dataset.listid); const c=l.clients.find(x=>x.id===deleteClientBtn.dataset.client);
+    const noun = deleteClientBtn.dataset.noun;
+    if(confirm(`Are you sure you want to delete this ${noun}? This cannot be undone.`)){
+      // Detach (don't delete) any to-do's pointing at this client, so they aren't silently lost.
+      db.todos.filter(t=>t.clientId===c.id).forEach(t=>{ t.clientId=null; t.listId=null; supaUpdateTodo(t); });
+      l.clients = l.clients.filter(x=>x.id!==c.id);
+      supaDeleteClient(c.id);
+      closeModalStack();
+      flashToast(`${c.name} deleted.`);
+      render();
+    }
+  };
   root.querySelectorAll('[data-opendeal]').forEach(el=>el.onclick=()=>{
     openDealModal(el.dataset.listid, el.dataset.client, el.dataset.opendeal); render();
   });
