@@ -10,6 +10,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="SW Edge">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   :root{
     --edge:#E1531A;
@@ -57,7 +58,7 @@
   .login-logo img{height:64px;width:auto;display:block;margin:0 auto;}
   .login-title{font-size:30px;font-weight:600;margin-top:14px;color:var(--edge);}
   .login-title-sub{font-size:16px;font-weight:600;margin-top:2px;color:var(--edge);}
-  .login-tag{color:var(--ink);margin-top:8px;font-size:12px;letter-spacing:.04em;font-style:italic;font-weight:600;}
+  .login-tag{color:var(--ink);margin-top:8px;font-size:17px;letter-spacing:.02em;font-style:italic;font-weight:600;}
   .login-card{
     background:var(--paper);border-radius:16px;box-shadow:var(--shadow);width:420px;max-width:100%;
     padding:30px 30px 26px;margin-top:34px;
@@ -477,6 +478,9 @@ let state = {
   screen:'login',              // 'login' | 'app'
   loginTarget:null,            // userId currently entering password
   selectedLoginUser:null,      // which user row is highlighted on the login card
+  loginMode:'signin',          // 'signin' | 'create' — explicit, not auto-detected
+  loginError:null,
+  authChecking:true,           // true while checking for an existing Supabase session on boot
   showRegisterForm:false,
   pendingLoginUser:null,
   showEmailClientPicker:false,
@@ -506,6 +510,7 @@ let state = {
   editContactModal:null,
   editBrokerModal:null,
   brokerListSearchQuery:'',
+  contactsSubView:'contacts',   // 'contacts' | 'brokers' — toggle within the merged Contacts screen
   brokerListSearchFocused:false,
   recentlyCompletedIds:[],
   undoToast:null,
@@ -531,11 +536,42 @@ let state = {
 
 /* ---------------- USERS ---------------- */
 const USERS = [
-  {id:'mclark', name:'Michael Clark', email:'mclark@edge-re.com', role:'Admin', initials:'MC', passwordSet:false, password:null, emailClient:null, notifPref:null},
-  {id:'nault', name:'Nick Ault', email:'ault@edge-re.com', role:'Admin', initials:'NA', passwordSet:false, password:null, emailClient:null, notifPref:null},
-  {id:'lkhoudary', name:'Lexi Khoudary', email:'lkhoudary@edge-re.com', role:'User', initials:'LK', passwordSet:false, password:null, emailClient:null, notifPref:null},
+  {id:'mclark', name:'Michael Clark', email:'mclark@edge-re.com', role:'Admin', initials:'MC', emailClient:null, notifPref:null},
+  {id:'nault', name:'Nick Ault', email:'ault@edge-re.com', role:'Admin', initials:'NA', emailClient:null, notifPref:null},
+  {id:'lkhoudary', name:'Lexi Khoudary', email:'lkhoudary@edge-re.com', role:'User', initials:'LK', emailClient:null, notifPref:null},
 ];
 let pendingUsers = []; // {id, name, email, requestedAt} — awaiting admin approval before they can sign in
+
+/* ---------------- SUPABASE (real backend — Phase 1: authentication) ----------------
+   This is the first real-backend phase. Login now goes through actual Supabase
+   Auth instead of a plain-text password check. Contacts/Deals/To-Do's/etc. are
+   NOT wired to Supabase yet — that's still local for now, coming in later phases.
+   ------------------------------------------------------------------------------- */
+const SUPABASE_URL = 'https://ugtlyzwvnhmcphtqkbke.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_SkLAcSbiSghUS6i-kclzdQ_V3G_0xbC';
+const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+async function fetchMyProfile(authUserId){
+  const { data, error } = await supabaseClient.from('profiles').select('*').eq('id', authUserId).single();
+  if(error){ console.error('fetchMyProfile error:', error); return null; }
+  return data;
+}
+async function fetchAllProfilesIntoUsers(){
+  // Refreshes the local USERS mirror (used throughout the app for name display,
+  // assignment dropdowns, etc.) from the real profiles table. Matched by EMAIL,
+  // not id — the app's existing data (seed to-do's, deals, etc.) still uses the
+  // original local ids like 'mclark' everywhere; those aren't migrated to
+  // Supabase yet, so we keep that id stable and just stash the real Supabase
+  // auth id alongside it (as authId) for use once later phases need it.
+  const { data, error } = await supabaseClient.from('profiles').select('*');
+  if(error){ console.error('fetchAllProfilesIntoUsers error:', error); return; }
+  data.forEach(p=>{
+    let u = USERS.find(x=>x.email.toLowerCase()===p.email.toLowerCase());
+    if(!u){ u = {id:p.id, email:p.email}; USERS.push(u); }
+    Object.assign(u, {authId:p.id, name:p.name, role:p.role, initials:p.initials, emailClient:p.email_client});
+  });
+}
+
 
 /* ---------------- DATE HELPERS ---------------- */
 function todayDate(){ const d=new Date(); d.setHours(0,0,0,0); return d; }
@@ -1485,6 +1521,7 @@ function handleForUser(u){ return '@'+u.name.split(' ')[0].toLowerCase(); }
 function renderLogin(){
   if(!state.selectedLoginUser) state.selectedLoginUser = USERS[0].id;
   const sel = USERS.find(u=>u.id===state.selectedLoginUser);
+  const mode = state.loginMode || 'signin'; // 'signin' | 'create'
   return `
   <div class="login-wrap">
     <div class="login-logo"><img src="${EDGE_LOGO_DATA_URI}" alt="Edge"></div>
@@ -1503,11 +1540,15 @@ function renderLogin(){
         </div>
       `).join('')}
       <input type="email" id="loginUsername" value="${escapeAttr(sel.email)}" autocomplete="username" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0;">
-      <input type="password" class="login-password-field" id="loginPw" placeholder="${sel.passwordSet?'Password':'Create a password'}" autocomplete="${sel.passwordSet?'current-password':'new-password'}">
-      ${!sel.passwordSet? `<input type="password" class="login-password-field" id="loginPw2" placeholder="Confirm password" autocomplete="new-password" style="margin-top:8px;">`:''}
-      <button class="login-submit-btn" id="loginSubmitBtn">${sel.passwordSet?'Sign in':'Create Password & Sign In'}</button>
-      <div class="login-hint">First sign-in requires setting a password. New teammates need an admin to admit them first.</div>
-      <div style="text-align:center;font-size:9.5px;color:var(--ink-soft);margin-top:6px;">Build: persistence-check-v3</div>
+      <input type="password" class="login-password-field" id="loginPw" placeholder="${mode==='signin'?'Password':'Create a password'}" autocomplete="${mode==='signin'?'current-password':'new-password'}">
+      ${mode==='create'? `<input type="password" class="login-password-field" id="loginPw2" placeholder="Confirm password" autocomplete="new-password" style="margin-top:8px;">`:''}
+      <button class="login-submit-btn" id="loginSubmitBtn">${mode==='signin'?'Sign in':'Create Account & Sign In'}</button>
+      ${state.loginError? `<div style="color:var(--bad);font-size:12.5px;margin-top:8px;text-align:center;">${escapeHtml(state.loginError)}</div>`:''}
+      <button class="login-register-link" id="toggleLoginModeBtn" style="margin-top:10px;">
+        ${mode==='signin'? "First time here? Create your account instead" : "Already have an account? Sign in instead"}
+      </button>
+      <div class="login-hint">First sign-in requires creating your account. New teammates need an admin to admit them first.</div>
+      <div style="text-align:center;font-size:9.5px;color:var(--ink-soft);margin-top:6px;">Build: supabase-auth-phase1</div>
       ${state.showRegisterForm ? `
         <div class="login-register-panel">
           <div class="field"><label>Full Name</label><input id="regName" placeholder="e.g., Jordan Reyes"></div>
@@ -1543,9 +1584,13 @@ function renderEmailClientPicker(){
     </div>
   </div>`;
   document.getElementById('app').appendChild(overlay);
-  overlay.querySelectorAll('[data-pickclient]').forEach(el=>el.onclick=()=>{
+  overlay.querySelectorAll('[data-pickclient]').forEach(el=>el.onclick=async ()=>{
     const u = state.pendingLoginUser;
     u.emailClient = el.dataset.pickclient;
+    if(u.authId){
+      const { error } = await supabaseClient.from('profiles').update({ email_client: u.emailClient }).eq('id', u.authId);
+      if(error) console.error('Saving email_client failed:', error);
+    }
     state.showEmailClientPicker=false;
     state.pendingLoginUser=null;
     state.currentUser=u; state.screen='app'; if(!appStateWasLoaded) seedAll();
@@ -1724,8 +1769,12 @@ function renderNotifSettingsModal(){
     const targetId = document.getElementById('digestTargetUser').value;
     sendDigestNow(USERS.find(x=>x.id===targetId));
   };
-  const saveEmailBtn = overlay.querySelector('[data-action="saveEmailClient"]'); if(saveEmailBtn) saveEmailBtn.onclick=()=>{
+  const saveEmailBtn = overlay.querySelector('[data-action="saveEmailClient"]'); if(saveEmailBtn) saveEmailBtn.onclick=async ()=>{
     u.emailClient = document.getElementById('emailClientSelect').value;
+    if(u.authId){
+      const { error } = await supabaseClient.from('profiles').update({ email_client: u.emailClient }).eq('id', u.authId);
+      if(error){ console.error('Saving email_client failed:', error); flashToast('Saved locally, but syncing to the server failed — try again.'); return; }
+    }
     flashToast('Email preference saved.');
   };
   const googleBtn = overlay.querySelector('[data-action="connectGoogle"]'); if(googleBtn) googleBtn.onclick=()=>{
@@ -1774,23 +1823,68 @@ function passwordIsStrong(pw){
 }
 function attachLoginHandlers(){
   document.querySelectorAll('[data-selectuser]').forEach(el=>el.onclick=()=>{
-    state.selectedLoginUser = el.dataset.selectuser; render();
+    state.selectedLoginUser = el.dataset.selectuser; state.loginError=null; render();
   });
+  const toggleModeBtn = document.getElementById('toggleLoginModeBtn');
+  if(toggleModeBtn) toggleModeBtn.onclick=()=>{
+    state.loginMode = (state.loginMode==='signin') ? 'create' : 'signin';
+    state.loginError = null;
+    render();
+  };
   const submit = document.getElementById('loginSubmitBtn');
-  if(submit) submit.onclick=()=>{
+  if(submit) submit.onclick=async ()=>{
     const u = USERS.find(x=>x.id===state.selectedLoginUser);
     const pw = document.getElementById('loginPw').value;
-    let firstTime = false;
-    if(!u.passwordSet){
+    state.loginError = null;
+    submit.disabled = true; submit.textContent = 'One moment…';
+
+    if(state.loginMode==='create'){
       const pw2 = document.getElementById('loginPw2').value;
-      if(!passwordIsStrong(pw)){ flashToast('Password must be at least 8 characters, with a number and a special character.'); showToastNow(); return; }
-      if(pw!==pw2){ flashToast("Passwords don't match — try again."); showToastNow(); return; }
-      u.password=pw; u.passwordSet=true;
-      firstTime = true;
-    } else {
-      if(pw!==u.password){ flashToast('Incorrect password.'); showToastNow(); return; }
+      if(!passwordIsStrong(pw)){
+        state.loginError = 'Password must be at least 8 characters, with a number and a special character.';
+        submit.disabled=false; render(); return;
+      }
+      if(pw!==pw2){
+        state.loginError = "Passwords don't match — try again.";
+        submit.disabled=false; render(); return;
+      }
+      const { data, error } = await supabaseClient.auth.signUp({ email: u.email, password: pw });
+      if(error){
+        state.loginError = error.message.includes('already registered')
+          ? 'An account already exists for this person — use "Sign in" instead.'
+          : `Couldn't create the account: ${error.message}`;
+        submit.disabled=false; render(); return;
+      }
+      // Real signup succeeded — now create the matching profile row.
+      const { error: profileError } = await supabaseClient.from('profiles').insert({
+        id: data.user.id, name: u.name, email: u.email, role: u.role, initials: u.initials
+      });
+      if(profileError){
+        state.loginError = `Account created, but saving your profile failed: ${profileError.message}. Contact an admin.`;
+        submit.disabled=false; render(); return;
+      }
+      u.authId = data.user.id;
+      state.pendingLoginUser = u;
+      state.showEmailClientPicker = true;
+      render();
+      return;
     }
-    if(firstTime && !u.emailClient){
+
+    // mode === 'signin'
+    const { data, error } = await supabaseClient.auth.signInWithPassword({ email: u.email, password: pw });
+    if(error){
+      state.loginError = error.message.includes('Invalid login credentials')
+        ? 'Incorrect password, or no account yet — first time here? Use "Create your account" below.'
+        : `Sign-in failed: ${error.message}`;
+      submit.disabled=false; render(); return;
+    }
+    const profile = await fetchMyProfile(data.user.id);
+    if(profile){
+      u.authId = profile.id;
+      if(!u.emailClient) u.emailClient = profile.email_client;
+    }
+    await fetchAllProfilesIntoUsers();
+    if(!u.emailClient){
       state.pendingLoginUser = u;
       state.showEmailClientPicker = true;
       render();
@@ -1909,13 +2003,7 @@ function renderSidebar(){
       <div class="nav-row-wrap">
         <button class="nav-row" data-nav="contacts">
           <span class="nav-icon">👤</span><span class="nav-label">Contacts</span>
-          <span class="nav-count gray" style="background:var(--line-soft);color:var(--ink-soft);">${db.contacts.length}</span>
-        </button>
-      </div>
-      <div class="nav-row-wrap">
-        <button class="nav-row" data-nav="brokerlist">
-          <span class="nav-icon">🧑‍💼</span><span class="nav-label">Broker List</span>
-          <span class="nav-count gray" style="background:var(--line-soft);color:var(--ink-soft);">${PHOENIX_BROKER_LIST.length}</span>
+          <span class="nav-count gray" style="background:var(--line-soft);color:var(--ink-soft);">${db.contacts.length + PHOENIX_BROKER_LIST.length}</span>
         </button>
       </div>
     </div>
@@ -2471,9 +2559,17 @@ function renderActiveDealsMain(){
       </div>
     </div>`).join('');
 }
+function renderContactsScreen(){
+  const sub = state.contactsSubView || 'contacts';
+  const toggle = `
+  <div class="segmented" style="margin-bottom:14px;display:inline-flex;">
+    <button class="${sub==='contacts'?'active':''}" data-contactssub="contacts">My Contacts (${db.contacts.length})</button>
+    <button class="${sub==='brokers'?'active':''}" data-contactssub="brokers">Phoenix Brokers (${PHOENIX_BROKER_LIST.length})</button>
+  </div><div style="clear:both;"></div>`;
+  return toggle + (sub==='brokers' ? renderBrokerListMain() : renderContactsMain());
+}
 function renderMainContent(){
-  if(state.mainView.type==='contacts') return renderContactsMain();
-  if(state.mainView.type==='brokerlist') return renderBrokerListMain();
+  if(state.mainView.type==='contacts') return renderContactsScreen();
   if(state.mainView.type==='list') return renderListMain(state.mainView.id);
   // smart list
   const id = state.mainView.id;
@@ -2775,7 +2871,6 @@ function attachShellHandlers(){
     if(type==='smart'){ state.mainView={type:'smart',id}; }
     else if(type==='list'){ state.mainView={type:'list',id}; }
     else if(el.dataset.nav==='contacts'){ state.mainView={type:'contacts'}; }
-    else if(el.dataset.nav==='brokerlist'){ state.mainView={type:'brokerlist'}; }
     state.expandedTeamUser=null;
     state.todoView='mine';
     state.selectedTodoIds=[];
@@ -2817,7 +2912,10 @@ function attachShellHandlers(){
   const team=document.querySelector('[data-action="todoViewTeam"]'); if(team) team.onclick=()=>{state.todoView='team'; render();};
   const fab=document.querySelector('[data-action="newTodo"]'); if(fab) fab.onclick=()=>{ openNewTodoModal({}); render(); };
   const admin=document.querySelector('[data-action="toggleAdmin"]'); if(admin) admin.onclick=()=>{ state.showAdminMenu=!state.showAdminMenu; render(); };
-  const logout=document.querySelector('[data-action="logout"]'); if(logout) logout.onclick=()=>{ state.screen='login'; state.currentUser=null; state.mainView={type:'smart',id:'todayMe'}; state.modalStack=[]; state.mobileScreen='nav'; render(); };
+  const logout=document.querySelector('[data-action="logout"]'); if(logout) logout.onclick=async ()=>{
+    await supabaseClient.auth.signOut();
+    state.screen='login'; state.currentUser=null; state.mainView={type:'smart',id:'todayMe'}; state.modalStack=[]; state.mobileScreen='nav'; render();
+  };
   document.querySelectorAll('[data-action="addSmartList"]').forEach(el=>el.onclick=()=>promptAddSmartList());
   document.querySelectorAll('[data-action="addList"]').forEach(el=>el.onclick=()=>promptAddList());
   document.querySelectorAll('[data-ellipsis]').forEach(el=>el.onclick=(ev)=>{
@@ -4945,8 +5043,13 @@ const _origRender = render;
 render = function(){
   _origRender();
   saveAppState();
-  if(state.mainView.type==='contacts') attachContactsHandlers();
-  if(state.mainView.type==='brokerlist') attachBrokerListHandlers();
+  if(state.mainView.type==='contacts'){
+    document.querySelectorAll('[data-contactssub]').forEach(b=>b.onclick=()=>{
+      state.contactsSubView = b.dataset.contactssub; render();
+    });
+    if((state.contactsSubView||'contacts')==='brokers') attachBrokerListHandlers();
+    else attachContactsHandlers();
+  }
   if(state.contactPickerOpen){
     const panelHost = document.createElement('div');
     panelHost.innerHTML = renderContactPickerPanel();
@@ -5119,6 +5222,33 @@ function loadAppState(){
 loadAppState();
 
 render();
+
+// Check for an existing Supabase session (real login persistence — this is the
+// part local storage alone could never do). If found, skip the login screen
+// and go straight into the app. Runs after the first paint so the login card
+// still shows instantly rather than a blank screen while this resolves.
+(async ()=>{
+  try{
+    const { data: { session } } = await supabaseClient.auth.getSession();
+    if(session && session.user){
+      const profile = await fetchMyProfile(session.user.id);
+      if(profile){
+        await fetchAllProfilesIntoUsers();
+        const u = USERS.find(x=>x.email.toLowerCase()===profile.email.toLowerCase());
+        if(u){
+          u.authId = profile.id;
+          if(!u.emailClient) u.emailClient = profile.email_client;
+          if(u.emailClient){
+            state.currentUser = u;
+            state.screen = 'app';
+            if(!appStateWasLoaded) seedAll();
+            render();
+          }
+        }
+      }
+    }
+  } catch(e){ console.error('Session check failed:', e); }
+})();
 
 // Register the service worker so this can be "Added to Home Screen" as an installable
 // app. Fails silently anywhere this isn't supported (e.g. this preview sandbox) — the
