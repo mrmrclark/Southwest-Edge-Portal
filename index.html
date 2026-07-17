@@ -697,53 +697,18 @@ function dealLocalToRow(d, clientId){
           ca_executed:!!d.caExecuted, due_date: d.dueDate? d.dueDate.toISOString().slice(0,10) : null};
 }
 async function fetchListsClientsDealsFromSupabase(){
-  const localSeedSnapshot = db.lists; // captured before anything below can overwrite db.lists
-  let { data:lists, error:e1 } = await supabaseClient.from('lists').select('*');
+  const { data:lists, error:e1 } = await supabaseClient.from('lists').select('*');
   if(e1){ console.error('fetchListsClientsDealsFromSupabase error:', e1); return; }
-  if(!lists.length){
-    // First time ever touching this table server-side — seed the four core lists
-    // that the rest of the app assumes always exist ('clients','listings','hotlist','hitlist'),
-    // using whatever's currently in the local default/seed structure as the source.
-    const seedRows = localSeedSnapshot.map((l,i)=>({id:l.id, name:l.name, icon:l.icon, type:l.type, display_order:i, is_default:true}));
-    const { error: seedError } = await supabaseClient.from('lists').insert(seedRows);
-    if(seedError){ console.error('Seeding default lists failed:', seedError); return; }
-    lists = seedRows.map(r=>({id:r.id, name:r.name, icon:r.icon, type:r.type, is_default:r.is_default, display_order:r.display_order}));
-  }
-  let { data:clients, error:e2 } = await supabaseClient.from('clients').select('*');
+  if(!lists.length) return; // nothing seeded server-side yet — keep local defaults as the starting point
+  const { data:clients, error:e2 } = await supabaseClient.from('clients').select('*');
   if(e2){ console.error('fetchListsClientsDealsFromSupabase error:', e2); return; }
-  if(!clients.length){
-    // Also the first time — actually save the demo Clients/Listings (and their
-    // Deals/Prospects) to the real database instead of leaving them as local-only
-    // placeholders, same idea as seeding the lists above.
-    const clientRows=[], dealRows=[], prospectRows=[];
-    localSeedSnapshot.filter(l=>l.type==='deep').forEach(l=>{
-      (l.clients||[]).forEach(c=>{
-        clientRows.push({id:c.id, list_id:l.id, name:c.name, primary_contact_id:c.primary||null, created_by:null});
-        (c.deals||[]).forEach(d=>dealRows.push(dealLocalToRow(d, c.id)));
-        if(l.id==='listings' && c.prospects) c.prospects.forEach(p=>prospectRows.push(prospectLocalToRow(p, c.id)));
-      });
-    });
-    if(clientRows.length){
-      const { error: cErr } = await supabaseClient.from('clients').insert(clientRows);
-      if(cErr) console.error('Seeding demo clients failed:', cErr);
-    }
-    if(dealRows.length){
-      const { error: dErr } = await supabaseClient.from('deals').insert(dealRows);
-      if(dErr) console.error('Seeding demo deals failed:', dErr);
-    }
-    if(prospectRows.length){
-      const { error: pErr } = await supabaseClient.from('prospects').insert(prospectRows);
-      if(pErr) console.error('Seeding demo prospects failed:', pErr);
-    }
-    const refetch = await supabaseClient.from('clients').select('*');
-    clients = refetch.data || [];
-  }
   const [{data:secConts,error:e3}, {data:deals,error:e4}, {data:authUsers,error:e5}] = await Promise.all([
     supabaseClient.from('client_secondary_contacts').select('*'),
     supabaseClient.from('deals').select('*'),
     supabaseClient.from('client_authorized_users').select('*'),
   ]);
   if(e3||e4){ console.error('fetchListsClientsDealsFromSupabase error:', e3||e4); return; }
+  const customCategories = await fetchPropertyCategoriesFromSupabase() || [];
   const newLists = lists.slice().sort((a,b)=>a.display_order-b.display_order).map(l=>({
     id:l.id, name:l.name, icon:l.icon, type:l.type, isDefault:l.is_default,
     clients: l.type==='deep' ? [] : undefined,
@@ -757,7 +722,12 @@ async function fetchListsClientsDealsFromSupabase(){
     c.secondary = secConts.filter(sc=>sc.client_id===cr.id).map(sc=>sc.contact_id);
     c.deals = deals.filter(d=>d.client_id===cr.id).map(dealRowToLocal);
     if(authUsers) c.authorizedUserIds = authUsers.filter(a=>a.client_id===cr.id).map(a=>authIdToLocalUserId(a.user_id)).filter(Boolean);
-    if(list.id==='listings'){ c.prospects=[]; c.categoryConfig=newLSRCategoryConfig(); }
+    if(list.id==='listings'){
+      c.prospects=[];
+      c.categoryConfig=newLSRCategoryConfig();
+      c.categoryConfig.custom = customCategories.filter(cat=>cat.listing_id===cr.id).map(cat=>({id:cat.id, name:cat.name}));
+      c.categoryConfig.custom.forEach(cat=>{ if(!c.categoryConfig.order.includes(cat.id)) c.categoryConfig.order.push(cat.id); });
+    }
     if(cr.archived_at){ c.archivedListId = list.id; db.archivedClients.push(c); }
     else list.clients.push(c);
   });
