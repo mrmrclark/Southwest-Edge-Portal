@@ -499,6 +499,7 @@ let state = {
   listsCollapsed:false,
   globalSearchQuery:'',
   globalSearchFocused:false,
+  quickLinks:null,
   newTodoModal:null,            // {context:{...}} when open
   contactModal:null,            // 'master' | {id} for detail
   selectedContactIds:[],
@@ -511,7 +512,7 @@ let state = {
   showAllSmartLists:false,      // collapse toggle once there are more than 10 smart lists
   notifSettingsOpen:false,      // whether the notification-preferences modal is open
   pendingUsersModalOpen:false,
-  sidePanelWidgets:{calendar:true, weather:true, news:true},
+  sidePanelWidgets:{calendar:true, weather:true, news:true, quicklinks:true},
   showWidgetPicker:false,
   editContactModal:null,
   editBrokerModal:null,
@@ -934,6 +935,47 @@ async function fetchAllAppDataFromSupabase(){
   await fetchProspectsFromSupabase();
   await fetchEntriesFromSupabase();
   await fetchTodosFromSupabase();
+  await fetchQuickLinksFromSupabase();
+}
+const DEFAULT_QUICK_LINKS = [
+  {name:'Ascendix (Salesforce)', url:'https://edge-re.my.salesforce.com/?ec=302&startURL=%2Fvisualforce%2Fsession%3Furl%3Dhttps%253A%252F%252Fedge-re.lightning.force.com%252Flightning%252Fpage%252Fhome'},
+  {name:'CoStar', url:'https://www.costar.com/'},
+  {name:'LandVision', url:'https://login-spatialstream.prod.lightboxre.com/MemberPages/Login.aspx?ReturnUrl=%2fmemberpages%2fdefault.aspx%3fma%3dEDGE&ma=EDGE'},
+  {name:'Placer.ai', url:'https://analytics.placer.ai/auth/signin'},
+  {name:'Google MyMaps', url:'https://www.google.com/maps/d/?hl=en'},
+  {name:'Google Maps', url:'https://www.google.com/maps'},
+  {name:"Maricopa Assessor's", url:'https://maps.mcassessor.maricopa.gov/'},
+];
+async function fetchQuickLinksFromSupabase(){
+  if(!state.currentUser || !state.currentUser.authId) return;
+  const { data, error } = await supabaseClient.from('quick_links').select('*').order('display_order');
+  if(error){ console.error('fetchQuickLinksFromSupabase error:', error); return; }
+  if(!data.length){
+    // First time for this person — give them the four defaults to start from,
+    // which they're free to remove, and add their own alongside (or instead of).
+    const seedRows = DEFAULT_QUICK_LINKS.map((l,i)=>({id:crypto.randomUUID(), user_id:state.currentUser.authId, name:l.name, url:l.url, display_order:i}));
+    const { error: seedError } = await supabaseClient.from('quick_links').insert(seedRows);
+    if(seedError){ console.error('Seeding default quick links failed:', seedError); state.quickLinks = DEFAULT_QUICK_LINKS.map(l=>({id:crypto.randomUUID(), ...l})); return; }
+    state.quickLinks = seedRows.map(r=>({id:r.id, name:r.name, url:r.url}));
+  } else {
+    state.quickLinks = data.map(r=>({id:r.id, name:r.name, url:r.url}));
+  }
+}
+async function supaCreateQuickLink(link){
+  if(!state.currentUser.authId) return;
+  const { error } = await supabaseClient.from('quick_links').insert({id:link.id, user_id:state.currentUser.authId, name:link.name, url:link.url, display_order:(state.quickLinks||[]).length});
+  if(error){ console.error('supaCreateQuickLink error:', error); flashToast('Saved here, but syncing to the server failed. (' + error.message + ')'); render(); }
+}
+async function supaDeleteQuickLink(id){
+  const { error } = await supabaseClient.from('quick_links').delete().eq('id', id);
+  if(error) console.error('supaDeleteQuickLink error:', error);
+}
+async function supaReorderQuickLinks(){
+  const links = state.quickLinks || [];
+  for(let i=0;i<links.length;i++){
+    const { error } = await supabaseClient.from('quick_links').update({display_order:i}).eq('id', links[i].id);
+    if(error) console.error('supaReorderQuickLinks error:', error);
+  }
 }
 
 
@@ -2579,6 +2621,21 @@ function fetchNewsIfNeeded(){
     })
     .catch(()=>{ newsCache = {error:true, fetchedAt:Date.now()}; render(); });
 }
+function renderQuickLinksWidget(){
+  const links = state.quickLinks || [];
+  return `
+  <div class="widget-card">
+    <div class="widget-head"><div class="widget-title">Quick Links</div></div>
+    ${links.length ? links.map((l,i)=>`
+      <div style="display:flex;align-items:center;gap:4px;padding:6px 0;border-bottom:1px solid var(--line-soft);">
+        <a href="${escapeAttr(l.url)}" target="_blank" rel="noopener" style="flex:1;font-size:12.5px;color:var(--ink);text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">🔗 ${escapeHtml(l.name)}</a>
+        <button class="row-trash" data-movequicklink="up:${l.id}" title="Move up" style="opacity:.5;" ${i===0?'disabled':''}>↑</button>
+        <button class="row-trash" data-movequicklink="down:${l.id}" title="Move down" style="opacity:.5;" ${i===links.length-1?'disabled':''}>↓</button>
+        <button class="row-trash" data-removequicklink="${l.id}" title="Remove" style="opacity:.5;">✕</button>
+      </div>`).join('') : `<div class="tiny" style="color:var(--ink-soft);margin-bottom:8px;">No links yet.</div>`}
+    <button class="btn ghost sm" data-action="addQuickLink" style="margin-top:8px;width:100%;">+ Add Link</button>
+  </div>`;
+}
 function renderNewsWidget(){
   if(!newsCache || newsCache.loading) fetchNewsIfNeeded();
   let body;
@@ -2982,12 +3039,16 @@ function renderSidePanel(){
         <label style="display:flex;align-items:center;gap:8px;padding:8px 12px;font-size:12.5px;cursor:pointer;">
           <input type="checkbox" data-widgettoggle="news" ${w.news?'checked':''} style="width:auto;"> ORION Daily Top 5
         </label>
+        <label style="display:flex;align-items:center;gap:8px;padding:8px 12px;font-size:12.5px;cursor:pointer;">
+          <input type="checkbox" data-widgettoggle="quicklinks" ${w.quicklinks?'checked':''} style="width:auto;"> Quick Links
+        </label>
       </div>` : ''}
     </div>
     ${w.calendar ? renderCalendarWidget() : ''}
     ${w.weather ? renderWeatherWidget() : ''}
     ${w.news ? renderNewsWidget() : ''}
-    ${(!w.calendar && !w.weather && !w.news) ? `<div class="widget-card" style="text-align:center;color:var(--ink-soft);font-size:12.5px;">No widgets shown. Click "Widgets" above to add some.</div>` : ''}
+    ${w.quicklinks ? renderQuickLinksWidget() : ''}
+    ${(!w.calendar && !w.weather && !w.news && !w.quicklinks) ? `<div class="widget-card" style="text-align:center;color:var(--ink-soft);font-size:12.5px;">No widgets shown. Click "Widgets" above to add some.</div>` : ''}
   </div>`;
 }
 function caOutstandingCount(){
@@ -3490,6 +3551,34 @@ function attachShellHandlers(){
   document.querySelectorAll('[data-widgettoggle]').forEach(el=>el.onclick=(ev)=>{
     ev.stopPropagation();
     state.sidePanelWidgets[el.dataset.widgettoggle] = el.checked;
+    render();
+  });
+  const addQuickLinkBtn = document.querySelector('[data-action="addQuickLink"]'); if(addQuickLinkBtn) addQuickLinkBtn.onclick=()=>{
+    const name = prompt('Name this link (e.g., "CoStar"):');
+    if(!name) return;
+    let url = prompt('Paste the web address (e.g., https://gateway.costar.com/login):');
+    if(!url) return;
+    if(!/^https?:\/\//i.test(url)) url = 'https://' + url;
+    if(!state.quickLinks) state.quickLinks = [];
+    const newLink = {id:crypto.randomUUID(), name, url};
+    state.quickLinks.push(newLink);
+    supaCreateQuickLink(newLink);
+    render();
+  };
+  document.querySelectorAll('[data-removequicklink]').forEach(el=>el.onclick=()=>{
+    const id = el.dataset.removequicklink;
+    state.quickLinks = (state.quickLinks||[]).filter(l=>l.id!==id);
+    supaDeleteQuickLink(id);
+    render();
+  });
+  document.querySelectorAll('[data-movequicklink]').forEach(el=>el.onclick=()=>{
+    const [dir, id] = el.dataset.movequicklink.split(':');
+    const links = state.quickLinks || [];
+    const idx = links.findIndex(l=>l.id===id);
+    const swap = dir==='up' ? idx-1 : idx+1;
+    if(idx<0 || swap<0 || swap>=links.length) return;
+    const tmp = links[idx]; links[idx] = links[swap]; links[swap] = tmp;
+    supaReorderQuickLinks();
     render();
   });
   document.querySelectorAll('[data-action="connectOutlook"]').forEach(outlookBtn=>outlookBtn.onclick=()=>{
