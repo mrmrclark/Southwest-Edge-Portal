@@ -5776,20 +5776,10 @@ function dateAwareReviver(key, value){
 }
 function saveAppState(){
   try{
-    // Strip attachment blob URLs before saving — they're invalid after a reload anyway.
-    const todosForSave = db.todos.map(td=>({...td, attachments: []}));
-    const archivedForSave = db.archivedTodos.map(td=>({...td, attachments: []}));
     const snapshot = {
-      users: USERS,
       pendingUsers,
-      lists: db.lists,
-      contacts: db.contacts,
-      todos: todosForSave,
-      archivedTodos: archivedForSave,
       smartLists: smartListsArr,
       adminDefaultSchedule,
-      tenantRoster: TENANT_ROSTER,
-      brokerList: PHOENIX_BROKER_LIST,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot, dateAwareReplacer));
   } catch(e){ /* private-browsing mode, storage full, etc. — fail quietly, app still works */ }
@@ -5800,22 +5790,14 @@ function loadAppState(){
     const raw = localStorage.getItem(STORAGE_KEY);
     if(!raw) return;
     const saved = JSON.parse(raw, dateAwareReviver);
-    if(saved.users){
-      USERS.length = 0;
-      saved.users.forEach(u=>USERS.push(u));
-    }
+    // NOTE: lists/contacts/todos/archivedTodos/tenantRoster/brokerList are no longer
+    // restored here — Supabase is now the real source of truth for all of those
+    // (Phase 2+). Restoring them from this old local cache was actively harmful:
+    // it could overwrite fresh data with a stale snapshot from before this app had
+    // a real backend. Only things Supabase doesn't manage yet stay local.
     if(saved.pendingUsers) pendingUsers = saved.pendingUsers;
-    if(saved.lists) db.lists = saved.lists;
-    if(saved.contacts) db.contacts = saved.contacts;
-    if(saved.todos) db.todos = saved.todos;
-    if(saved.archivedTodos) db.archivedTodos = saved.archivedTodos;
     if(saved.smartLists) smartListsArr = saved.smartLists;
     if(saved.adminDefaultSchedule) adminDefaultSchedule = saved.adminDefaultSchedule;
-    if(saved.tenantRoster){
-      TENANT_ROSTER.length = 0;
-      saved.tenantRoster.forEach(r=>TENANT_ROSTER.push(r));
-    }
-    if(saved.brokerList) PHOENIX_BROKER_LIST = saved.brokerList;
     appStateWasLoaded = true;
   } catch(e){ /* corrupted/old save shape — just fall back to the seed data */ }
 }
