@@ -3059,18 +3059,20 @@ function renderMainContent(){
 function renderArchivedClientsMain(){
   const archived = db.archivedClients||[];
   if(!archived.length) return `<div class="empty-state"><div class="big">Nothing archived.</div><div class="tiny">Archived Clients and Listings will show up here.</div></div>`;
-  return archived.map(c=>{
-    const list = db.lists.find(x=>x.id===c.archivedListId);
-    return `
+  const renderRow = (c)=>`
     <div class="row-card" style="opacity:.8;">
       <div class="nav-icon" style="font-size:20px;">🗄️</div>
-      <div class="row-body">
-        <div class="row-title">${escapeHtml(c.name)}</div>
-        <div class="row-meta"><span class="pill gray">${list?escapeHtml(list.name):''}</span></div>
-      </div>
+      <div class="row-body"><div class="row-title">${escapeHtml(c.name)}</div></div>
       <button class="btn secondary sm" data-restoreclient="${c.id}" data-listid="${c.archivedListId}">Restore</button>
     </div>`;
-  }).join('');
+  const archivedClients = archived.filter(c=>c.archivedListId==='clients');
+  const archivedListings = archived.filter(c=>c.archivedListId==='listings');
+  return `
+    <div class="section-label">Archived Clients (${archivedClients.length})</div>
+    ${archivedClients.length ? archivedClients.map(renderRow).join('') : `<div class="tiny" style="color:var(--ink-soft);padding:8px 0;">None.</div>`}
+    <div class="section-label" style="margin-top:22px;">Archived Listings (${archivedListings.length})</div>
+    ${archivedListings.length ? archivedListings.map(renderRow).join('') : `<div class="tiny" style="color:var(--ink-soft);padding:8px 0;">None.</div>`}
+  `;
 }
 function renderCAStatusMain(){
   const clientsList = db.lists.find(x=>x.id==='clients');
