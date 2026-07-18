@@ -706,10 +706,17 @@ function clientLocalToRow(c, listId){
   return {id:c.id, list_id:listId, name:c.name, primary_contact_id:c.primary||null, created_by: localUserIdToAuthId(c.createdBy),
           archived_at: c.archivedAt ? c.archivedAt.toISOString() : null};
 }
-function dealRowToLocal(r){ return {id:r.id, name:r.name, complete:r.complete, activeDeal:r.active_deal, caExecuted:r.ca_executed, dueDate: r.due_date? new Date(r.due_date+'T00:00:00'):null}; }
+function dealRowToLocal(r){
+  return {id:r.id, name:r.name, complete:r.complete, activeDeal:r.active_deal, caExecuted:r.ca_executed,
+          dueDate: r.due_date? new Date(r.due_date+'T00:00:00'):null,
+          dealType:r.deal_type, building:r.building||'', spaceNum:r.space_num||'', size:r.size||'',
+          rent:r.rent||'', price:r.price||'', term:r.term||'', tiAllowance:r.ti_allowance||''};
+}
 function dealLocalToRow(d, clientId){
   return {id:d.id, client_id:clientId, name:d.name, complete:!!d.complete, active_deal:!!d.activeDeal,
-          ca_executed:!!d.caExecuted, due_date: d.dueDate? d.dueDate.toISOString().slice(0,10) : null};
+          ca_executed:!!d.caExecuted, due_date: d.dueDate? d.dueDate.toISOString().slice(0,10) : null,
+          deal_type: d.dealType||null, building:d.building||null, space_num:d.spaceNum||null, size:d.size||null,
+          rent:d.rent||null, price:d.price||null, term:d.term||null, ti_allowance:d.tiAllowance||null};
 }
 async function fetchListsClientsDealsFromSupabase(){
   const { data:lists, error:e1 } = await supabaseClient.from('lists').select('*');
@@ -3156,10 +3163,10 @@ function renderArchivedClientsMain(){
   const archived = db.archivedClients||[];
   if(!archived.length) return `<div class="empty-state"><div class="big">Nothing archived.</div><div class="tiny">Archived Clients and Listings will show up here.</div></div>`;
   const renderRow = (c)=>`
-    <div class="row-card" style="opacity:.8;">
+    <div class="row-card" style="opacity:.8;" data-viewarchived="${c.id}" data-listid="${c.archivedListId}">
       <div class="nav-icon" style="font-size:20px;">🗄️</div>
-      <div class="row-body"><div class="row-title">${escapeHtml(c.name)}</div></div>
-      <button class="btn secondary sm" data-restoreclient="${c.id}" data-listid="${c.archivedListId}">Restore</button>
+      <div class="row-body"><div class="row-title">${escapeHtml(c.name)}</div><div class="row-meta"><span class="tiny">Click to view</span></div></div>
+      <button class="btn secondary sm" data-restoreclient="${c.id}" data-listid="${c.archivedListId}" data-stopprop="1">Restore</button>
     </div>`;
   const archivedClients = archived.filter(c=>c.archivedListId==='clients');
   const archivedListings = archived.filter(c=>c.archivedListId==='listings');
@@ -3508,6 +3515,10 @@ function attachShellHandlers(){
     const l = db.lists.find(x=>x.id===listId);
     l.clients.push(c);
     flashToast(`${c.name} restored.`);
+    render();
+  });
+  document.querySelectorAll('[data-viewarchived]').forEach(el=>el.onclick=()=>{
+    openArchivedClientModal(el.dataset.listid, el.dataset.viewarchived);
     render();
   });
   document.querySelectorAll('[data-opendealdirect]').forEach(el=>el.onclick=()=>{
@@ -4083,7 +4094,26 @@ function openDealModal(listId, clientId, dealId){
 function openEntryModal(listId, entryId){
   state.modalStack=[{kind:'entry', listId, entryId}];
 }
-function closeModalStack(){ state.modalStack=[]; render(); }
+function openArchivedClientModal(listId, clientId){
+  const idx = (db.archivedClients||[]).findIndex(x=>x.id===clientId);
+  if(idx<0) return;
+  const [c] = db.archivedClients.splice(idx,1);
+  const l = db.lists.find(x=>x.id===listId);
+  l.clients.push(c); // temporary, in-memory only — archivedAt is untouched, so it goes right back on close
+  openClientModal(listId, clientId);
+}
+function closeModalStack(){
+  const bottom = state.modalStack[0];
+  if(bottom && bottom.kind==='client'){
+    const l = db.lists.find(x=>x.id===bottom.listId);
+    const c = l && l.clients.find(x=>x.id===bottom.clientId);
+    if(c && c.archivedAt){
+      l.clients = l.clients.filter(x=>x.id!==c.id);
+      db.archivedClients.push(c);
+    }
+  }
+  state.modalStack=[]; render();
+}
 function popModalTo(index){ state.modalStack = state.modalStack.slice(0, index+1); render(); }
 
 function breadcrumbFor(stack){
@@ -4131,12 +4161,14 @@ function renderTopModalCard(){
   if(frame.kind==='client'){
     const l=db.lists.find(x=>x.id===frame.listId); const c=l.clients.find(x=>x.id===frame.clientId);
     titleText=c.name; brandName=c.name;
-    bodyHtml = renderClientModalBody(l,c,frame.viewMode);
+    bodyHtml = (c.archivedAt ? `<div style="background:#FBEBD8;color:#A5620C;padding:8px 14px;border-radius:8px;font-size:12.5px;font-weight:600;margin-bottom:14px;">🗄️ This is archived — viewing only. Restore it to make it active again.</div>` : '') + renderClientModalBody(l,c,frame.viewMode);
     if(state.currentUser.role==='Admin'){
       const noun = l.id==='listings' ? 'listing' : 'client';
-      clientAdminActions = `
-        <button class="btn secondary sm" data-action="archiveClient" data-listid="${l.id}" data-client="${c.id}">🗄️ Archive</button>
-        <button class="btn danger sm" data-action="deleteClient" data-listid="${l.id}" data-client="${c.id}" data-noun="${noun}">🗑️ Delete</button>`;
+      clientAdminActions = c.archivedAt
+        ? `<button class="btn secondary sm" data-action="restoreClientFromModal" data-listid="${l.id}" data-client="${c.id}">♻️ Restore</button>
+           <button class="btn danger sm" data-action="deleteClient" data-listid="${l.id}" data-client="${c.id}" data-noun="${noun}">🗑️ Delete</button>`
+        : `<button class="btn secondary sm" data-action="archiveClient" data-listid="${l.id}" data-client="${c.id}">🗄️ Archive</button>
+           <button class="btn danger sm" data-action="deleteClient" data-listid="${l.id}" data-client="${c.id}" data-noun="${noun}">🗑️ Delete</button>`;
     }
   } else if(frame.kind==='deal'){
     const l=db.lists.find(x=>x.id===frame.listId); const c=l.clients.find(x=>x.id===frame.clientId);
@@ -4240,6 +4272,7 @@ function renderDealRowInClient(l,c,d){
   const cls = status==='overdue'?'overdue':(status==='today'?'today':'');
   const todoCount = db.todos.filter(t=>t.dealId===d.id && !t.completed).length;
   const caExecuted = d.caExecuted!==undefined ? d.caExecuted : (l.id==='listings');
+  const moneyVal = d.dealType==='sale' ? d.price : d.rent;
   return `
   <div class="row-card" data-opendeal="${d.id}" data-client="${c.id}" data-listid="${l.id}">
     <div class="row-check ${d.complete?'done':''}" data-toggledeal="${d.id}" title="Mark complete">${d.complete?'✓':''}</div>
@@ -4249,6 +4282,8 @@ function renderDealRowInClient(l,c,d){
         <span class="due ${cls}">${d.dueDate?fmtDate(d.dueDate):'No date'}</span>
         <span class="pill gray">${todoCount} open to-do${todoCount===1?'':'s'}</span>
         ${!caExecuted? `<span class="pill" style="background:#FBEBD8;color:#A5620C;">CA Outstanding</span>`:''}
+        ${moneyVal ? `<span class="pill">${d.dealType==='sale'?'Price':'Rent'}: ${escapeHtml(moneyVal)}</span>`:''}
+        ${d.term ? `<span class="pill gray">${escapeHtml(d.term)}</span>`:''}
       </div>
     </div>
     <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end;flex-shrink:0;" data-stopprop="1">
@@ -4284,6 +4319,24 @@ function renderDealModalBody(l,c,d){
     <div class="label">Site / Deal Contact</div>
     ${contactRow(c.primary)}
   </div>
+  <div class="section-label">Deal Terms</div>
+  <div class="type-toggle" id="dealTypeToggle">
+    <button class="${d.dealType==='lease'?'active':''}" data-dealtypebtn="lease">Lease</button>
+    <button class="${d.dealType==='sale'?'active':''}" data-dealtypebtn="sale">Sale</button>
+  </div>
+  <div class="field-row">
+    <div class="field"><label>Building</label><input id="dtBuilding" value="${escapeAttr(d.building||'')}"></div>
+    <div class="field"><label>Space #</label><input id="dtSpaceNum" value="${escapeAttr(d.spaceNum||'')}"></div>
+  </div>
+  <div class="field-row">
+    <div class="field"><label>Size</label><input id="dtSize" value="${escapeAttr(d.size||'')}"></div>
+    <div class="field"><label>${d.dealType==='sale'?'Price':'Rent'}</label><input id="dtMoney" value="${escapeAttr(d.dealType==='sale'? (d.price||'') : (d.rent||''))}"></div>
+  </div>
+  <div class="field-row">
+    <div class="field"><label>Term</label><input id="dtTerm" value="${escapeAttr(d.term||'')}"></div>
+    <div class="field"><label>TI Allowance</label><input id="dtTI" value="${escapeAttr(d.tiAllowance||'')}"></div>
+  </div>
+  <button class="btn sm" data-action="saveDealTerms" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}" style="margin-bottom:6px;">Save Deal Terms</button>
   <div class="section-label">To-Do's</div>
   ${todos.length? renderTodoList(todos) : `<div class="empty-state" style="padding:26px;"><div class="big">No to-do's yet.</div><div class="tiny">Add the first action item for this site.</div></div>`}
   `;
@@ -4951,6 +5004,14 @@ function attachModalHandlers(root){
       render();
     }
   };
+  const restoreFromModalBtn = root.querySelector('[data-action="restoreClientFromModal"]'); if(restoreFromModalBtn) restoreFromModalBtn.onclick=()=>{
+    const l=db.lists.find(x=>x.id===restoreFromModalBtn.dataset.listid); const c=l.clients.find(x=>x.id===restoreFromModalBtn.dataset.client);
+    c.archivedAt = null;
+    delete c.archivedListId;
+    supaArchiveClient(c, l.id, false);
+    flashToast(`${c.name} restored.`);
+    render();
+  };
   const deleteClientBtn = root.querySelector('[data-action="deleteClient"]'); if(deleteClientBtn) deleteClientBtn.onclick=()=>{
     const l=db.lists.find(x=>x.id===deleteClientBtn.dataset.listid); const c=l.clients.find(x=>x.id===deleteClientBtn.dataset.client);
     const noun = deleteClientBtn.dataset.noun;
@@ -5030,6 +5091,27 @@ function attachModalHandlers(root){
   };
   const ntDeal = root.querySelector('[data-action="newTodoInDeal"]'); if(ntDeal) ntDeal.onclick=()=>{
     openNewTodoModal({listId:ntDeal.dataset.listid, clientId:ntDeal.dataset.client, dealId:ntDeal.dataset.deal}); render();
+  };
+  root.querySelectorAll('[data-dealtypebtn]').forEach(btn=>btn.onclick=()=>{
+    const frame = state.modalStack[state.modalStack.length-1];
+    const l=db.lists.find(x=>x.id===frame.listId); const c=l.clients.find(x=>x.id===frame.clientId);
+    const d=c.deals.find(x=>x.id===frame.dealId);
+    d.dealType = btn.dataset.dealtypebtn;
+    render();
+  });
+  const saveDealTermsBtn = root.querySelector('[data-action="saveDealTerms"]'); if(saveDealTermsBtn) saveDealTermsBtn.onclick=()=>{
+    const l=db.lists.find(x=>x.id===saveDealTermsBtn.dataset.listid); const c=l.clients.find(x=>x.id===saveDealTermsBtn.dataset.client);
+    const d=c.deals.find(x=>x.id===saveDealTermsBtn.dataset.deal);
+    d.building = document.getElementById('dtBuilding').value.trim();
+    d.spaceNum = document.getElementById('dtSpaceNum').value.trim();
+    d.size = document.getElementById('dtSize').value.trim();
+    const moneyVal = document.getElementById('dtMoney').value.trim();
+    if(d.dealType==='sale') d.price = moneyVal; else d.rent = moneyVal;
+    d.term = document.getElementById('dtTerm').value.trim();
+    d.tiAllowance = document.getElementById('dtTI').value.trim();
+    supaUpdateDeal(d, c.id);
+    flashToast('Deal terms saved.');
+    render();
   };
   const ntEntry = root.querySelector('[data-action="newTodoInEntry"]'); if(ntEntry) ntEntry.onclick=()=>{
     openNewTodoModal({listId:ntEntry.dataset.listid, entryId:ntEntry.dataset.entry}); render();
