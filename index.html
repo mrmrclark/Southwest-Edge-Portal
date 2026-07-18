@@ -710,13 +710,13 @@ function dealRowToLocal(r){
   return {id:r.id, name:r.name, complete:r.complete, activeDeal:r.active_deal, caExecuted:r.ca_executed,
           dueDate: r.due_date? new Date(r.due_date+'T00:00:00'):null,
           dealType:r.deal_type, building:r.building||'', spaceNum:r.space_num||'', size:r.size||'',
-          rent:r.rent||'', price:r.price||'', term:r.term||'', tiAllowance:r.ti_allowance||''};
+          rent:r.rent||'', price:r.price||'', term:r.term||'', tiAllowance:r.ti_allowance||'', notes:r.notes||''};
 }
 function dealLocalToRow(d, clientId){
   return {id:d.id, client_id:clientId, name:d.name, complete:!!d.complete, active_deal:!!d.activeDeal,
           ca_executed:!!d.caExecuted, due_date: d.dueDate? d.dueDate.toISOString().slice(0,10) : null,
           deal_type: d.dealType||null, building:d.building||null, space_num:d.spaceNum||null, size:d.size||null,
-          rent:d.rent||null, price:d.price||null, term:d.term||null, ti_allowance:d.tiAllowance||null};
+          rent:d.rent||null, price:d.price||null, term:d.term||null, ti_allowance:d.tiAllowance||null, notes:d.notes||null};
 }
 async function fetchListsClientsDealsFromSupabase(){
   const { data:lists, error:e1 } = await supabaseClient.from('lists').select('*');
@@ -4232,17 +4232,8 @@ function renderClientModalBody(l,c,viewMode){
   const creator = USERS.find(u=>u.id===c.createdBy);
   const authorizedUsers = (c.authorizedUserIds||[]).map(id=>USERS.find(u=>u.id===id)).filter(Boolean);
   const notYetAuthorized = USERS.filter(u=>u.id!==c.createdBy && u.role!=='Admin' && !(c.authorizedUserIds||[]).includes(u.id));
-  return `
-  ${showDeals ? `
-  <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
-    <button class="btn sm" data-action="addDeal" data-client="${c.id}">+ Add site / deal</button>
-  </div>
-  <div class="contact-card">
-    <div class="label">Primary Contact</div>
-    ${contactRow(c.primary)}
-    <button class="btn secondary sm" style="margin-top:10px;" data-action="pickContact" data-client="${c.id}" data-slot="primary">${c.primary? 'Change contact':'Attach contact'}</button>
-  </div>
-  <div class="contact-card" style="background:#EFF6FA;border-color:#CBE0EE;">
+  const accessHtml = `
+  <div class="contact-card" style="background:#EFF6FA;border-color:#CBE0EE;margin-top:20px;">
     <div class="label" style="color:#2C6E9E;">🔒 Access${creator? ` — created by ${escapeHtml(creator.name)}`:''}</div>
     <div style="font-size:12.5px;color:var(--ink-soft);margin:4px 0 8px;">
       Admins always see everything. ${creator?escapeHtml(creator.name.split(' ')[0]):'The creator'} plus anyone listed below can see this ${l.id==='listings'?'listing':'client'} — everyone else can't.
@@ -4259,12 +4250,23 @@ function renderClientModalBody(l,c,viewMode){
       </select>
       <button class="btn sm" data-action="addAuthUser" data-client="${c.id}">+ Add</button>
     </div>` : ''}
+  </div>`;
+  return `
+  ${showDeals ? `
+  <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+    <button class="btn sm" data-action="addDeal" data-client="${c.id}">+ Add site / deal</button>
+  </div>
+  <div class="contact-card">
+    <div class="label">Primary Contact</div>
+    ${contactRow(c.primary)}
+    <button class="btn secondary sm" style="margin-top:10px;" data-action="pickContact" data-client="${c.id}" data-slot="primary">${c.primary? 'Change contact':'Attach contact'}</button>
   </div>
   <div class="section-label">Sites / Deals</div>
   ${openDeals.map(d=>renderDealRowInClient(l,c,d)).join('')}
   ${doneDeals.length? `<div class="section-label">Completed</div>${doneDeals.map(d=>renderDealRowInClient(l,c,d)).join('')}`:''}
   ` : ''}
   ${showProspecting ? renderLSRInline(c, viewMode) : ''}
+  ${showDeals ? accessHtml : ''}
   `;
 }
 function renderDealRowInClient(l,c,d){
@@ -4285,6 +4287,7 @@ function renderDealRowInClient(l,c,d){
         ${moneyVal ? `<span class="pill">${d.dealType==='sale'?'Price':'Rent'}: ${escapeHtml(moneyVal)}</span>`:''}
         ${d.term ? `<span class="pill gray">${escapeHtml(d.term)}</span>`:''}
       </div>
+      ${d.notes ? `<div class="row-meta" style="color:var(--ink-soft);">${escapeHtml(d.notes)}</div>`:''}
     </div>
     <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end;flex-shrink:0;" data-stopprop="1">
       <label style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink-soft);">
@@ -4336,6 +4339,7 @@ function renderDealModalBody(l,c,d){
     <div class="field"><label>Term</label><input id="dtTerm" value="${escapeAttr(d.term||'')}"></div>
     <div class="field"><label>TI Allowance</label><input id="dtTI" value="${escapeAttr(d.tiAllowance||'')}"></div>
   </div>
+  <div class="field"><label>Notes</label><textarea id="dtNotes" rows="3">${escapeHtml(d.notes||'')}</textarea></div>
   <button class="btn sm" data-action="saveDealTerms" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}" style="margin-bottom:6px;">Save Deal Terms</button>
   <div class="section-label">To-Do's</div>
   ${todos.length? renderTodoList(todos) : `<div class="empty-state" style="padding:26px;"><div class="big">No to-do's yet.</div><div class="tiny">Add the first action item for this site.</div></div>`}
@@ -5109,6 +5113,7 @@ function attachModalHandlers(root){
     if(d.dealType==='sale') d.price = moneyVal; else d.rent = moneyVal;
     d.term = document.getElementById('dtTerm').value.trim();
     d.tiAllowance = document.getElementById('dtTI').value.trim();
+    d.notes = document.getElementById('dtNotes').value.trim();
     supaUpdateDeal(d, c.id);
     flashToast('Deal terms saved.');
     render();
@@ -6090,10 +6095,34 @@ document.addEventListener('click', (ev)=>{
 });
 document.addEventListener('keydown', (ev)=>{
   if(ev.key!=='Escape') return;
+  // Closest/smallest overlays first, so repeated Escape presses peel back one
+  // layer at a time — same order a person would naturally click their way out.
+  if(state.duplicatePrompt){ state.duplicatePrompt=null; render(); return; }
+  if(state.brokerPickerOpen){ state.brokerPickerOpen=null; render(); return; }
+  if(state.contactPickerOpen){ state.contactPickerOpen=null; render(); return; }
+  if(state.lsrConvertModal){ state.lsrConvertModal=null; render(); return; }
+  if(state.lsrNewProspectModal){ state.lsrNewProspectModal=null; render(); return; }
+  if(state.lsrCategoryManagerOpen){ state.lsrCategoryManagerOpen=null; render(); return; }
+  if(state.addUsersPrompt){ state.addUsersPrompt=null; render(); return; }
+  if(state.editContactModal){ state.editContactModal=null; render(); return; }
+  if(state.editBrokerModal){ state.editBrokerModal=null; render(); return; }
+  if(state.todoDetailModal){ state.todoDetailModal=null; render(); return; }
+  if(state.newTodoModal){ state.newTodoModal=null; render(); return; }
+  if(state.newSmartListModal){ state.newSmartListModal=null; render(); return; }
+  if(state.importTodosModal){ state.importTodosModal=null; render(); return; }
+  if(state.showEmailClientPicker){ state.showEmailClientPicker=false; state.pendingLoginUser=null; render(); return; }
+  if(state.notifSettingsOpen){ state.notifSettingsOpen=false; render(); return; }
+  if(state.marketingListWizard){ state.marketingListWizard=null; render(); return; }
+  if(state.calendarViewOpen){ state.calendarViewOpen=false; render(); return; }
+  if(state.contactModal){ state.contactModal=null; render(); return; }
+  if(state.pendingUsersModalOpen){ state.pendingUsersModalOpen=false; render(); return; }
+  if(state.modalStack.length){ closeModalStack(); return; }
+  // Small dropdowns/menus — already had Escape support, kept as the final fallback.
   let changed=false;
   if(state.showAdminMenu){ state.showAdminMenu=false; changed=true; }
   if(state.navContextMenu){ state.navContextMenu=null; changed=true; }
   if(state.showWidgetPicker){ state.showWidgetPicker=false; changed=true; }
+  if(state.showUserMenu){ state.showUserMenu=false; changed=true; }
   if(changed) render();
 });
 
