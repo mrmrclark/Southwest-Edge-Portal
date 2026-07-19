@@ -505,6 +505,12 @@ let state = {
   showAdminMenu:false,
   showUserMenu:false,
   addUsersPrompt:null,          // {listId, clientId} — shown right after creating a new Client/Listing
+  moveTodoPicker:null,           // {todoId, step:'client'|'deal', clientListId, clientId, query}
+  commissionModal:null,          // {kind:'deal'|'prospect', listId, clientId, dealId|prospectId}
+  myNotesOpen:false,
+  myNotesActiveId:null,
+  taskfireImport:null,           // {step:'upload'|'review', parsed, ownerUserId}
+  pendingDeletionsOpen:false,
   showArchivedClients:false,
   listsCollapsed:false,
   globalSearchQuery:'',
@@ -557,6 +563,7 @@ const USERS = [
   {id:'mclark', name:'Michael Clark', email:'mclark@edge-re.com', role:'Admin', initials:'MC', emailClient:null, notifPref:null},
   {id:'nault', name:'Nick Ault', email:'ault@edge-re.com', role:'Admin', initials:'NA', emailClient:null, notifPref:null},
   {id:'lkhoudary', name:'Lexi Khoudary', email:'lkhoudary@edge-re.com', role:'User', initials:'LK', emailClient:null, notifPref:null},
+  {id:'aruiz', name:'Anthony Ruiz', email:'aruiz@edge-re.com', role:'User', initials:'AR', emailClient:null, notifPref:null},
 ];
 let pendingUsers = []; // {id, name, email, requestedAt} — awaiting admin approval before they can sign in
 
@@ -710,13 +717,17 @@ function dealRowToLocal(r){
   return {id:r.id, name:r.name, complete:r.complete, activeDeal:r.active_deal, caExecuted:r.ca_executed,
           dueDate: r.due_date? new Date(r.due_date+'T00:00:00'):null,
           dealType:r.deal_type, building:r.building||'', spaceNum:r.space_num||'', size:r.size||'',
-          rent:r.rent||'', price:r.price||'', term:r.term||'', tiAllowance:r.ti_allowance||'', notes:r.notes||''};
+          rent:r.rent||'', price:r.price||'', term:r.term||'', tiAllowance:r.ti_allowance||'',
+          totalFee:r.total_fee||'', splits:r.splits||[], commissionStructure:r.commission_structure||'',
+          commission1Paid:r.commission1_paid, commission2Paid:r.commission2_paid, notes:r.notes||''};
 }
 function dealLocalToRow(d, clientId){
   return {id:d.id, client_id:clientId, name:d.name, complete:!!d.complete, active_deal:!!d.activeDeal,
           ca_executed:!!d.caExecuted, due_date: d.dueDate? d.dueDate.toISOString().slice(0,10) : null,
           deal_type: d.dealType||null, building:d.building||null, space_num:d.spaceNum||null, size:d.size||null,
-          rent:d.rent||null, price:d.price||null, term:d.term||null, ti_allowance:d.tiAllowance||null, notes:d.notes||null};
+          rent:d.rent||null, price:d.price||null, term:d.term||null, ti_allowance:d.tiAllowance||null,
+          total_fee:d.totalFee||null, splits:d.splits||[], commission_structure:d.commissionStructure||null,
+          commission1_paid:!!d.commission1Paid, commission2_paid:!!d.commission2Paid, notes:d.notes||null};
 }
 async function fetchListsClientsDealsFromSupabase(){
   const { data:lists, error:e1 } = await supabaseClient.from('lists').select('*');
@@ -776,6 +787,51 @@ async function supaArchiveClient(c, listId, archived){
 async function supaDeleteClient(id){
   const { error } = await supabaseClient.from('clients').delete().eq('id', id);
   if(error){ console.error('supaDeleteClient error:', error); flashToast('Deleted here, but syncing to the server failed. (' + error.message + ')'); render(); }
+}
+async function fetchDeletionRequestsFromSupabase(){
+  const { data, error } = await supabaseClient.from('client_deletion_requests').select('*');
+  if(error){ console.error('fetchDeletionRequestsFromSupabase error:', error); return; }
+  db.deletionRequests = data.map(r=>({
+    id:r.id, clientId:r.client_id, listId:r.list_id, clientName:r.client_name,
+    requestedBy: authIdToLocalUserId(r.requested_by), requestedAt: new Date(r.requested_at)
+  }));
+}
+async function supaCreateDeletionRequest(c, listId){
+  const req = {id:crypto.randomUUID(), clientId:c.id, listId, clientName:c.name, requestedBy:state.currentUser.id, requestedAt:new Date()};
+  db.deletionRequests.push(req);
+  const { error } = await supabaseClient.from('client_deletion_requests').insert({
+    id:req.id, client_id:c.id, list_id:listId, client_name:c.name, requested_by: state.currentUser.authId
+  });
+  if(error){ console.error('supaCreateDeletionRequest error:', error); flashToast('Requested here, but syncing to the server failed. (' + error.message + ')'); render(); }
+}
+async function approveDeletionRequest(reqId){
+  const req = db.deletionRequests.find(r=>r.id===reqId);
+  if(!req) return;
+  const l = db.lists.find(x=>x.id===req.listId);
+  const c = l && l.clients.find(x=>x.id===req.clientId);
+  if(c){
+    // Detach (don't delete) any to-do's pointing at this client, so they aren't silently lost.
+    db.todos.filter(t=>t.clientId===c.id).forEach(t=>{ t.clientId=null; t.listId=null; supaUpdateTodo(t); });
+    l.clients = l.clients.filter(x=>x.id!==c.id);
+    supaDeleteClient(c.id);
+  } else {
+    // It may currently be sitting in Archived instead of its normal list.
+    db.archivedClients = db.archivedClients.filter(x=>x.id!==req.clientId);
+    supaDeleteClient(req.clientId);
+  }
+  db.deletionRequests = db.deletionRequests.filter(r=>r.id!==reqId);
+  const { error } = await supabaseClient.from('client_deletion_requests').delete().eq('id', reqId);
+  if(error) console.error('approveDeletionRequest cleanup error:', error);
+  flashToast(`${req.clientName} deleted — approved by ${state.currentUser.name}.`);
+  render();
+}
+async function cancelDeletionRequest(reqId){
+  const req = db.deletionRequests.find(r=>r.id===reqId);
+  db.deletionRequests = db.deletionRequests.filter(r=>r.id!==reqId);
+  const { error } = await supabaseClient.from('client_deletion_requests').delete().eq('id', reqId);
+  if(error) console.error('cancelDeletionRequest error:', error);
+  if(req) flashToast(`Deletion request for ${req.clientName} cancelled.`);
+  render();
 }
 async function supaAddAuthorizedUser(clientId, localUserId){
   const authId = localUserIdToAuthId(localUserId);
@@ -847,6 +903,7 @@ function prospectRowToLocal(r){
     notes:r.notes||'', edgeTracker: authIdToLocalUserId(r.edge_tracker) || r.edge_tracker,
     deadDate:r.dead_date? new Date(r.dead_date):null, building:r.building||'', spaceNum:r.space_num||'', size:r.size||'',
     rent:r.rent||'', price:r.price||'', term:r.term||'', tiAllowance:r.ti_allowance||'',
+    totalFee:r.total_fee||'', splits:r.splits||'', commissionStructure:r.commission_structure||'',
     commission1Paid:r.commission1_paid, commission2Paid:r.commission2_paid, inTradeArea:r.in_trade_area, attachments:[]};
 }
 function prospectLocalToRow(p, listingId){
@@ -855,8 +912,9 @@ function prospectLocalToRow(p, listingId){
     date_of_contact:p.dateOfContact? p.dateOfContact.toISOString().slice(0,10):null, notes:p.notes||null,
     edge_tracker: localUserIdToAuthId(p.edgeTracker), dead_date:p.deadDate? p.deadDate.toISOString():null,
     building:p.building||null, space_num:p.spaceNum||null, size:p.size||null, rent:p.rent||null, price:p.price||null,
-    term:p.term||null, ti_allowance:p.tiAllowance||null, commission1_paid:!!p.commission1Paid,
-    commission2_paid:!!p.commission2Paid, in_trade_area:!!p.inTradeArea};
+    term:p.term||null, ti_allowance:p.tiAllowance||null, total_fee:p.totalFee||null, splits:p.splits||null,
+    commission_structure:p.commissionStructure||null,
+    commission1_paid:!!p.commission1Paid, commission2_paid:!!p.commission2Paid, in_trade_area:!!p.inTradeArea};
 }
 async function fetchProspectsFromSupabase(){
   const { data, error } = await supabaseClient.from('prospects').select('*');
@@ -917,6 +975,7 @@ function todoRowToLocal(r){
     assignedTo: authIdToLocalUserId(r.assigned_to) || r.assigned_to, createdBy: authIdToLocalUserId(r.created_by) || r.created_by,
     type:r.type, private:r.is_private, completed:r.is_completed, isNew:r.is_new, notes:r.notes||'',
     listId:r.list_id, clientId:r.client_id, dealId:r.deal_id, entryId:r.entry_id, attachments:[],
+    checklistItems: r.checklist_items || [],
     archivedAt: r.archived_at ? new Date(r.archived_at) : undefined};
 }
 function todoLocalToRow(t){
@@ -924,6 +983,7 @@ function todoLocalToRow(t){
     assigned_to: localUserIdToAuthId(t.assignedTo), created_by: localUserIdToAuthId(t.createdBy),
     type:t.type||'task', is_private:!!t.private, is_completed:!!t.completed, is_new:!!t.isNew, notes:t.notes||null,
     list_id:t.listId||null, client_id:t.clientId||null, deal_id:t.dealId||null, entry_id:t.entryId||null,
+    checklist_items: t.checklistItems || [],
     archived_at: t.archivedAt ? t.archivedAt.toISOString() : null};
 }
 async function fetchTodosFromSupabase(){
@@ -954,6 +1014,7 @@ async function fetchAllAppDataFromSupabase(){
   await fetchEntriesFromSupabase();
   await fetchTodosFromSupabase();
   await fetchQuickLinksFromSupabase();
+  await fetchDeletionRequestsFromSupabase();
 }
 const DEFAULT_QUICK_LINKS = [
   {name:'Ascendix (Salesforce)', url:'https://edge-re.my.salesforce.com/?ec=302&startURL=%2Fvisualforce%2Fsession%3Furl%3Dhttps%253A%252F%252Fedge-re.lightning.force.com%252Flightning%252Fpage%252Fhome'},
@@ -1000,6 +1061,17 @@ async function supaSaveWidgetOrder(){
   const { error } = await supabaseClient.from('profiles').update({widget_order: state.widgetOrder}).eq('id', state.currentUser.authId);
   if(error) console.error('supaSaveWidgetOrder error:', error);
 }
+async function supaSavePersonalNotes(notesList){
+  if(!state.currentUser || !state.currentUser.authId) return;
+  const { error } = await supabaseClient.from('personal_notes').upsert({user_id: state.currentUser.authId, notes: notesList});
+  if(error){ console.error('supaSavePersonalNotes error:', error); flashToast('Saved here, but syncing to the server failed. (' + error.message + ')'); render(); }
+}
+async function fetchPersonalNotes(authId){
+  const { data, error } = await supabaseClient.from('personal_notes').select('notes').eq('user_id', authId).maybeSingle();
+  if(error){ console.error('fetchPersonalNotes error:', error); return []; }
+  return (data && data.notes) || [];
+}
+
 
 
 /* ---------------- DATE HELPERS ---------------- */
@@ -1695,6 +1767,7 @@ function lsrCategoriesFor(listingClient){
 
 let db = {
   archivedClients: [],
+  deletionRequests: [],
   contacts: [
     {id:'c1', first:'Greg', last:'Abbott', company:'Velocity Retail Group', email:'gabbott@velocityrg.com', mobile:'(602) 555-0101', phone:'(602) 682-8181'},
     {id:'c2', first:'Kristina', last:'Abel', company:"Draper's & Damon's", email:'kristinaa@drapers.com', mobile:'(949) 555-0102', phone:'(949) 784-3109'},
@@ -1939,9 +2012,14 @@ function render(){
   if(state.calendarViewOpen && !state.isMobile) renderCalendarViewModal();
   if(state.marketingListWizard) renderMarketingListWizard();
   if(state.addUsersPrompt) renderAddUsersPrompt();
+  if(state.moveTodoPicker) renderMoveTodoPicker();
+  if(state.commissionModal) renderCommissionModal();
+  if(state.myNotesOpen) renderMyNotesModal();
   if(state.newSmartListModal) renderNewSmartListModal();
   if(state.notifSettingsOpen) renderNotifSettingsModal();
   if(state.pendingUsersModalOpen) renderPendingUsersModal();
+  if(state.pendingDeletionsOpen) renderPendingDeletionsModal();
+  if(state.taskfireImport) renderTaskFireImportModal();
   wireTodoRowHandlers(app);
   if(state.undoToast) renderUndoToast();
   if(state.toast) showToastNow();
@@ -2339,6 +2417,7 @@ function attachLoginHandlers(){
     u.authId = profile.id;
     if(!u.emailClient) u.emailClient = profile.email_client;
     if(profile.widget_order) state.widgetOrder = profile.widget_order;
+    u.notesList = await fetchPersonalNotes(profile.id);
     await fetchAllProfilesIntoUsers();
     if(!u.emailClient){
       state.pendingLoginUser = u;
@@ -2413,6 +2492,7 @@ function renderSidebar(){
         </div>
         ${state.showUserMenu ? `
         <div class="admin-menu" style="top:100%;left:0;margin-top:6px;min-width:160px;">
+          <button class="admin-item" data-action="openMyNotes" style="width:100%;border:none;background:none;text-align:left;">📝 My Notes</button>
           <button class="admin-item" data-action="logout" style="width:100%;border:none;background:none;text-align:left;">⏻ Sign out</button>
         </div>` : ''}
       </div>
@@ -3320,7 +3400,7 @@ function renderTodoRow(td){
         <span class="due ${dueCls}">${dueLabel}</span>
         <span class="pill">${contextLabel(td)}</span>
         ${td.private ? `<span class="pill private">Private</span>`:''}
-        ${td.type!=='task' ? `<span class="pill gray">${td.type}</span>`:''}
+        ${td.type!=='task' ? `<span class="pill gray">${td.type}${td.type==='checklist' && td.checklistItems && td.checklistItems.length? ` ${td.checklistItems.filter(i=>i.done).length}/${td.checklistItems.length}`:''}</span>`:''}
         ${td.isNew && td.assignedTo===state.currentUser.id ? `<span class="pill" style="background:var(--edge);color:#fff;">New</span>`:''}
         ${td.attachments && td.attachments.length ? `<span class="pill gray">📎 ${td.attachments.length}</span>`:''}
       </div>
@@ -3446,7 +3526,9 @@ function renderAdminMenu(){
   return `
   <div class="admin-menu">
     <div class="admin-item" data-action="adminPending">🆕 Pending User Requests ${pendingUsers.length? `<span class="nav-count urgent" style="margin-left:auto;">${pendingUsers.length}</span>`:''}</div>
+    <div class="admin-item" data-action="adminPendingDeletions">🗑️ Pending Deletions ${db.deletionRequests.length? `<span class="nav-count urgent" style="margin-left:auto;">${db.deletionRequests.length}</span>`:''}</div>
     <div class="admin-item" data-action="adminImportTodos">⬆️ Import To-Do's (CSV)</div>
+    <div class="admin-item" data-action="adminImportTaskFire">⬆️ Import from TaskFire</div>
     <div class="admin-item" data-action="adminDigest">📨 Compose Weekly Digest</div>
     <div class="admin-item" data-action="adminUsers">👥 Manage Users</div>
     <div class="admin-item" data-action="adminTimes">⏱️ Email Send Times</div>
@@ -3579,6 +3661,7 @@ function attachShellHandlers(){
     state.notifSettingsOpen=true; render();
   };
   const refreshBtn=document.querySelector('[data-action="refreshApp"]'); if(refreshBtn) refreshBtn.onclick=()=>{ doAppRefresh(); };
+  const myNotesBtn=document.querySelector('[data-action="openMyNotes"]'); if(myNotesBtn) myNotesBtn.onclick=()=>{ state.myNotesOpen=true; state.showUserMenu=false; render(); };
   const newEmailBtn=document.querySelector('[data-action="openBlankEmail"]'); if(newEmailBtn) newEmailBtn.onclick=()=>{
     openBlankEmailDraft();
     flashToast('Opening a new email draft…');
@@ -3670,12 +3753,53 @@ function attachShellHandlers(){
     flashToast(`${name} added to ${l.name}.`);
     render();
   };
-  ['adminPending','adminImportTodos','adminDigest','adminUsers','adminTimes','adminReset'].forEach(a=>{
+  ['adminPending','adminPendingDeletions','adminImportTodos','adminImportTaskFire','adminDigest','adminUsers','adminTimes','adminReset'].forEach(a=>{
     const e=document.querySelector(`[data-action="${a}"]`);
     if(e) e.onclick=()=>{ state.showAdminMenu=false; handleAdminAction(a); };
   });
 }
 
+function renderPendingDeletionsModal(){
+  const overlay = document.createElement('div');
+  overlay.className='modal-overlay'; overlay.style.zIndex=175;
+  const requests = db.deletionRequests;
+  overlay.innerHTML = `
+  <div class="modal-card">
+    <div class="modal-head"><div class="modal-title">🗑️ Pending Deletions</div><button class="modal-close" data-action="closePendingDeletions">✕</button></div>
+    <div class="modal-body">
+      <p style="font-size:12.5px;color:var(--ink-soft);margin-top:0;">Every Client/Listing deletion needs approval from the *other* Admin before it actually happens — this prevents one person from accidentally (or unilaterally) wiping out real data. The record stays fully visible and usable to everyone while a request is pending.</p>
+      ${!requests.length? `<div class="empty-state"><div class="big">Nothing pending.</div></div>` :
+      requests.map(r=>{
+        const requester = USERS.find(u=>u.id===r.requestedBy);
+        const isSelf = r.requestedBy === state.currentUser.id;
+        return `
+        <div class="row-card" style="cursor:default;">
+          <div class="row-body">
+            <div class="row-title">${escapeHtml(r.clientName)}</div>
+            <div class="row-meta"><span>Requested by ${requester?escapeHtml(requester.name):'someone'} · ${fmtDate(r.requestedAt)}</span></div>
+          </div>
+          <div class="row-right" style="flex-direction:row;gap:6px;">
+            ${isSelf ? `<span class="tiny" style="color:var(--ink-soft);">Waiting on the other Admin</span>` : `<button class="btn danger sm" data-approvedel="${r.id}">Approve Delete</button>`}
+            <button class="btn secondary sm" data-canceldel="${r.id}">Cancel</button>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>
+    <div class="modal-foot"><button class="btn secondary" data-action="closePendingDeletions">Close</button></div>
+  </div>`;
+  document.getElementById('app').appendChild(overlay);
+  overlay.querySelectorAll('[data-action="closePendingDeletions"]').forEach(b=>b.onclick=()=>{ state.pendingDeletionsOpen=false; render(); });
+  overlay.querySelectorAll('[data-approvedel]').forEach(b=>b.onclick=()=>{
+    const r = db.deletionRequests.find(x=>x.id===b.dataset.approvedel);
+    if(confirm(`Permanently delete "${r.clientName}"? This cannot be undone.`)){
+      approveDeletionRequest(r.id);
+      state.pendingDeletionsOpen=false;
+    }
+  });
+  overlay.querySelectorAll('[data-canceldel]').forEach(b=>b.onclick=()=>{
+    cancelDeletionRequest(b.dataset.canceldel);
+  });
+}
 function renderPendingUsersModal(){
   const overlay = document.createElement('div');
   overlay.className='modal-overlay'; overlay.style.zIndex=175;
@@ -3717,7 +3841,9 @@ function renderPendingUsersModal(){
 }
 function handleAdminAction(a){
   if(a==='adminPending'){ state.pendingUsersModalOpen=true; }
+  if(a==='adminPendingDeletions'){ state.pendingDeletionsOpen=true; }
   if(a==='adminImportTodos'){ state.importTodosModal = {step:'upload'}; }
+  if(a==='adminImportTaskFire'){ state.taskfireImport = {step:'upload'}; }
   if(a==='adminDigest'){ state.notifSettingsOpen=true; }
   if(a==='adminUsers'){ flashToast('User management: ' + USERS.map(u=>u.name).join(', ')); }
   if(a==='adminTimes'){ state.notifSettingsOpen=true; }
@@ -3941,15 +4067,105 @@ function openTodoDetail(id){
   const td = db.todos.find(x=>x.id===id);
   if(td && td.isNew && td.assignedTo===state.currentUser.id) td.isNew=false;
 }
+function getTodoLinkSummary(td){
+  if(td.dealId){
+    const l = db.lists.find(x=>x.id===td.listId);
+    const c = l && l.clients.find(x=>x.id===td.clientId);
+    const d = c && c.deals.find(x=>x.id===td.dealId);
+    if(c && d) return `${c.name} → ${d.name}`;
+  }
+  if(td.clientId){
+    const l = db.lists.find(x=>x.id===td.listId);
+    const c = l && l.clients.find(x=>x.id===td.clientId);
+    if(c) return `${c.name} (general, no specific site)`;
+  }
+  if(td.entryId){
+    const l = db.lists.find(x=>x.id===td.listId);
+    const e = l && l.entries.find(x=>x.id===td.entryId);
+    if(e) return `${l.name}: ${e.name}`;
+  }
+  return 'Not linked to anything — a floating to-do';
+}
+function renderMoveTodoPicker(){
+  const m = state.moveTodoPicker;
+  const td = db.todos.find(x=>x.id===m.todoId);
+  if(!td){ state.moveTodoPicker=null; return; }
+  const overlay = document.createElement('div');
+  overlay.className='modal-overlay'; overlay.style.zIndex=210;
+  let bodyHtml = '';
+  if(m.step==='client'){
+    const q = (m.query||'').toLowerCase();
+    const allClients = [];
+    db.lists.filter(l=>l.type==='deep').forEach(l=>l.clients.forEach(c=>{
+      if(!q || c.name.toLowerCase().includes(q)) allClients.push({l, c});
+    }));
+    bodyHtml = `
+    <input class="searchbox" id="moveTodoSearch" placeholder="🔍 Search Clients/Listings…" value="${escapeAttr(m.query||'')}">
+    <button class="btn secondary sm" data-action="detachTodo" style="width:100%;margin-bottom:10px;">Detach — make this a floating to-do</button>
+    <div style="max-height:320px;overflow-y:auto;">
+      ${allClients.map(({l,c})=>`
+        <div class="row-card" data-pickmoveclient="${c.id}" data-listid="${l.id}">
+          <div class="row-body"><div class="row-title">${escapeHtml(c.name)}</div><div class="row-meta"><span class="pill gray">${l.id==='listings'?'Listing':'Client'}</span></div></div>
+        </div>`).join('') || `<div class="tiny" style="color:var(--ink-soft);padding:10px 0;">No matches.</div>`}
+    </div>`;
+  } else {
+    const l = db.lists.find(x=>x.id===m.clientListId);
+    const c = l.clients.find(x=>x.id===m.clientId);
+    bodyHtml = `
+    <button class="toggle-all" data-action="moveTodoBack" style="margin-bottom:10px;">← Back to Client/Listing search</button>
+    <div style="font-weight:600;margin-bottom:10px;">${escapeHtml(c.name)}</div>
+    <div class="row-card" data-pickmovedeal="none">
+      <div class="row-body"><div class="row-title">No specific site — just this ${l.id==='listings'?'listing':'client'}</div></div>
+    </div>
+    ${c.deals.map(d=>`
+      <div class="row-card" data-pickmovedeal="${d.id}">
+        <div class="row-body"><div class="row-title">${escapeHtml(d.name)}</div></div>
+      </div>`).join('')}
+    ${!c.deals.length ? `<div class="tiny" style="color:var(--ink-soft);padding:10px 0;">No sites/deals under this one yet.</div>`:''}`;
+  }
+  overlay.innerHTML = `
+  <div class="modal-card">
+    <div class="modal-head"><div class="modal-title">Move "${escapeHtml(td.title)}"</div><button class="modal-close" data-action="closeMoveTodo">✕</button></div>
+    <div class="modal-body">${bodyHtml}</div>
+  </div>`;
+  document.getElementById('app').appendChild(overlay);
+  overlay.querySelector('[data-action="closeMoveTodo"]').onclick=()=>{ state.moveTodoPicker=null; render(); };
+  const searchEl = document.getElementById('moveTodoSearch');
+  if(searchEl) searchEl.oninput=()=>{ m.query=searchEl.value; render(); };
+  const detachBtn = overlay.querySelector('[data-action="detachTodo"]'); if(detachBtn) detachBtn.onclick=()=>{
+    td.listId=null; td.clientId=null; td.dealId=null; td.entryId=null;
+    supaUpdateTodo(td);
+    state.moveTodoPicker=null;
+    flashToast('Detached — now a floating to-do.');
+    render();
+  };
+  overlay.querySelectorAll('[data-pickmoveclient]').forEach(el=>el.onclick=()=>{
+    m.step='deal'; m.clientListId=el.dataset.listid; m.clientId=el.dataset.pickmoveclient;
+    render();
+  });
+  const backBtn = overlay.querySelector('[data-action="moveTodoBack"]'); if(backBtn) backBtn.onclick=()=>{ m.step='client'; render(); };
+  overlay.querySelectorAll('[data-pickmovedeal]').forEach(el=>el.onclick=()=>{
+    td.listId = m.clientListId;
+    td.clientId = m.clientId;
+    td.dealId = el.dataset.pickmovedeal==='none' ? null : el.dataset.pickmovedeal;
+    td.entryId = null;
+    supaUpdateTodo(td);
+    state.moveTodoPicker=null;
+    flashToast('Moved.');
+    render();
+  });
+}
 function renderTodoDetailModal(){
   const td = db.todos.find(x=>x.id===state.todoDetailModal.id);
   if(!td){ state.todoDetailModal=null; return; }
   if(!td.attachments) td.attachments=[];
+  if(!td.checklistItems) td.checklistItems=[];
   const overlay = document.createElement('div');
   overlay.className='modal-overlay'; overlay.style.zIndex=190;
   const cats = allCategories();
   const contact = getTodoContact(td);
   const isForMe = td.assignedTo===state.currentUser.id;
+  const doneCount = td.checklistItems.filter(i=>i.done).length;
   overlay.innerHTML = `
   <div class="modal-card">
     <div class="modal-head">
@@ -3978,6 +4194,22 @@ function renderTodoDetailModal(){
           <button data-detquickdate="">No date</button>
         </div>
       </div>
+      ${td.type==='checklist' ? `
+      <div class="field">
+        <label>Checklist items${td.checklistItems.length? ` <span style="font-weight:400;color:var(--ink-soft);">(${doneCount}/${td.checklistItems.length} done)</span>`:''}</label>
+        <div id="checklistItemsList">
+          ${td.checklistItems.map(item=>`
+            <div style="display:flex;align-items:center;gap:8px;padding:4px 0;">
+              <input type="checkbox" data-checkitem="${item.id}" ${item.done?'checked':''} style="width:auto;">
+              <span style="flex:1;font-size:13.5px;${item.done?'text-decoration:line-through;color:var(--ink-soft);':''}">${escapeHtml(item.text)}</span>
+              <button class="row-trash" data-removeitem="${item.id}" style="opacity:.5;">✕</button>
+            </div>`).join('')}
+        </div>
+        <div style="display:flex;gap:8px;margin-top:6px;">
+          <input id="newChecklistItem" placeholder="e.g., Milk" style="flex:1;">
+          <button class="btn secondary sm" data-action="addChecklistItem">+ Add</button>
+        </div>
+      </div>` : ''}
       <div class="field">
         <label>Notes</label>
         <textarea id="detNotes" rows="3" placeholder="Any details worth keeping with this to-do…">${escapeHtml(td.notes||'')}</textarea>
@@ -4003,6 +4235,10 @@ function renderTodoDetailModal(){
         <input type="checkbox" id="detPrivate" style="width:auto;" ${td.private?'checked':''}>
         <label style="margin:0;" for="detPrivate">Private (only I can see the details)</label>
       </div>
+      <div style="margin-top:4px;">
+        <span class="tiny" style="color:var(--ink-soft);">${escapeHtml(getTodoLinkSummary(td))}</span>
+        <button class="toggle-all" data-action="openMoveTodo" style="margin-left:8px;">Move to a different Client/Deal</button>
+      </div>
     </div>
     <div class="modal-foot" style="justify-content:space-between;">
       <button class="btn danger" data-action="detDelete">🗑️ Delete</button>
@@ -4016,6 +4252,33 @@ function renderTodoDetailModal(){
   overlay.querySelectorAll('[data-dettype]').forEach(b=>b.onclick=()=>{ td.type=b.dataset.dettype; render(); });
   overlay.querySelectorAll('[data-detquickdate]').forEach(b=>b.onclick=()=>{ document.getElementById('detDue').value=b.dataset.detquickdate; });
   overlay.querySelector('[data-action="closeTodoDetail"]').onclick=()=>{ state.todoDetailModal=null; render(); };
+  const addItemBtn = overlay.querySelector('[data-action="addChecklistItem"]');
+  if(addItemBtn){
+    const doAdd = ()=>{
+      const input = document.getElementById('newChecklistItem');
+      const text = input.value.trim();
+      if(!text) return;
+      td.checklistItems.push({id:crypto.randomUUID(), text, done:false});
+      supaUpdateTodo(td);
+      render();
+      state.todoDetailModal = {id: td.id}; // keep the modal open through re-render
+    };
+    addItemBtn.onclick = doAdd;
+    document.getElementById('newChecklistItem').onkeydown = (ev)=>{ if(ev.key==='Enter'){ ev.preventDefault(); doAdd(); } };
+  }
+  overlay.querySelectorAll('[data-checkitem]').forEach(el=>el.onchange=()=>{
+    const item = td.checklistItems.find(i=>i.id===el.dataset.checkitem);
+    if(item){ item.done = el.checked; supaUpdateTodo(td); render(); }
+  });
+  overlay.querySelectorAll('[data-removeitem]').forEach(el=>el.onclick=()=>{
+    td.checklistItems = td.checklistItems.filter(i=>i.id!==el.dataset.removeitem);
+    supaUpdateTodo(td);
+    render();
+  });
+  const moveBtn = overlay.querySelector('[data-action="openMoveTodo"]'); if(moveBtn) moveBtn.onclick=()=>{
+    state.moveTodoPicker = {todoId: td.id, step:'client', query:''};
+    render();
+  };
   const detAssign = document.getElementById('detAssign');
   detAssign.onchange = ()=>{
     const forMe = detAssign.value===state.currentUser.id;
@@ -4161,14 +4424,24 @@ function renderTopModalCard(){
   if(frame.kind==='client'){
     const l=db.lists.find(x=>x.id===frame.listId); const c=l.clients.find(x=>x.id===frame.clientId);
     titleText=c.name; brandName=c.name;
-    bodyHtml = (c.archivedAt ? `<div style="background:#FBEBD8;color:#A5620C;padding:8px 14px;border-radius:8px;font-size:12.5px;font-weight:600;margin-bottom:14px;">🗄️ This is archived — viewing only. Restore it to make it active again.</div>` : '') + renderClientModalBody(l,c,frame.viewMode);
+    const pendingDel = db.deletionRequests.find(r=>r.clientId===c.id);
+    let banner = '';
+    if(c.archivedAt) banner = `<div style="background:#FBEBD8;color:#A5620C;padding:8px 14px;border-radius:8px;font-size:12.5px;font-weight:600;margin-bottom:14px;">🗄️ This is archived — viewing only. Restore it to make it active again.</div>`;
+    if(pendingDel){
+      const requester = USERS.find(u=>u.id===pendingDel.requestedBy);
+      banner += `<div style="background:#FBE0DA;color:#A5300C;padding:8px 14px;border-radius:8px;font-size:12.5px;font-weight:600;margin-bottom:14px;">🗑️ Deletion requested by ${requester?escapeHtml(requester.name):'an Admin'} — pending approval from the other Admin. Still fully usable until then.</div>`;
+    }
+    bodyHtml = banner + renderClientModalBody(l,c,frame.viewMode);
     if(state.currentUser.role==='Admin'){
       const noun = l.id==='listings' ? 'listing' : 'client';
+      const deleteBtn = pendingDel
+        ? `<button class="btn secondary sm" disabled title="Awaiting the other Admin's approval">🗑️ Pending Approval</button>`
+        : `<button class="btn danger sm" data-action="deleteClient" data-listid="${l.id}" data-client="${c.id}" data-noun="${noun}">🗑️ Delete</button>`;
       clientAdminActions = c.archivedAt
         ? `<button class="btn secondary sm" data-action="restoreClientFromModal" data-listid="${l.id}" data-client="${c.id}">♻️ Restore</button>
-           <button class="btn danger sm" data-action="deleteClient" data-listid="${l.id}" data-client="${c.id}" data-noun="${noun}">🗑️ Delete</button>`
+           ${deleteBtn}`
         : `<button class="btn secondary sm" data-action="archiveClient" data-listid="${l.id}" data-client="${c.id}">🗄️ Archive</button>
-           <button class="btn danger sm" data-action="deleteClient" data-listid="${l.id}" data-client="${c.id}" data-noun="${noun}">🗑️ Delete</button>`;
+           ${deleteBtn}`;
     }
   } else if(frame.kind==='deal'){
     const l=db.lists.find(x=>x.id===frame.listId); const c=l.clients.find(x=>x.id===frame.clientId);
@@ -4301,6 +4574,178 @@ function renderDealRowInClient(l,c,d){
     </div>
   </div>`;
 }
+function renderMyNotesModal(){
+  if(!state.currentUser.notesList || !state.currentUser.notesList.length){
+    state.currentUser.notesList = [
+      {id:crypto.randomUUID(), title:'Personal', body:''},
+      {id:crypto.randomUUID(), title:'Business', body:''},
+    ];
+  }
+  if(!state.myNotesActiveId || !state.currentUser.notesList.find(n=>n.id===state.myNotesActiveId)){
+    state.myNotesActiveId = state.currentUser.notesList[0].id;
+  }
+  const notes = state.currentUser.notesList;
+  const active = notes.find(n=>n.id===state.myNotesActiveId);
+  const overlay = document.createElement('div');
+  overlay.className='modal-overlay'; overlay.style.zIndex=205;
+  overlay.innerHTML = `
+  <div class="modal-card">
+    <div class="modal-head"><div class="modal-title">📝 My Notes</div><button class="modal-close" data-action="closeMyNotes">✕</button></div>
+    <div class="modal-body">
+      <div class="tiny" style="color:var(--ink-soft);margin-bottom:10px;">
+        Personal notes — only you can see these. Make as many as you want. Note: they still live in the shared database like everything else, just hidden from your teammates — not a secure place for real passwords or account credentials.
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;">
+        ${notes.map(n=>`
+          <button class="btn ${n.id===active.id?'':'secondary'} sm" data-selectnote="${n.id}">${escapeHtml(n.title)}</button>
+        `).join('')}
+        <button class="btn ghost sm" data-action="addNote">+ New Note</button>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+        <input id="noteTitleInput" value="${escapeAttr(active.title)}" style="flex:1;font-weight:600;">
+        ${notes.length>1 ? `<button class="btn danger sm" data-action="deleteNote">🗑️ Delete this note</button>` : ''}
+      </div>
+      <textarea id="myNotesText" rows="14" style="width:100%;font-family:inherit;" placeholder="Jot down whatever...">${escapeHtml(active.body||'')}</textarea>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" data-action="saveMyNotes">Save</button>
+    </div>
+  </div>`;
+  document.getElementById('app').appendChild(overlay);
+  overlay.querySelector('[data-action="closeMyNotes"]').onclick=()=>{ state.myNotesOpen=false; render(); };
+  overlay.querySelectorAll('[data-selectnote]').forEach(btn=>btn.onclick=()=>{
+    // Save whatever's currently on screen before switching, so nothing gets lost.
+    active.title = document.getElementById('noteTitleInput').value.trim() || active.title;
+    active.body = document.getElementById('myNotesText').value;
+    supaSavePersonalNotes(notes);
+    state.myNotesActiveId = btn.dataset.selectnote;
+    render();
+  });
+  overlay.querySelector('[data-action="addNote"]').onclick=()=>{
+    const title = prompt('Name this note (e.g., "Grocery List", "Ideas"):');
+    if(!title) return;
+    active.title = document.getElementById('noteTitleInput').value.trim() || active.title;
+    active.body = document.getElementById('myNotesText').value;
+    const newNote = {id:crypto.randomUUID(), title, body:''};
+    notes.push(newNote);
+    state.myNotesActiveId = newNote.id;
+    supaSavePersonalNotes(notes);
+    render();
+  };
+  const delBtn = overlay.querySelector('[data-action="deleteNote"]'); if(delBtn) delBtn.onclick=()=>{
+    if(confirm(`Delete "${active.title}"? This can't be undone.`)){
+      state.currentUser.notesList = notes.filter(n=>n.id!==active.id);
+      state.myNotesActiveId = state.currentUser.notesList[0].id;
+      supaSavePersonalNotes(state.currentUser.notesList);
+      render();
+    }
+  };
+  overlay.querySelector('[data-action="saveMyNotes"]').onclick=()=>{
+    active.title = document.getElementById('noteTitleInput').value.trim() || active.title;
+    active.body = document.getElementById('myNotesText').value;
+    supaSavePersonalNotes(notes);
+    state.myNotesOpen=false;
+    flashToast('Notes saved.');
+    render();
+  };
+}
+function renderCommissionModal(){
+  const m = state.commissionModal;
+  let obj, saveFn;
+  if(m.kind==='deal'){
+    const l = db.lists.find(x=>x.id===m.listId); const c = l.clients.find(x=>x.id===m.clientId);
+    obj = c.deals.find(x=>x.id===m.dealId);
+    saveFn = ()=>supaUpdateDeal(obj, c.id);
+  } else {
+    const l = db.lists.find(x=>x.id==='listings'); const c = l.clients.find(x=>x.id===m.clientId);
+    obj = c.prospects.find(x=>x.id===m.prospectId);
+    saveFn = ()=>supaUpdateProspect(obj, c.id);
+  }
+  if(!obj){ state.commissionModal=null; return; }
+  if(!m.splitsDraft) m.splitsDraft = (Array.isArray(obj.splits) ? obj.splits : []).map(s=>({...s}));
+  const draft = m.splitsDraft;
+  const total = draft.reduce((s,row)=>s + (parseFloat(row.pct)||0), 0);
+  const totalOk = Math.abs(total-100) < 0.02;
+  const overlay = document.createElement('div');
+  overlay.className='modal-overlay'; overlay.style.zIndex=205;
+  overlay.innerHTML = `
+  <div class="modal-card">
+    <div class="modal-head"><div class="modal-title">💰 Commission</div><button class="modal-close" data-action="closeCommission">✕</button></div>
+    <div class="modal-body">
+      <div class="field">
+        <label>Commission Structure</label>
+        <input id="commStructure" placeholder="e.g., 6% or 6/3/1%" value="${escapeAttr(obj.commissionStructure||'')}">
+        <div class="tiny" style="color:var(--ink-soft);margin-top:4px;">Describes how it's calculated — this is just a note, it won't calculate the amount for you. Enter the actual dollar figure below once you've worked it out.</div>
+      </div>
+      <div class="field"><label>Total Commission to Edge ($)</label><input id="commTotalFee" value="${escapeAttr(obj.totalFee||'')}"></div>
+      <div class="field">
+        <label>Splits</label>
+        <div id="splitsRows">
+          ${draft.map((row,i)=>`
+            <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">
+              <select data-splituser="${i}" style="flex:1;">
+                ${USERS.map(u=>`<option value="${u.id}" ${row.userId===u.id?'selected':''}>${u.name}</option>`).join('')}
+              </select>
+              <input type="number" step="0.01" data-splitpct="${i}" value="${row.pct!=null?row.pct:''}" placeholder="%" style="width:80px;">
+              <span style="font-size:12.5px;color:var(--ink-soft);">%</span>
+              <button class="row-trash" data-removesplitrow="${i}">✕</button>
+            </div>`).join('')}
+        </div>
+        <button class="btn secondary sm" data-action="addSplitRow" style="margin-top:4px;">+ Add person</button>
+        <div style="margin-top:8px;font-size:12.5px;font-weight:600;color:${totalOk?'var(--good)':'var(--bad)'};">
+          Total: ${total.toFixed(2)}%${totalOk?' ✓':' — must equal 100%'}
+        </div>
+      </div>
+      <div style="display:flex;gap:20px;margin-top:6px;">
+        <label style="display:flex;align-items:center;gap:7px;font-size:13px;">
+          <input type="checkbox" id="comm1Paid" ${obj.commission1Paid?'checked':''} style="width:auto;accent-color:var(--good);">
+          1st Half Paid
+        </label>
+        <label style="display:flex;align-items:center;gap:7px;font-size:13px;">
+          <input type="checkbox" id="comm2Paid" ${obj.commission2Paid?'checked':''} style="width:auto;accent-color:var(--good);">
+          2nd Half Paid
+        </label>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" data-action="saveCommission">Save</button>
+    </div>
+  </div>`;
+  document.getElementById('app').appendChild(overlay);
+  overlay.querySelector('[data-action="closeCommission"]').onclick=()=>{ state.commissionModal=null; render(); };
+  overlay.querySelector('[data-action="addSplitRow"]').onclick=()=>{
+    draft.push({userId: USERS[0].id, pct: ''});
+    render();
+  };
+  overlay.querySelectorAll('[data-removesplitrow]').forEach(el=>el.onclick=()=>{
+    draft.splice(parseInt(el.dataset.removesplitrow), 1);
+    render();
+  });
+  overlay.querySelectorAll('[data-splituser]').forEach(el=>el.onchange=()=>{
+    draft[parseInt(el.dataset.splituser)].userId = el.value;
+  });
+  overlay.querySelectorAll('[data-splitpct]').forEach(el=>el.oninput=()=>{
+    draft[parseInt(el.dataset.splitpct)].pct = el.value;
+    render();
+  });
+  overlay.querySelector('[data-action="saveCommission"]').onclick=()=>{
+    const currentTotal = draft.reduce((s,row)=>s + (parseFloat(row.pct)||0), 0);
+    if(draft.length && Math.abs(currentTotal-100) >= 0.02){
+      flashToast(`Splits add up to ${currentTotal.toFixed(2)}%, not 100% — fix the percentages before saving.`);
+      render();
+      return;
+    }
+    obj.commissionStructure = document.getElementById('commStructure').value.trim();
+    obj.totalFee = document.getElementById('commTotalFee').value.trim();
+    obj.splits = draft.map(row=>({userId:row.userId, pct:parseFloat(row.pct)||0}));
+    obj.commission1Paid = document.getElementById('comm1Paid').checked;
+    obj.commission2Paid = document.getElementById('comm2Paid').checked;
+    saveFn();
+    state.commissionModal=null;
+    flashToast('Commission details saved.');
+    render();
+  };
+}
 function renderDealModalBody(l,c,d){
   const todos = db.todos.filter(t=>t.dealId===d.id).filter(visibleTodo);
   const caExecuted = d.caExecuted!==undefined ? d.caExecuted : (l.id==='listings');
@@ -4339,6 +4784,7 @@ function renderDealModalBody(l,c,d){
     <div class="field"><label>Term</label><input id="dtTerm" value="${escapeAttr(d.term||'')}"></div>
     <div class="field"><label>TI Allowance</label><input id="dtTI" value="${escapeAttr(d.tiAllowance||'')}"></div>
   </div>
+  <button class="btn secondary sm" data-action="openCommission" data-kind="deal" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}" style="margin-bottom:14px;">💰 Commission</button>
   <div class="field"><label>Notes</label><textarea id="dtNotes" rows="3">${escapeHtml(d.notes||'')}</textarea></div>
   <button class="btn sm" data-action="saveDealTerms" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}" style="margin-bottom:6px;">Save Deal Terms</button>
   <div class="section-label">To-Do's</div>
@@ -5019,13 +5465,11 @@ function attachModalHandlers(root){
   const deleteClientBtn = root.querySelector('[data-action="deleteClient"]'); if(deleteClientBtn) deleteClientBtn.onclick=()=>{
     const l=db.lists.find(x=>x.id===deleteClientBtn.dataset.listid); const c=l.clients.find(x=>x.id===deleteClientBtn.dataset.client);
     const noun = deleteClientBtn.dataset.noun;
-    if(confirm(`Are you sure you want to delete this ${noun}? This cannot be undone.`)){
-      // Detach (don't delete) any to-do's pointing at this client, so they aren't silently lost.
-      db.todos.filter(t=>t.clientId===c.id).forEach(t=>{ t.clientId=null; t.listId=null; supaUpdateTodo(t); });
-      l.clients = l.clients.filter(x=>x.id!==c.id);
-      supaDeleteClient(c.id);
-      closeModalStack();
-      flashToast(`${c.name} deleted.`);
+    const existing = db.deletionRequests.find(r=>r.clientId===c.id);
+    if(existing){ flashToast(`A deletion request for ${c.name} is already pending approval.`); return; }
+    if(confirm(`Request deletion of this ${noun}? Since this is permanent, it needs approval from the other Admin before it actually happens — "${c.name}" stays fully visible and usable until then.`)){
+      supaCreateDeletionRequest(c, l.id);
+      flashToast(`Deletion requested — waiting on the other Admin to approve.`);
       render();
     }
   };
@@ -5116,6 +5560,14 @@ function attachModalHandlers(root){
     d.notes = document.getElementById('dtNotes').value.trim();
     supaUpdateDeal(d, c.id);
     flashToast('Deal terms saved.');
+    render();
+  };
+  const openCommBtn = root.querySelector('[data-action="openCommission"]'); if(openCommBtn) openCommBtn.onclick=()=>{
+    if(openCommBtn.dataset.kind==='deal'){
+      state.commissionModal = {kind:'deal', listId:openCommBtn.dataset.listid, clientId:openCommBtn.dataset.client, dealId:openCommBtn.dataset.deal};
+    } else {
+      state.commissionModal = {kind:'prospect', clientId:openCommBtn.dataset.client, prospectId:openCommBtn.dataset.prospect};
+    }
     render();
   };
   const ntEntry = root.querySelector('[data-action="newTodoInEntry"]'); if(ntEntry) ntEntry.onclick=()=>{
@@ -5755,6 +6207,196 @@ function importCSV(file){
   };
   reader.readAsText(file);
 }
+/* ---------------- TASKFIRE IMPORT (live, Admin-only) ---------------- */
+function parseTaskFireCSV(text){
+  const rows = parseCSV(text);
+  const header = rows[0].map(h=>h.trim());
+  const idxType = header.indexOf('Task Type');
+  const idxName = header.indexOf('Name');
+  const idxNote = header.indexOf('Note');
+
+  const clientsList = db.lists.find(l=>l.id==='clients');
+  const existingNames = new Map(clientsList.clients.map(c=>[c.name.toLowerCase().trim(), c.id]));
+
+  const clients = []; // {name, existingClientId, deals:[{name,todos}], directTodos:[{name}]}
+  const ambiguousBatches = []; // {projectNames, deals:[{name,todos}]}
+  const taskRows = []; // {name}
+  let currentClient = null;
+  let currentDeal = null;
+  let projectsSincePin = []; // names of Projects seen since the last successfully-resolved deal
+  let openAmbiguousBatch = null;
+
+  function closeAmbiguousBatch(){
+    if(openAmbiguousBatch && openAmbiguousBatch.deals.length) ambiguousBatches.push(openAmbiguousBatch);
+    openAmbiguousBatch = null;
+  }
+
+  for(let r=1;r<rows.length;r++){
+    const row = rows[r];
+    if(!row || !row[idxType]) continue;
+    const type = row[idxType].trim();
+    const name = (row[idxName]||'').trim();
+    if(type==='Task'){ if(name) taskRows.push({name, note:(row[idxNote]||'').trim()}); continue; }
+    if(!name) continue;
+
+    if(type==='Project'){
+      closeAmbiguousBatch();
+      currentClient = {name, existingClientId: existingNames.get(name.toLowerCase().trim())||null, deals:[], directTodos:[]};
+      clients.push(currentClient);
+      projectsSincePin.push(name);
+      currentDeal = null;
+    } else if(type==='Checklist' || type==='Subtask'){
+      const deal = {name, todos:[]};
+      currentDeal = deal;
+      if(projectsSincePin.length <= 1){
+        if(currentClient) currentClient.deals.push(deal);
+        projectsSincePin = [];
+      } else {
+        if(!openAmbiguousBatch) openAmbiguousBatch = {projectNames:[...projectsSincePin], deals:[]};
+        openAmbiguousBatch.deals.push(deal);
+      }
+    } else if(type==='Checklist item'){
+      const todo = {name};
+      if(currentDeal) currentDeal.todos.push(todo);
+      else if(currentClient) currentClient.directTodos.push(todo);
+    }
+  }
+  closeAmbiguousBatch();
+  return {clients, ambiguousBatches, taskRows};
+}
+
+function renderTaskFireImportModal(){
+  const m = state.taskfireImport;
+  const overlay = document.createElement('div');
+  overlay.className='modal-overlay'; overlay.style.zIndex=190;
+  let body='';
+  if(m.step==='upload'){
+    body = `
+      <p style="font-size:13px;line-height:1.5;color:var(--ink-soft);margin-top:0;">
+        Export a full-account CSV from TaskFire (Settings → Backup & Import → Generate Backup) and drop it here.
+        Clients import directly; Deals only import where the file clearly shows which Client they belong to —
+        anything ambiguous gets flagged for you to review rather than guessed at.
+      </p>
+      <input type="file" id="taskfireFile" accept=".csv">
+    `;
+  } else if(m.step==='review'){
+    const p = m.parsed;
+    const newClients = p.clients.filter(c=>!c.existingClientId);
+    const mergeClients = p.clients.filter(c=>c.existingClientId);
+    const totalDeals = p.clients.reduce((s,c)=>s+c.deals.length,0);
+    const totalTodos = p.clients.reduce((s,c)=>s+c.deals.reduce((s2,d)=>s2+d.todos.length,0)+c.directTodos.length,0);
+    const ambiguousDealCount = p.ambiguousBatches.reduce((s,b)=>s+b.deals.length,0);
+    body = `
+      <div class="field">
+        <label>Whose TaskFire account is this from? *</label>
+        <select id="tfOwner">
+          <option value="">— choose —</option>
+          ${USERS.map(u=>`<option value="${u.id}" ${m.ownerUserId===u.id?'selected':''}>${u.name}</option>`).join('')}
+        </select>
+      </div>
+      <div class="stats" style="display:flex;gap:14px;margin:14px 0;">
+        <div class="stat" style="flex:1;background:var(--canvas);border:1px solid var(--line);border-radius:10px;padding:12px;text-align:center;">
+          <div style="font-size:22px;font-weight:700;color:var(--edge);">${newClients.length}</div>
+          <div style="font-size:11px;color:var(--ink-soft);">New Clients</div>
+        </div>
+        <div class="stat" style="flex:1;background:var(--canvas);border:1px solid var(--line);border-radius:10px;padding:12px;text-align:center;">
+          <div style="font-size:22px;font-weight:700;color:var(--edge);">${mergeClients.length}</div>
+          <div style="font-size:11px;color:var(--ink-soft);">Merge into Existing</div>
+        </div>
+        <div class="stat" style="flex:1;background:var(--canvas);border:1px solid var(--line);border-radius:10px;padding:12px;text-align:center;">
+          <div style="font-size:22px;font-weight:700;color:var(--edge);">${totalDeals}</div>
+          <div style="font-size:11px;color:var(--ink-soft);">Deals (clearly attached)</div>
+        </div>
+        <div class="stat" style="flex:1;background:var(--canvas);border:1px solid var(--line);border-radius:10px;padding:12px;text-align:center;">
+          <div style="font-size:22px;font-weight:700;color:var(--edge);">${totalTodos}</div>
+          <div style="font-size:11px;color:var(--ink-soft);">To-Do's</div>
+        </div>
+      </div>
+      ${ambiguousDealCount ? `<div class="warn" style="background:#FBEBD8;color:#8A5A0C;border-radius:8px;padding:10px 14px;font-size:12.5px;margin-bottom:14px;">
+        <b>${ambiguousDealCount} deal${ambiguousDealCount===1?'':'s'} skipped — can't tell which Client they belong to:</b><br>
+        ${m.parsed.ambiguousBatches.map(b=>`• "${escapeHtml(b.deals.map(d=>d.name).join('", "'))}" — could belong to any of: ${b.projectNames.map(escapeHtml).join(', ')}`).join('<br>')}<br>
+        These need to be added by hand afterward — nothing about them is imported.
+      </div>` : ''}
+      ${m.parsed.taskRows.length ? `<div class="tiny" style="color:var(--ink-soft);margin-bottom:14px;">${m.parsed.taskRows.length} standalone item(s) found that don't tie to any Client (often personal odds-and-ends) — shown below for awareness, but not imported anywhere. ${USERS.find(u=>u.id===m.ownerUserId)?USERS.find(u=>u.id===m.ownerUserId).name.split(' ')[0]:'The account owner'} can add anything worth keeping to their own My Notes directly.<br>${m.parsed.taskRows.map(t=>`• ${escapeHtml(t.name)}`).join('<br>')}</div>` : ''}
+      <p class="tiny" style="color:var(--ink-soft);">This can take a minute for a large account — don't close the window while it's running.</p>
+    `;
+  }
+  overlay.innerHTML = `
+  <div class="modal-card">
+    <div class="modal-head"><div class="modal-title">Import from TaskFire</div><button class="modal-close" data-action="closeTaskfireImport">✕</button></div>
+    <div class="modal-body">${body}</div>
+    <div class="modal-foot">
+      <button class="btn secondary" data-action="closeTaskfireImport">Cancel</button>
+      ${m.step==='review' ? `<button class="btn" id="tfConfirmBtn" data-action="confirmTaskfireImport">Import</button>` : ''}
+    </div>
+  </div>`;
+  document.getElementById('app').appendChild(overlay);
+  overlay.querySelectorAll('[data-action="closeTaskfireImport"]').forEach(b=>b.onclick=()=>{ state.taskfireImport=null; render(); });
+  const fileInput = document.getElementById('taskfireFile');
+  if(fileInput) fileInput.onchange=()=>{
+    const file = fileInput.files[0]; if(!file) return;
+    const reader = new FileReader();
+    reader.onload = (e)=>{
+      try{
+        state.taskfireImport = {step:'review', parsed: parseTaskFireCSV(e.target.result), ownerUserId:null};
+        render();
+      } catch(err){
+        flashToast("Couldn't read that file — make sure it's the CSV export from TaskFire.");
+      }
+    };
+    reader.readAsText(file);
+  };
+  const ownerSelect = document.getElementById('tfOwner');
+  if(ownerSelect) ownerSelect.onchange=()=>{ m.ownerUserId = ownerSelect.value; };
+  const confirmBtn = document.getElementById('tfConfirmBtn');
+  if(confirmBtn) confirmBtn.onclick=async ()=>{
+    if(!m.ownerUserId){ flashToast('Pick whose TaskFire account this is from first.'); return; }
+    confirmBtn.disabled=true; confirmBtn.textContent='Importing…';
+    await runTaskFireImport(m.parsed, m.ownerUserId);
+    state.taskfireImport=null;
+    flashToast('Import complete.');
+    render();
+  };
+}
+async function runTaskFireImport(parsed, ownerUserId){
+  const clientsList = db.lists.find(l=>l.id==='clients');
+  for(const c of parsed.clients){
+    let clientObj;
+    if(c.existingClientId){
+      clientObj = clientsList.clients.find(x=>x.id===c.existingClientId);
+    } else {
+      clientObj = {id:crypto.randomUUID(), name:c.name, primary:null, secondary:[], deals:[], createdBy:ownerUserId, authorizedUserIds:[]};
+      clientsList.clients.push(clientObj);
+      await supaCreateClient(clientObj, 'clients');
+    }
+    for(const d of c.deals){
+      const dealObj = {id:crypto.randomUUID(), name:d.name, complete:false, activeDeal:false, caExecuted:false, dueDate:null};
+      clientObj.deals.push(dealObj);
+      await supaCreateDeal(dealObj, clientObj.id);
+      for(const t of d.todos){
+        const todoObj = {id:crypto.randomUUID(), title:t.name, category:clientObj.name, dueDate:null, assignedTo:ownerUserId,
+          createdBy:ownerUserId, type:'task', private:false, completed:false, isNew:false, notes:'',
+          listId:'clients', clientId:clientObj.id, dealId:dealObj.id, entryId:null, attachments:[]};
+        db.todos.push(todoObj);
+        await supaCreateTodo(todoObj);
+      }
+    }
+    for(const t of c.directTodos){
+      const todoObj = {id:crypto.randomUUID(), title:t.name, category:clientObj.name, dueDate:null, assignedTo:ownerUserId,
+        createdBy:ownerUserId, type:'task', private:false, completed:false, isNew:false, notes:'',
+        listId:'clients', clientId:clientObj.id, dealId:null, entryId:null, attachments:[]};
+      db.todos.push(todoObj);
+      await supaCreateTodo(todoObj);
+    }
+  }
+  // Standalone "Task" rows — these were already shown for review before the import
+  // ran. They're intentionally NOT written anywhere: personal notes are locked to
+  // the owner's own login now (by design, per the privacy fix), so an Admin
+  // importing on someone else's behalf genuinely can't write into their private
+  // notes even if we wanted to — that's not a bug, it's the privacy rule working
+  // as intended. The account owner can add anything worth keeping themselves.
+}
+
 function guessColumn(headers, keywords){
   const lower = headers.map(h=>h.toLowerCase());
   for(const kw of keywords){
@@ -6104,6 +6746,9 @@ document.addEventListener('keydown', (ev)=>{
   if(state.lsrNewProspectModal){ state.lsrNewProspectModal=null; render(); return; }
   if(state.lsrCategoryManagerOpen){ state.lsrCategoryManagerOpen=null; render(); return; }
   if(state.addUsersPrompt){ state.addUsersPrompt=null; render(); return; }
+  if(state.moveTodoPicker){ state.moveTodoPicker=null; render(); return; }
+  if(state.commissionModal){ state.commissionModal=null; render(); return; }
+  if(state.myNotesOpen){ state.myNotesOpen=false; render(); return; }
   if(state.editContactModal){ state.editContactModal=null; render(); return; }
   if(state.editBrokerModal){ state.editBrokerModal=null; render(); return; }
   if(state.todoDetailModal){ state.todoDetailModal=null; render(); return; }
@@ -6116,6 +6761,8 @@ document.addEventListener('keydown', (ev)=>{
   if(state.calendarViewOpen){ state.calendarViewOpen=false; render(); return; }
   if(state.contactModal){ state.contactModal=null; render(); return; }
   if(state.pendingUsersModalOpen){ state.pendingUsersModalOpen=false; render(); return; }
+  if(state.pendingDeletionsOpen){ state.pendingDeletionsOpen=false; render(); return; }
+  if(state.taskfireImport){ state.taskfireImport=null; render(); return; }
   if(state.modalStack.length){ closeModalStack(); return; }
   // Small dropdowns/menus — already had Escape support, kept as the final fallback.
   let changed=false;
@@ -6192,6 +6839,7 @@ render();
           u.authId = profile.id;
           if(!u.emailClient) u.emailClient = profile.email_client;
           if(profile.widget_order) state.widgetOrder = profile.widget_order;
+          u.notesList = await fetchPersonalNotes(profile.id);
           if(u.emailClient){
             state.currentUser = u;
             state.screen = 'app';
