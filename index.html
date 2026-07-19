@@ -6250,11 +6250,11 @@ function parseTaskFireCSV(text){
       currentDeal = deal;
       if(projectsSincePin.length <= 1){
         if(currentClient) currentClient.deals.push(deal);
-        projectsSincePin = [];
       } else {
         if(!openAmbiguousBatch) openAmbiguousBatch = {projectNames:[...projectsSincePin], deals:[]};
         openAmbiguousBatch.deals.push(deal);
       }
+      projectsSincePin = []; // reset either way — resolved or flagged, this round is done
     } else if(type==='Checklist item'){
       const todo = {name};
       if(currentDeal) currentDeal.todos.push(todo);
