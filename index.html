@@ -3795,7 +3795,7 @@ function renderNewSmartListModal(){
     </div>
   </div>`;
   document.getElementById('app').appendChild(overlay);
-  overlay.querySelector('[data-action="closeSmartListModal"]').onclick=()=>{ state.newSmartListModal=null; render(); };
+  overlay.querySelectorAll('[data-action="closeSmartListModal"]').forEach(btn=>btn.onclick=()=>{ state.newSmartListModal=null; render(); });
   const dateSel = document.getElementById('slDateRule');
   if(dateSel) dateSel.onchange=()=>{ m.dateRule=dateSel.value; render(); };
   const clientQueryInput = document.getElementById('slClientQuery');
@@ -4642,7 +4642,7 @@ function renderLSRNewProspectModal(){
   </div>`;
   document.getElementById('app').appendChild(overlay);
   wireCategoryCreateOption(overlay.querySelector('#npCategory'), listing);
-  overlay.querySelector('[data-action="lsrCloseNewProspect"]').onclick=()=>{ state.lsrNewProspectModal=null; render(); };
+  overlay.querySelectorAll('[data-action="lsrCloseNewProspect"]').forEach(btn=>btn.onclick=()=>{ state.lsrNewProspectModal=null; render(); });
   overlay.querySelectorAll('[data-npdealtype]').forEach(b=>b.onclick=()=>{ m.dealType=b.dataset.npdealtype; render(); });
   overlay.querySelector('[data-action="lsrSaveNewProspect"]').onclick=()=>{
     const name = document.getElementById('npName').value.trim();
@@ -4729,7 +4729,7 @@ function renderLSRConvertModal(){
     </div>
   </div>`;
   document.getElementById('app').appendChild(overlay);
-  overlay.querySelector('[data-action="lsrCloseConvert"]').onclick=()=>{ state.lsrConvertModal=null; render(); };
+  overlay.querySelectorAll('[data-action="lsrCloseConvert"]').forEach(btn=>btn.onclick=()=>{ state.lsrConvertModal=null; render(); });
   overlay.querySelectorAll('[data-convdealtype]').forEach(b=>b.onclick=()=>{ m.dealType=b.dataset.convdealtype; render(); });
   overlay.querySelector('[data-action="lsrConfirmConvert"]').onclick=()=>{
     p.dealType = m.dealType;
@@ -5425,7 +5425,7 @@ function renderNewTodoModal(){
   overlay.querySelectorAll('[data-quickdate]').forEach(b=>b.onclick=()=>{
     document.getElementById('ntDue').value = b.dataset.quickdate;
   });
-  overlay.querySelector('[data-action="closeNewTodo"]').onclick=()=>{ state.newTodoModal=null; render(); };
+  overlay.querySelectorAll('[data-action="closeNewTodo"]').forEach(btn=>btn.onclick=()=>{ state.newTodoModal=null; render(); });
   const assignSelect = document.getElementById('ntAssignSelect');
   assignSelect.onchange = ()=>{
     const forMe = assignSelect.value===state.currentUser.id;
