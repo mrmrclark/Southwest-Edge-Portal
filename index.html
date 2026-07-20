@@ -1890,11 +1890,11 @@ const SMART_LIST_DEFAULTS = [
   {id:'overdueAll', name:'Overdue - All', icon:'⏰'},
   {id:'week', name:'Due This Week', icon:'📅'},
   {id:'month', name:'Due This Month', icon:'🗓️'},
+  {id:'allMe', name:'All - Me', icon:'📋'},
   {id:'someday', name:'Someday', icon:'💭'},
   {id:'completed', name:'Completed', icon:'✅'},
   {id:'archived', name:'Archived', icon:'🗄️'},
   {id:'everything', name:'Everything', icon:'📚'},
-  {id:'activeDeals', name:'Active Deals', icon:'⭐'},
   {id:'caStatus', name:'CA Status', icon:'📄'},
 ];
 // Single mutable, ordered list of every smart list (defaults + user-created). Reordering,
@@ -1915,26 +1915,37 @@ function smartListTodos(key){
   }
   return raw;
 }
+// "My sphere" — my own to-do's, plus anything I've personally assigned to
+// someone else. Deliberately excludes to-do's that only involve *other*
+// people (e.g. something Nick created and assigned to himself, or to Lexi) —
+// that's clutter for anyone who isn't Nick. Admins who genuinely need the
+// full, unrestricted team view can still get it from the Admin menu.
+function inMySphere(td){
+  const me = state.currentUser.id;
+  return td.assignedTo===me || td.createdBy===me;
+}
 function smartListTodosRaw(key){
   const t = db.todos.filter(td=>true);
   const me = state.currentUser.id;
   switch(key){
     case 'todayMe': return t.filter(td=>!td.completed && td.assignedTo===me && dueStatus(td.dueDate)==='today');
-    case 'todayAll': return t.filter(td=>!td.completed && dueStatus(td.dueDate)==='today');
+    case 'todayAll': return t.filter(td=>!td.completed && inMySphere(td) && dueStatus(td.dueDate)==='today');
     case 'overdueMe': return t.filter(td=>!td.completed && td.assignedTo===me && dueStatus(td.dueDate)==='overdue');
-    case 'overdueAll': return t.filter(td=>!td.completed && dueStatus(td.dueDate)==='overdue');
-    case 'week': return t.filter(td=>!td.completed && ['today','overdue','week'].includes(dueStatus(td.dueDate)));
-    case 'month': return t.filter(td=>!td.completed && ['today','overdue','week','month'].includes(dueStatus(td.dueDate)));
+    case 'overdueAll': return t.filter(td=>!td.completed && inMySphere(td) && dueStatus(td.dueDate)==='overdue');
+    case 'week': return t.filter(td=>!td.completed && inMySphere(td) && ['today','overdue','week'].includes(dueStatus(td.dueDate)));
+    case 'month': return t.filter(td=>!td.completed && inMySphere(td) && ['today','overdue','week','month'].includes(dueStatus(td.dueDate)));
+    case 'allMe': return t.filter(td=>!td.completed && inMySphere(td) && !!td.dueDate);
     case 'someday': return t.filter(td=>!td.completed && !td.dueDate);
     case 'completed': return t.filter(td=>td.completed);
     case 'archived': return db.archivedTodos.slice();
-    case 'everything': return t.filter(td=>!td.completed);
+    case 'everything': return t.filter(td=>!td.completed && inMySphere(td));
     case 'activeDeals': {
-      // used only for the sidebar badge count now — main view is the client hierarchy
+      // No longer in the sidebar, kept only in case anything still references it internally.
       const activeDealIds = new Set();
       db.lists.filter(l=>l.type==='deep').forEach(l=>l.clients.forEach(c=>c.deals.forEach(d=>{ if(d.activeDeal && !d.complete) activeDealIds.add(d.id); })));
       return t.filter(td=>td.dealId && activeDealIds.has(td.dealId) && !td.completed);
     }
+    case 'fullTeam': return t.filter(td=>!td.completed); // Admin-only, unrestricted — genuinely everyone
     default: {
       const custom = smartListsArr.find(c=>c.id===key && !c.isDefault);
       if(custom) return t.filter(td=>matchesCustomFilter(td, custom.filter));
@@ -2571,9 +2582,13 @@ function renderSidebar(){
 function renderTopbar(){
   let title='', eyebrow='';
   if(state.mainView.type==='smart'){
-    const sl = smartListsArr.find(s=>s.id===state.mainView.id);
-    title = sl ? sl.name : '';
-    eyebrow = 'Smart List';
+    if(state.mainView.id==='fullTeam'){
+      title = 'Full Team To-Do\'s'; eyebrow = 'Admin — Unfiltered';
+    } else {
+      const sl = smartListsArr.find(s=>s.id===state.mainView.id);
+      title = sl ? sl.name : '';
+      eyebrow = 'Smart List';
+    }
   } else if(state.mainView.type==='list'){
     const l = db.lists.find(x=>x.id===state.mainView.id);
     title = l ? l.name : '';
@@ -3527,6 +3542,7 @@ function renderAdminMenu(){
   <div class="admin-menu">
     <div class="admin-item" data-action="adminPending">🆕 Pending User Requests ${pendingUsers.length? `<span class="nav-count urgent" style="margin-left:auto;">${pendingUsers.length}</span>`:''}</div>
     <div class="admin-item" data-action="adminPendingDeletions">🗑️ Pending Deletions ${db.deletionRequests.length? `<span class="nav-count urgent" style="margin-left:auto;">${db.deletionRequests.length}</span>`:''}</div>
+    <div class="admin-item" data-action="adminFullTeam">👥 Full Team To-Do's (unfiltered)</div>
     <div class="admin-item" data-action="adminImportTodos">⬆️ Import To-Do's (CSV)</div>
     <div class="admin-item" data-action="adminImportTaskFire">⬆️ Import from TaskFire</div>
     <div class="admin-item" data-action="adminDigest">📨 Compose Weekly Digest</div>
@@ -3754,7 +3770,7 @@ function attachShellHandlers(){
     flashToast(`${name} added to ${l.name}.`);
     render();
   };
-  ['adminPending','adminPendingDeletions','adminImportTodos','adminImportTaskFire','adminDigest','adminUsers','adminTimes','adminReset'].forEach(a=>{
+  ['adminPending','adminPendingDeletions','adminFullTeam','adminImportTodos','adminImportTaskFire','adminDigest','adminUsers','adminTimes','adminReset'].forEach(a=>{
     const e=document.querySelector(`[data-action="${a}"]`);
     if(e) e.onclick=()=>{ state.showAdminMenu=false; handleAdminAction(a); };
   });
@@ -3843,6 +3859,7 @@ function renderPendingUsersModal(){
 function handleAdminAction(a){
   if(a==='adminPending'){ state.pendingUsersModalOpen=true; }
   if(a==='adminPendingDeletions'){ state.pendingDeletionsOpen=true; }
+  if(a==='adminFullTeam'){ state.mainView = {type:'smart', id:'fullTeam'}; if(state.isMobile) state.mobileScreen='main'; }
   if(a==='adminImportTodos'){ state.importTodosModal = {step:'upload'}; }
   if(a==='adminImportTaskFire'){ state.taskfireImport = {step:'upload'}; }
   if(a==='adminDigest'){ state.notifSettingsOpen=true; }
@@ -6209,19 +6226,29 @@ function importCSV(file){
   reader.readAsText(file);
 }
 /* ---------------- TASKFIRE IMPORT (live, Admin-only) ---------------- */
+const TF_NULL_DATE_MARKER = 'Fri Dec 13 1901';
+function tfCleanDate(raw){
+  if(!raw) return null;
+  if(raw === '0') return null;
+  if(raw.startsWith(TF_NULL_DATE_MARKER)) return null; // TaskFire's own placeholder for "no date"
+  const d = new Date(raw);
+  if(isNaN(d.getTime())) return null;
+  return d;
+}
 function parseTaskFireCSV(text){
   const rows = parseCSV(text);
   const header = rows[0].map(h=>h.trim());
   const idxType = header.indexOf('Task Type');
   const idxName = header.indexOf('Name');
   const idxNote = header.indexOf('Note');
+  const idxDue = header.indexOf('Due Date');
 
   const clientsList = db.lists.find(l=>l.id==='clients');
   const listingsList = db.lists.find(l=>l.id==='listings');
   const existingInClients = new Map(clientsList.clients.map(c=>[c.name.toLowerCase().trim(), c.id]));
   const existingInListings = new Map(listingsList.clients.map(c=>[c.name.toLowerCase().trim(), c.id]));
 
-  const clients = []; // {name, destListId, existingId, deals:[{name,todos}], directTodos:[{name}]}
+  const clients = []; // {name, destListId, existingId, deals:[{name,due,todos}], directTodos:[{name,due}]}
   const ambiguousBatches = []; // {projectNames, deals:[{name,todos}]}
   const taskRows = []; // {name}
   let currentClient = null;
@@ -6258,7 +6285,7 @@ function parseTaskFireCSV(text){
       projectsSincePin.push(name);
       currentDeal = null;
     } else if(type==='Checklist' || type==='Subtask'){
-      const deal = {name, todos:[]};
+      const deal = {name, due: tfCleanDate(row[idxDue]), todos:[]};
       currentDeal = deal;
       if(projectsSincePin.length <= 1){
         if(currentClient) currentClient.deals.push(deal);
@@ -6268,7 +6295,7 @@ function parseTaskFireCSV(text){
       }
       projectsSincePin = []; // reset either way — resolved or flagged, this round is done
     } else if(type==='Checklist item'){
-      const todo = {name};
+      const todo = {name, due: tfCleanDate(row[idxDue])};
       if(currentDeal) currentDeal.todos.push(todo);
       else if(currentClient) currentClient.directTodos.push(todo);
     }
@@ -6472,11 +6499,11 @@ async function runTaskFireImport(parsed, ownerUserId){
       await supaCreateClient(clientObj, destListId);
     }
     for(const d of c.deals){
-      const dealObj = {id:crypto.randomUUID(), name:d.name, complete:false, activeDeal:false, caExecuted:false, dueDate:null};
+      const dealObj = {id:crypto.randomUUID(), name:d.name, complete:false, activeDeal:false, caExecuted:false, dueDate:d.due||null};
       clientObj.deals.push(dealObj);
       await supaCreateDeal(dealObj, clientObj.id);
       for(const t of d.todos){
-        const todoObj = {id:crypto.randomUUID(), title:t.name, category:clientObj.name, dueDate:null, assignedTo:ownerUserId,
+        const todoObj = {id:crypto.randomUUID(), title:t.name, category:clientObj.name, dueDate:t.due||null, assignedTo:ownerUserId,
           createdBy:ownerUserId, type:'task', private:false, completed:false, isNew:false, notes:'',
           listId:destListId, clientId:clientObj.id, dealId:dealObj.id, entryId:null, attachments:[]};
         db.todos.push(todoObj);
@@ -6484,7 +6511,7 @@ async function runTaskFireImport(parsed, ownerUserId){
       }
     }
     for(const t of c.directTodos){
-      const todoObj = {id:crypto.randomUUID(), title:t.name, category:clientObj.name, dueDate:null, assignedTo:ownerUserId,
+      const todoObj = {id:crypto.randomUUID(), title:t.name, category:clientObj.name, dueDate:t.due||null, assignedTo:ownerUserId,
         createdBy:ownerUserId, type:'task', private:false, completed:false, isNew:false, notes:'',
         listId:destListId, clientId:clientObj.id, dealId:null, entryId:null, attachments:[]};
       db.todos.push(todoObj);
