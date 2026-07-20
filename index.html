@@ -653,7 +653,7 @@ function brokerLocalToRow(b){ return {id:b.id, name:b.name, company:b.company||n
 async function fetchBrokersFromSupabase(){
   const { data, error } = await supabaseClient.from('brokers').select('*');
   if(error){ console.error('fetchBrokersFromSupabase error:', error); return; }
-  if(data.length) PHOENIX_BROKER_LIST = data.map(brokerRowToLocal);
+  PHOENIX_BROKER_LIST = data.map(brokerRowToLocal); // always reflect the real database, even if that means empty
 }
 async function supaCreateBroker(b){
   const { error } = await supabaseClient.from('brokers').insert(brokerLocalToRow(b));
@@ -674,7 +674,7 @@ function rosterLocalToRow(r){ return {id:r.id, name:r.name, category_id:r.catego
 async function fetchTenantRosterFromSupabase(){
   const { data, error } = await supabaseClient.from('tenant_roster').select('*');
   if(error){ console.error('fetchTenantRosterFromSupabase error:', error); return; }
-  if(data.length){ TENANT_ROSTER.length=0; data.forEach(r=>TENANT_ROSTER.push(rosterRowToLocal(r))); }
+  TENANT_ROSTER.length=0; data.forEach(r=>TENANT_ROSTER.push(rosterRowToLocal(r))); // always reflect the real database, even if that means empty
 }
 async function supaCreateRosterEntry(r){
   const { error } = await supabaseClient.from('tenant_roster').insert(rosterLocalToRow(r));
