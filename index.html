@@ -1935,9 +1935,9 @@ function smartListTodosRaw(key){
     case 'week': return t.filter(td=>!td.completed && inMySphere(td) && ['today','overdue','week'].includes(dueStatus(td.dueDate)));
     case 'month': return t.filter(td=>!td.completed && inMySphere(td) && ['today','overdue','week','month'].includes(dueStatus(td.dueDate)));
     case 'allMe': return t.filter(td=>!td.completed && inMySphere(td) && !!td.dueDate);
-    case 'someday': return t.filter(td=>!td.completed && !td.dueDate);
-    case 'completed': return t.filter(td=>td.completed);
-    case 'archived': return db.archivedTodos.slice();
+    case 'someday': return t.filter(td=>!td.completed && !td.dueDate && inMySphere(td));
+    case 'completed': return t.filter(td=>td.completed && inMySphere(td));
+    case 'archived': return db.archivedTodos.filter(td=>inMySphere(td));
     case 'everything': return t.filter(td=>!td.completed && inMySphere(td));
     case 'activeDeals': {
       // No longer in the sidebar, kept only in case anything still references it internally.
@@ -2327,10 +2327,11 @@ function openEmailDraft(toUser, subject, body){
   } else {
     url = `mailto:${toUser.email}?subject=${enc(subject)}&body=${enc(body)}`;
   }
-  const a = document.createElement('a');
-  a.href = url;
-  if(client==='outlookWeb' || client==='gmail') a.target='_blank';
-  document.body.appendChild(a); a.click(); a.remove();
+  // window.location works far more reliably than the old "invisible link click" trick,
+  // especially on mobile Safari, where synthetic clicks on mailto: links are often
+  // silently swallowed. Web-based clients still need a real new tab.
+  if(client==='outlookWeb' || client==='gmail') window.open(url, '_blank');
+  else window.location.href = url;
 }
 function openBlankEmailDraft(){
   const client = (state.currentUser && state.currentUser.emailClient) || 'other';
@@ -2342,10 +2343,8 @@ function openBlankEmailDraft(){
   } else {
     url = `mailto:`;
   }
-  const a = document.createElement('a');
-  a.href = url;
-  if(client==='outlookWeb' || client==='gmail') a.target='_blank';
-  document.body.appendChild(a); a.click(); a.remove();
+  if(client==='outlookWeb' || client==='gmail') window.open(url, '_blank');
+  else window.location.href = url;
 }
 
 function passwordIsStrong(pw){
@@ -3550,8 +3549,8 @@ function renderAdminMenu(){
     <div class="admin-item" data-action="adminPending">🆕 Pending User Requests ${pendingUsers.length? `<span class="nav-count urgent" style="margin-left:auto;">${pendingUsers.length}</span>`:''}</div>
     <div class="admin-item" data-action="adminPendingDeletions">🗑️ Pending Deletions ${db.deletionRequests.length? `<span class="nav-count urgent" style="margin-left:auto;">${db.deletionRequests.length}</span>`:''}</div>
     <div class="admin-item" data-action="adminFullTeam">👥 Full Team To-Do's (unfiltered)</div>
-    <div class="admin-item" data-action="adminImportTodos">⬆️ Import To-Do's (CSV)</div>
-    <div class="admin-item" data-action="adminImportTaskFire">⬆️ Import from TaskFire</div>
+    ${!state.isMobile ? `<div class="admin-item" data-action="adminImportTodos">⬆️ Import To-Do's (CSV)</div>` : ''}
+    ${!state.isMobile ? `<div class="admin-item" data-action="adminImportTaskFire">⬆️ Import from TaskFire</div>` : ''}
     <div class="admin-item" data-action="adminDigest">📨 Compose Weekly Digest</div>
     <div class="admin-item" data-action="adminUsers">👥 Manage Users</div>
     <div class="admin-item" data-action="adminTimes">⏱️ Email Send Times</div>
@@ -6030,7 +6029,7 @@ function renderContactsMain(){
     <div style="font-size:12.5px;color:var(--ink-soft);white-space:nowrap;">${filtered.length} of ${db.contacts.length} contacts</div>
     <div style="display:flex;gap:8px;">
       <button class="btn sm" id="newContactBtn">+ New Contact</button>
-      <label class="btn secondary sm" style="display:inline-block;">Import CSV<input type="file" id="csvImportInput" accept=".csv" style="display:none;"></label>
+      ${!state.isMobile ? `<label class="btn secondary sm" style="display:inline-block;">Import CSV<input type="file" id="csvImportInput" accept=".csv" style="display:none;"></label>` : ''}
       <button class="btn sm" id="exportVcardBtn" ${state.selectedContactIds.length? '' : 'disabled'}>Export vCard (${state.selectedContactIds.length})</button>
       <button class="btn danger sm" id="deleteContactsBtn" ${state.selectedContactIds.length? '' : 'disabled'}>🗑️ Delete (${state.selectedContactIds.length})</button>
     </div>
