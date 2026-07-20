@@ -1895,6 +1895,7 @@ const SMART_LIST_DEFAULTS = [
   {id:'completed', name:'Completed', icon:'✅'},
   {id:'archived', name:'Archived', icon:'🗄️'},
   {id:'everything', name:'Everything', icon:'📚'},
+  {id:'activeDeals', name:'Active Deals', icon:'⭐'},
   {id:'caStatus', name:'CA Status', icon:'📄'},
 ];
 // Single mutable, ordered list of every smart list (defaults + user-created). Reordering,
@@ -1940,7 +1941,7 @@ function smartListTodosRaw(key){
     case 'archived': return db.archivedTodos.filter(td=>inMySphere(td));
     case 'everything': return t.filter(td=>!td.completed && inMySphere(td));
     case 'activeDeals': {
-      // No longer in the sidebar, kept only in case anything still references it internally.
+      // Back in the sidebar for now, pending a decision after checking with Nick.
       const activeDealIds = new Set();
       db.lists.filter(l=>l.type==='deep').forEach(l=>l.clients.forEach(c=>c.deals.forEach(d=>{ if(d.activeDeal && !d.complete) activeDealIds.add(d.id); })));
       return t.filter(td=>td.dealId && activeDealIds.has(td.dealId) && !td.completed);
@@ -6959,7 +6960,18 @@ function loadAppState(){
     // it could overwrite fresh data with a stale snapshot from before this app had
     // a real backend. Only things Supabase doesn't manage yet stay local.
     if(saved.pendingUsers) pendingUsers = saved.pendingUsers;
-    if(saved.smartLists) smartListsArr = saved.smartLists;
+    if(saved.smartLists){
+      // Reconcile the cached list against the CURRENT code defaults, rather than
+      // trusting the cache blindly — otherwise a default that's since been removed
+      // from the code (like this one) keeps reappearing forever from old browser
+      // storage, and a newly-added default never shows up until the cache clears.
+      // Custom, user-created smart lists are left alone either way.
+      const defaultIds = new Set(SMART_LIST_DEFAULTS.map(d=>d.id));
+      const prunedCached = saved.smartLists.filter(s=>!s.isDefault || defaultIds.has(s.id));
+      const cachedIds = new Set(prunedCached.map(s=>s.id));
+      const missingDefaults = SMART_LIST_DEFAULTS.filter(d=>!cachedIds.has(d.id)).map(s=>({...s, isDefault:true}));
+      smartListsArr = [...prunedCached, ...missingDefaults];
+    }
     if(saved.adminDefaultSchedule) adminDefaultSchedule = saved.adminDefaultSchedule;
     appStateWasLoaded = true;
   } catch(e){ /* corrupted/old save shape — just fall back to the seed data */ }
