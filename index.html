@@ -590,7 +590,7 @@ async function fetchDirectoryAdditions(){
   // lives here instead — read publicly, before anyone's even logged in, so the
   // login screen can show a tile for them from any device, immediately.
   const { data, error } = await supabaseClient.from('admitted_users').select('*');
-  if(error){ console.error('fetchDirectoryAdditions error:', error); return false; }
+  if(error){ console.error('fetchDirectoryAdditions error:', error.message || JSON.stringify(error)); return false; }
   let addedAny = false;
   data.forEach(r=>{
     if(!USERS.find(u=>u.email.toLowerCase()===r.email.toLowerCase())){
@@ -3837,9 +3837,9 @@ function attachShellHandlers(){
     alert("Real Outlook Calendar sync needs a Microsoft-registered app (one-time setup by whoever admins your Microsoft 365) plus your portal's real, final web address — that can't be wired up from a plain preview URL. Once you're on a stable Netlify domain, this is genuinely buildable with no backend server required. For now nothing is synced yet.");
   });
   const addClientBtn=document.querySelector('[data-action="addClient"]'); if(addClientBtn) addClientBtn.onclick=()=>{
-    const name = prompt('Name this client:');
-    if(!name) return;
     const l = db.lists.find(x=>x.id===addClientBtn.dataset.listid);
+    const name = prompt(`Name this ${l.id==='listings'?'listing':'client'}:`);
+    if(!name) return;
     const newClient = {id:crypto.randomUUID(), name, primary:null, secondary:[], deals:[], createdBy:state.currentUser.id, authorizedUserIds:[]};
     if(l.id==='listings'){ newClient.prospects=[]; newClient.categoryConfig=newLSRCategoryConfig(); }
     l.clients.push(newClient);
