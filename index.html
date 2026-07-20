@@ -494,6 +494,7 @@ let state = {
   loginError:null,
   authChecking:true,           // true while checking for an existing Supabase session on boot
   showRegisterForm:false,
+  showSendRequestReminder:null,
   pendingLoginUser:null,
   showEmailClientPicker:false,
   currentUser:null,
@@ -2090,7 +2091,13 @@ function renderLogin(){
       </button>
       <div class="login-hint">First sign-in requires creating your account. New teammates need an admin to admit them first.</div>
       <div style="text-align:center;font-size:9.5px;color:var(--ink-soft);margin-top:6px;">Build: supabase-auth-phase1</div>
-      ${state.showRegisterForm ? `
+      ${state.showSendRequestReminder ? `
+        <div class="login-register-panel" style="background:#FBEBD8;border-color:#F0CFA0;">
+          <div style="font-weight:700;color:#8A5A0C;margin-bottom:6px;">One more step, ${escapeHtml(state.showSendRequestReminder.name.split(' ')[0])}!</div>
+          <div style="font-size:13px;color:#8A5A0C;line-height:1.5;">Your email app should have just opened a draft addressed to the admins. <b>Please hit Send on that draft</b> — that's what actually lets them know you're waiting. Nothing gets sent automatically.</div>
+          <button class="btn sm" id="dismissSendReminderBtn" style="width:100%;margin-top:10px;">Got it</button>
+        </div>
+      ` : state.showRegisterForm ? `
         <div class="login-register-panel">
           <div class="field"><label>Full Name</label><input id="regName" placeholder="e.g., Jordan Reyes"></div>
           <div class="field"><label>Email</label><input id="regEmail" placeholder="jreyes@edge-re.com"></div>
@@ -2470,17 +2477,20 @@ function attachLoginHandlers(){
     const request = {id:'pending'+uid(), name, email, requestedAt:new Date()};
     pendingUsers.push(request);
     state.showRegisterForm = false;
+    state.showSendRequestReminder = {name}; // persistent on-screen reminder, not just a toast
     // Notify every admin — no one is logged in yet at this point, so this always
-    // goes out as a plain mailto: rather than through a chosen email client.
+    // goes out as a plain mailto: rather than through a chosen email client. This
+    // opens in the REQUESTER's own email app, not the admin's — so the wording
+    // and the on-screen reminder both need to make it obvious they must hit Send.
     const admins = USERS.filter(x=>x.role==='Admin');
     const toList = admins.map(a=>a.email).join(',');
-    const subject = 'New User Requesting Access to Southwest Edge Portal';
+    const subject = `ACTION NEEDED: ${name} Has Requested Access to Southwest Edge Portal`;
     const body = `${name} (${email}) has requested access to the Southwest Edge Portal.\n\nLog in and open Admin > Pending User Requests to admit or deny this request.\n\n— Southwest Edge Portal`;
-    const a = document.createElement('a');
-    a.href = `mailto:${toList}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-    document.body.appendChild(a); a.click(); a.remove();
-    flashToast(`Request sent to admins for approval. ${name} can sign in once admitted.`);
+    window.location.href = `mailto:${toList}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
     render();
+  };
+  const dismissReminder = document.getElementById('dismissSendReminderBtn'); if(dismissReminder) dismissReminder.onclick=()=>{
+    state.showSendRequestReminder = null; render();
   };
 }
 
