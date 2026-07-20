@@ -571,6 +571,38 @@ const USERS = [
   {id:'aruiz', name:'Anthony Ruiz', email:'aruiz@edge-re.com', role:'User', initials:'AR', emailClient:null, notifPref:null},
 ];
 let pendingUsers = []; // {id, name, email, requestedAt} — awaiting admin approval before they can sign in
+async function fetchPendingUsersFromSupabase(){
+  const { data, error } = await supabaseClient.from('pending_users').select('*');
+  if(error){ console.error('fetchPendingUsersFromSupabase error:', error); return; }
+  pendingUsers = data.map(r=>({id:r.id, name:r.name, email:r.email, requestedAt:new Date(r.requested_at)}));
+}
+async function supaCreatePendingUser(request){
+  const { error } = await supabaseClient.from('pending_users').insert({id:request.id, name:request.name, email:request.email});
+  if(error) console.error('supaCreatePendingUser error:', error); // registrant has no way to see a toast here — logged for later diagnosis only
+}
+async function supaDeletePendingUser(id){
+  const { error } = await supabaseClient.from('pending_users').delete().eq('id', id);
+  if(error){ console.error('supaDeletePendingUser error:', error); flashToast('Removed here, but syncing to the server failed. (' + error.message + ')'); render(); }
+}
+async function fetchDirectoryAdditions(){
+  // Anyone admitted through the app (not baked into the original USERS array)
+  // lives here instead — read publicly, before anyone's even logged in, so the
+  // login screen can show a tile for them from any device, immediately.
+  const { data, error } = await supabaseClient.from('admitted_users').select('*');
+  if(error){ console.error('fetchDirectoryAdditions error:', error); return false; }
+  let addedAny = false;
+  data.forEach(r=>{
+    if(!USERS.find(u=>u.email.toLowerCase()===r.email.toLowerCase())){
+      USERS.push({id:'admitted_'+r.id, name:r.name, email:r.email, role:r.role||'User', initials:r.initials, emailClient:null, notifPref:null});
+      addedAny = true;
+    }
+  });
+  return addedAny;
+}
+async function supaCreateAdmittedUser(name, email, role, initials){
+  const { error } = await supabaseClient.from('admitted_users').insert({name, email, role, initials});
+  if(error){ console.error('supaCreateAdmittedUser error:', error); flashToast('Admitted here, but syncing to the server failed — they may not be able to sign in from another device yet. (' + error.message + ')'); render(); }
+}
 
 /* ---------------- SUPABASE (real backend — Phase 1: authentication) ----------------
    This is the first real-backend phase. Login now goes through actual Supabase
@@ -720,7 +752,7 @@ function clientLocalToRow(c, listId){
 }
 function dealRowToLocal(r){
   return {id:r.id, name:r.name, complete:r.complete, activeDeal:r.active_deal, caExecuted:r.ca_executed,
-          dueDate: r.due_date? new Date(r.due_date+'T00:00:00'):null,
+          dueDate: r.due_date? new Date(r.due_date+'T00:00:00'):null, contactId:r.contact_id||null,
           dealType:r.deal_type, building:r.building||'', spaceNum:r.space_num||'', size:r.size||'',
           rent:r.rent||'', price:r.price||'', term:r.term||'', tiAllowance:r.ti_allowance||'',
           totalFee:r.total_fee||'', splits:r.splits||[], commissionStructure:r.commission_structure||'',
@@ -728,7 +760,7 @@ function dealRowToLocal(r){
 }
 function dealLocalToRow(d, clientId){
   return {id:d.id, client_id:clientId, name:d.name, complete:!!d.complete, active_deal:!!d.activeDeal,
-          ca_executed:!!d.caExecuted, due_date: d.dueDate? d.dueDate.toISOString().slice(0,10) : null,
+          ca_executed:!!d.caExecuted, due_date: d.dueDate? d.dueDate.toISOString().slice(0,10) : null, contact_id:d.contactId||null,
           deal_type: d.dealType||null, building:d.building||null, space_num:d.spaceNum||null, size:d.size||null,
           rent:d.rent||null, price:d.price||null, term:d.term||null, ti_allowance:d.tiAllowance||null,
           total_fee:d.totalFee||null, splits:d.splits||[], commission_structure:d.commissionStructure||null,
@@ -1020,6 +1052,7 @@ async function fetchAllAppDataFromSupabase(){
   await fetchTodosFromSupabase();
   await fetchQuickLinksFromSupabase();
   await fetchDeletionRequestsFromSupabase();
+  await fetchPendingUsersFromSupabase();
 }
 const DEFAULT_QUICK_LINKS = [
   {name:'Ascendix (Salesforce)', url:'https://edge-re.my.salesforce.com/?ec=302&startURL=%2Fvisualforce%2Fsession%3Furl%3Dhttps%253A%252F%252Fedge-re.lightning.force.com%252Flightning%252Fpage%252Fhome'},
@@ -2474,8 +2507,9 @@ function attachLoginHandlers(){
     const name = document.getElementById('regName').value.trim();
     const email = document.getElementById('regEmail').value.trim();
     if(!name || !email){ flashToast('Name and email are both required.'); render(); return; }
-    const request = {id:'pending'+uid(), name, email, requestedAt:new Date()};
+    const request = {id:crypto.randomUUID(), name, email, requestedAt:new Date()};
     pendingUsers.push(request);
+    supaCreatePendingUser(request);
     state.showRegisterForm = false;
     state.showSendRequestReminder = {name}; // persistent on-screen reminder, not just a toast
     // Notify every admin — no one is logged in yet at this point, so this always
@@ -3876,14 +3910,17 @@ function renderPendingUsersModal(){
   overlay.querySelectorAll('[data-admit]').forEach(b=>b.onclick=()=>{
     const p = pendingUsers.find(x=>x.id===b.dataset.admit);
     const initials = p.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
-    USERS.push({id:'user'+uid(), name:p.name, email:p.email, role:'User', initials, passwordSet:false, password:null, emailClient:null, notifPref:null});
+    USERS.push({id:'admitted_pending'+uid(), name:p.name, email:p.email, role:'User', initials, passwordSet:false, password:null, emailClient:null, notifPref:null});
+    supaCreateAdmittedUser(p.name, p.email, 'User', initials);
     pendingUsers = pendingUsers.filter(x=>x.id!==p.id);
+    supaDeletePendingUser(p.id);
     flashToast(`${p.name} admitted — they can now sign in and set a password.`);
     render();
   });
   overlay.querySelectorAll('[data-deny]').forEach(b=>b.onclick=()=>{
     const p = pendingUsers.find(x=>x.id===b.dataset.deny);
     pendingUsers = pendingUsers.filter(x=>x.id!==p.id);
+    supaDeletePendingUser(p.id);
     flashToast(`Request from ${p.name} denied.`);
     render();
   });
@@ -4910,7 +4947,8 @@ function renderDealModalBody(l,c,d){
   </div>
   <div class="contact-card">
     <div class="label">Site / Deal Contact</div>
-    ${contactRow(c.primary)}
+    ${contactRow(d.contactId)}
+    <button class="btn secondary sm" style="margin-top:10px;" data-action="pickDealContact" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">${d.contactId? 'Change contact':'Attach contact'}</button>
   </div>
   <div class="section-label">Deal Terms</div>
   <div class="type-toggle" id="dealTypeToggle">
@@ -5652,6 +5690,9 @@ function attachModalHandlers(root){
   });
   const pick = root.querySelector('[data-action="pickContact"]'); if(pick) pick.onclick=()=>{
     openContactPicker({clientId: pick.dataset.client, slot: pick.dataset.slot}); render();
+  };
+  const pickDeal = root.querySelector('[data-action="pickDealContact"]'); if(pickDeal) pickDeal.onclick=()=>{
+    openContactPicker({listId: pickDeal.dataset.listid, clientId: pickDeal.dataset.client, dealId: pickDeal.dataset.deal}); render();
   };
   const addAuthBtn = root.querySelector('[data-action="addAuthUser"]'); if(addAuthBtn) addAuthBtn.onclick=()=>{
     const sel = document.getElementById('addAuthUserSelect');
@@ -7211,7 +7252,6 @@ function dateAwareReviver(key, value){
 function saveAppState(){
   try{
     const snapshot = {
-      pendingUsers,
       smartLists: smartListsArr,
       adminDefaultSchedule,
     };
@@ -7229,7 +7269,6 @@ function loadAppState(){
     // (Phase 2+). Restoring them from this old local cache was actively harmful:
     // it could overwrite fresh data with a stale snapshot from before this app had
     // a real backend. Only things Supabase doesn't manage yet stay local.
-    if(saved.pendingUsers) pendingUsers = saved.pendingUsers;
     if(saved.smartLists){
       // Reconcile the cached list against the CURRENT code defaults, rather than
       // trusting the cache blindly — otherwise a default that's since been removed
@@ -7256,6 +7295,10 @@ render();
 // still shows instantly rather than a blank screen while this resolves.
 (async ()=>{
   try{
+    // Directory additions must land BEFORE the session check below — otherwise
+    // someone admitted since this code was last deployed, opening the app on a
+    // device that's never seen them, would fail to match against USERS here.
+    if(await fetchDirectoryAdditions()) render();
     const { data: { session } } = await supabaseClient.auth.getSession();
     if(session && session.user){
       const profile = await fetchMyProfile(session.user.id);
