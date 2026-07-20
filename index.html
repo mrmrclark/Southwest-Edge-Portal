@@ -6331,8 +6331,8 @@ function renderTaskFireImportModal(){
         </div>
       </div>
       ${skippedItems.length ? `<div class="warn" style="background:#EFEAE3;color:#5A5142;border-radius:8px;padding:10px 14px;font-size:12.5px;margin-bottom:14px;">
-        <b>${skippedItems.length} item${skippedItems.length===1?'':'s'} marked Skip — not imported as a Client or Listing:</b> ${skippedItems.map(c=>escapeHtml(c.name)).join(', ')}<br>
-        ${skippedDealCount || skippedTodoCount ? `This also excludes ${skippedDealCount} deal${skippedDealCount===1?'':'s'} and ${skippedTodoCount} to-do${skippedTodoCount===1?'':'s'} that were nested under them — add anything worth keeping by hand afterward.` : ''}
+        <b>${skippedItems.length} item${skippedItems.length===1?'':'s'} marked "To-Do only" — not a Client or Listing, imported as plain standalone To-Do's instead:</b> ${skippedItems.map(c=>escapeHtml(c.name)).join(', ')}<br>
+        ${skippedDealCount || skippedTodoCount ? `Their ${skippedDealCount} nested deal${skippedDealCount===1?'':'s'} become their own To-Do's too (with any items under them folded into notes).` : ''}
       </div>` : ''}
       ${ambiguousDealCount ? `<div class="warn" style="background:#FBEBD8;color:#8A5A0C;border-radius:8px;padding:10px 14px;font-size:12.5px;margin-bottom:14px;">
         <b>${ambiguousDealCount} deal${ambiguousDealCount===1?'':'s'} skipped — can't tell which one they belong to:</b><br>
@@ -6341,7 +6341,7 @@ function renderTaskFireImportModal(){
       </div>` : ''}
       ${m.parsed.taskRows.length ? `<div class="tiny" style="color:var(--ink-soft);margin-bottom:14px;">${m.parsed.taskRows.length} standalone item(s) found that don't tie to anything (often personal odds-and-ends) — not imported anywhere.</div>` : ''}
 
-      <div class="section-label">Client, Listing, or Skip? — ${listingCount} Listing, ${skippedItems.length} Skip</div>
+      <div class="section-label">Client, Listing, or To-Do only? — ${listingCount} Listing, ${skippedItems.length} To-Do only</div>
       <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
         <button class="btn secondary sm" data-action="markAllClient">Mark all Client</button>
         <button class="btn secondary sm" data-action="markAllListing">Mark all Listing</button>
@@ -6393,14 +6393,26 @@ function renderTaskFireImportModal(){
         <div class="type-toggle" style="transform:scale(0.85);flex-shrink:0;">
           <button class="${c.destListId==='clients'?'active':''}" data-tfitemtype="${idx}:clients">Client</button>
           <button class="${c.destListId==='listings'?'active':''}" data-tfitemtype="${idx}:listings">Listing</button>
-          <button class="${skipped?'active':''}" data-tfitemtype="${idx}:skip" title="Not a real Client or Listing — a category/grouping like a state name, or just noise">Skip</button>
+          <button class="${skipped?'active':''}" data-tfitemtype="${idx}:skip" title="Not a real Client or Listing (e.g. a state/category name) — import as a plain standalone To-Do instead">To-Do only</button>
         </div>
       </div>`;
     }).join('') || `<div class="tiny" style="padding:12px;color:var(--ink-soft);">No matches.</div>`;
     listEl.querySelectorAll('[data-tfitemtype]').forEach(btn=>btn.onclick=()=>{
       const [idx, type] = btn.dataset.tfitemtype.split(':');
       m.parsed.clients[parseInt(idx)].destListId = type;
+      const listScroll = listEl.scrollTop;
+      const modalBody = overlay.querySelector('.modal-body');
+      const bodyScroll = modalBody ? modalBody.scrollTop : 0;
+      const searchVal = document.getElementById('tfItemSearch') ? document.getElementById('tfItemSearch').value : '';
       render();
+      requestAnimationFrame(()=>{
+        const newModalBody = document.querySelector('.modal-overlay .modal-body');
+        if(newModalBody) newModalBody.scrollTop = bodyScroll;
+        const newListEl = document.getElementById('tfItemList');
+        if(newListEl) newListEl.scrollTop = listScroll;
+        const newSearch = document.getElementById('tfItemSearch');
+        if(newSearch && searchVal) newSearch.value = searchVal;
+      });
     });
   }
   if(m.step==='review'){
@@ -6425,8 +6437,28 @@ function renderTaskFireImportModal(){
   };
 }
 async function runTaskFireImport(parsed, ownerUserId){
+  async function makeFloatingTodo(title, category, notes){
+    const todoObj = {id:crypto.randomUUID(), title, category, dueDate:null, assignedTo:ownerUserId,
+      createdBy:ownerUserId, type:'task', private:false, completed:false, isNew:false, notes:notes||'',
+      listId:null, clientId:null, dealId:null, entryId:null, attachments:[]};
+    db.todos.push(todoObj);
+    await supaCreateTodo(todoObj);
+  }
   for(const c of parsed.clients){
-    if(c.destListId==='skip') continue; // not a real Client or Listing — nothing about it gets created
+    if(c.destListId==='skip'){
+      // Not a real Client/Listing (e.g. "Alabama" — a category, not a company) — still
+      // wanted, just as a plain standalone To-Do rather than forcing a Client record
+      // that doesn't really represent anything. Same for whatever was nested under it.
+      await makeFloatingTodo(c.name, 'From TaskFire');
+      for(const d of c.deals){
+        const noteText = d.todos.map(t=>t.name).join('; ');
+        await makeFloatingTodo(d.name, c.name, noteText);
+      }
+      for(const t of c.directTodos){
+        await makeFloatingTodo(t.name, c.name);
+      }
+      continue;
+    }
     const destListId = c.destListId || 'clients';
     const targetList = db.lists.find(l=>l.id===destListId);
     const existingId = tfExistingId(c);
