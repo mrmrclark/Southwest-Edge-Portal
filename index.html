@@ -186,7 +186,7 @@
   }
   .sidebar-user{font-weight:600;font-size:14px;}
   .sidebar-sub{font-size:11px;color:var(--ink-soft);}
-  .sidebar-topicons{margin-left:auto;display:flex;gap:6px;}
+  .sidebar-topicons{margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;}
   .icon-btn{
     width:30px;height:30px;border-radius:8px;border:none;background:transparent;display:flex;align-items:center;
     justify-content:center;font-size:15px;color:var(--ink-soft);
@@ -2493,6 +2493,7 @@ function renderSidebar(){
         ${state.showUserMenu ? `
         <div class="admin-menu" style="top:100%;left:0;margin-top:6px;min-width:160px;">
           <button class="admin-item" data-action="openMyNotes" style="width:100%;border:none;background:none;text-align:left;">📝 My Notes</button>
+          <button class="admin-item" data-action="openNotifSettingsFromMenu" style="width:100%;border:none;background:none;text-align:left;">⚙️ Notification Settings</button>
           <button class="admin-item" data-action="logout" style="width:100%;border:none;background:none;text-align:left;">⏻ Sign out</button>
         </div>` : ''}
       </div>
@@ -2501,7 +2502,6 @@ function renderSidebar(){
         <button class="icon-btn" data-action="openBlankEmail" title="New Email">✉️</button>
         ${!state.isMobile ? `<button class="icon-btn" data-action="openCalendarView" title="Calendar View">📅</button>` : ''}
         ${cu.role==='Admin' ? `<button class="icon-btn" data-action="toggleAdmin" title="Admin menu">☰</button>` : ''}
-        <button class="icon-btn" data-action="openNotifSettings" title="Notification settings">⚙️</button>
       </div>
     </div>
     <div class="nav-section-label">Smart Lists <button class="nav-add" data-action="addSmartList">+</button></div>
@@ -3662,6 +3662,7 @@ function attachShellHandlers(){
   };
   const refreshBtn=document.querySelector('[data-action="refreshApp"]'); if(refreshBtn) refreshBtn.onclick=()=>{ doAppRefresh(); };
   const myNotesBtn=document.querySelector('[data-action="openMyNotes"]'); if(myNotesBtn) myNotesBtn.onclick=()=>{ state.myNotesOpen=true; state.showUserMenu=false; render(); };
+  const notifFromMenuBtn=document.querySelector('[data-action="openNotifSettingsFromMenu"]'); if(notifFromMenuBtn) notifFromMenuBtn.onclick=()=>{ state.notifSettingsOpen=true; state.showUserMenu=false; render(); };
   const newEmailBtn=document.querySelector('[data-action="openBlankEmail"]'); if(newEmailBtn) newEmailBtn.onclick=()=>{
     openBlankEmailDraft();
     flashToast('Opening a new email draft…');
@@ -6216,9 +6217,11 @@ function parseTaskFireCSV(text){
   const idxNote = header.indexOf('Note');
 
   const clientsList = db.lists.find(l=>l.id==='clients');
-  const existingNames = new Map(clientsList.clients.map(c=>[c.name.toLowerCase().trim(), c.id]));
+  const listingsList = db.lists.find(l=>l.id==='listings');
+  const existingInClients = new Map(clientsList.clients.map(c=>[c.name.toLowerCase().trim(), c.id]));
+  const existingInListings = new Map(listingsList.clients.map(c=>[c.name.toLowerCase().trim(), c.id]));
 
-  const clients = []; // {name, existingClientId, deals:[{name,todos}], directTodos:[{name}]}
+  const clients = []; // {name, destListId, existingId, deals:[{name,todos}], directTodos:[{name}]}
   const ambiguousBatches = []; // {projectNames, deals:[{name,todos}]}
   const taskRows = []; // {name}
   let currentClient = null;
@@ -6241,7 +6244,16 @@ function parseTaskFireCSV(text){
 
     if(type==='Project'){
       closeAmbiguousBatch();
-      currentClient = {name, existingClientId: existingNames.get(name.toLowerCase().trim())||null, deals:[], directTodos:[]};
+      const key = name.toLowerCase().trim();
+      const existingClientMatch = existingInClients.get(key) || null;
+      const existingListingMatch = existingInListings.get(key) || null;
+      // Default every item to Client — if it happens to already exist as a
+      // Listing instead, default to that so the smart guess matches what's
+      // already there. Either way, it's just a starting point the Admin can
+      // flip per-item before confirming, and the merge-target updates
+      // automatically to match whichever type is selected.
+      const destListId = (!existingClientMatch && existingListingMatch) ? 'listings' : 'clients';
+      currentClient = {name, destListId, existingClientMatch, existingListingMatch, deals:[], directTodos:[]};
       clients.push(currentClient);
       projectsSincePin.push(name);
       currentDeal = null;
@@ -6265,6 +6277,7 @@ function parseTaskFireCSV(text){
   return {clients, ambiguousBatches, taskRows};
 }
 
+function tfExistingId(c){ return c.destListId==='listings' ? c.existingListingMatch : c.existingClientMatch; }
 function renderTaskFireImportModal(){
   const m = state.taskfireImport;
   const overlay = document.createElement('div');
@@ -6274,15 +6287,16 @@ function renderTaskFireImportModal(){
     body = `
       <p style="font-size:13px;line-height:1.5;color:var(--ink-soft);margin-top:0;">
         Export a full-account CSV from TaskFire (Settings → Backup & Import → Generate Backup) and drop it here.
-        Clients import directly; Deals only import where the file clearly shows which Client they belong to —
-        anything ambiguous gets flagged for you to review rather than guessed at.
+        Everything defaults to Client — on the next screen you can flip individual ones to Listing before anything imports.
+        Deals only import where the file clearly shows which one they belong to — anything ambiguous gets flagged for you to review rather than guessed at.
       </p>
       <input type="file" id="taskfireFile" accept=".csv">
     `;
   } else if(m.step==='review'){
     const p = m.parsed;
-    const newClients = p.clients.filter(c=>!c.existingClientId);
-    const mergeClients = p.clients.filter(c=>c.existingClientId);
+    const newCount = p.clients.filter(c=>!tfExistingId(c)).length;
+    const mergeCount = p.clients.filter(c=>tfExistingId(c)).length;
+    const listingCount = p.clients.filter(c=>c.destListId==='listings').length;
     const totalDeals = p.clients.reduce((s,c)=>s+c.deals.length,0);
     const totalTodos = p.clients.reduce((s,c)=>s+c.deals.reduce((s2,d)=>s2+d.todos.length,0)+c.directTodos.length,0);
     const ambiguousDealCount = p.ambiguousBatches.reduce((s,b)=>s+b.deals.length,0);
@@ -6296,16 +6310,16 @@ function renderTaskFireImportModal(){
       </div>
       <div class="stats" style="display:flex;gap:14px;margin:14px 0;">
         <div class="stat" style="flex:1;background:var(--canvas);border:1px solid var(--line);border-radius:10px;padding:12px;text-align:center;">
-          <div style="font-size:22px;font-weight:700;color:var(--edge);">${newClients.length}</div>
-          <div style="font-size:11px;color:var(--ink-soft);">New Clients</div>
+          <div style="font-size:22px;font-weight:700;color:var(--edge);">${newCount}</div>
+          <div style="font-size:11px;color:var(--ink-soft);">New</div>
         </div>
         <div class="stat" style="flex:1;background:var(--canvas);border:1px solid var(--line);border-radius:10px;padding:12px;text-align:center;">
-          <div style="font-size:22px;font-weight:700;color:var(--edge);">${mergeClients.length}</div>
+          <div style="font-size:22px;font-weight:700;color:var(--edge);">${mergeCount}</div>
           <div style="font-size:11px;color:var(--ink-soft);">Merge into Existing</div>
         </div>
         <div class="stat" style="flex:1;background:var(--canvas);border:1px solid var(--line);border-radius:10px;padding:12px;text-align:center;">
           <div style="font-size:22px;font-weight:700;color:var(--edge);">${totalDeals}</div>
-          <div style="font-size:11px;color:var(--ink-soft);">Deals (clearly attached)</div>
+          <div style="font-size:11px;color:var(--ink-soft);">Deals</div>
         </div>
         <div class="stat" style="flex:1;background:var(--canvas);border:1px solid var(--line);border-radius:10px;padding:12px;text-align:center;">
           <div style="font-size:22px;font-weight:700;color:var(--edge);">${totalTodos}</div>
@@ -6313,12 +6327,20 @@ function renderTaskFireImportModal(){
         </div>
       </div>
       ${ambiguousDealCount ? `<div class="warn" style="background:#FBEBD8;color:#8A5A0C;border-radius:8px;padding:10px 14px;font-size:12.5px;margin-bottom:14px;">
-        <b>${ambiguousDealCount} deal${ambiguousDealCount===1?'':'s'} skipped — can't tell which Client they belong to:</b><br>
+        <b>${ambiguousDealCount} deal${ambiguousDealCount===1?'':'s'} skipped — can't tell which one they belong to:</b><br>
         ${m.parsed.ambiguousBatches.map(b=>`• "${escapeHtml(b.deals.map(d=>d.name).join('", "'))}" — could belong to any of: ${b.projectNames.map(escapeHtml).join(', ')}`).join('<br>')}<br>
         These need to be added by hand afterward — nothing about them is imported.
       </div>` : ''}
-      ${m.parsed.taskRows.length ? `<div class="tiny" style="color:var(--ink-soft);margin-bottom:14px;">${m.parsed.taskRows.length} standalone item(s) found that don't tie to any Client (often personal odds-and-ends) — shown below for awareness, but not imported anywhere. ${USERS.find(u=>u.id===m.ownerUserId)?USERS.find(u=>u.id===m.ownerUserId).name.split(' ')[0]:'The account owner'} can add anything worth keeping to their own My Notes directly.<br>${m.parsed.taskRows.map(t=>`• ${escapeHtml(t.name)}`).join('<br>')}</div>` : ''}
-      <p class="tiny" style="color:var(--ink-soft);">This can take a minute for a large account — don't close the window while it's running.</p>
+      ${m.parsed.taskRows.length ? `<div class="tiny" style="color:var(--ink-soft);margin-bottom:14px;">${m.parsed.taskRows.length} standalone item(s) found that don't tie to anything (often personal odds-and-ends) — not imported anywhere.</div>` : ''}
+
+      <div class="section-label">Client or Listing? — ${listingCount} currently marked Listing</div>
+      <div style="display:flex;gap:8px;margin-bottom:8px;">
+        <button class="btn secondary sm" data-action="markAllClient">Mark all Client</button>
+        <button class="btn secondary sm" data-action="markAllListing">Mark all Listing</button>
+        <input class="searchbox" id="tfItemSearch" placeholder="🔍 Filter by name…" style="flex:1;margin:0;">
+      </div>
+      <div id="tfItemList" style="max-height:280px;overflow-y:auto;border:1px solid var(--line);border-radius:10px;"></div>
+      <p class="tiny" style="color:var(--ink-soft);margin-top:10px;">This can take a minute for a large account — don't close the window while it's running.</p>
     `;
   }
   overlay.innerHTML = `
@@ -6348,6 +6370,40 @@ function renderTaskFireImportModal(){
   };
   const ownerSelect = document.getElementById('tfOwner');
   if(ownerSelect) ownerSelect.onchange=()=>{ m.ownerUserId = ownerSelect.value; };
+
+  function renderTfItemList(query){
+    const listEl = document.getElementById('tfItemList');
+    if(!listEl) return;
+    const q = (query||'').toLowerCase();
+    listEl.innerHTML = m.parsed.clients.map((c,idx)=>{
+      if(q && !c.name.toLowerCase().includes(q)) return '';
+      const merging = tfExistingId(c);
+      return `
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 12px;border-bottom:1px solid var(--line-soft);font-size:13px;">
+        <span style="flex:1;">${escapeHtml(c.name)} <span class="tiny" style="color:var(--ink-soft);">(${c.deals.length} deal${c.deals.length===1?'':'s'})</span>${merging?' <span class="pill gray">merge</span>':''}</span>
+        <div class="type-toggle" style="transform:scale(0.85);flex-shrink:0;">
+          <button class="${c.destListId==='clients'?'active':''}" data-tfitemtype="${idx}:clients">Client</button>
+          <button class="${c.destListId==='listings'?'active':''}" data-tfitemtype="${idx}:listings">Listing</button>
+        </div>
+      </div>`;
+    }).join('') || `<div class="tiny" style="padding:12px;color:var(--ink-soft);">No matches.</div>`;
+    listEl.querySelectorAll('[data-tfitemtype]').forEach(btn=>btn.onclick=()=>{
+      const [idx, type] = btn.dataset.tfitemtype.split(':');
+      m.parsed.clients[parseInt(idx)].destListId = type;
+      render();
+    });
+  }
+  if(m.step==='review'){
+    renderTfItemList('');
+    const searchEl = document.getElementById('tfItemSearch');
+    if(searchEl) searchEl.oninput = ()=>renderTfItemList(searchEl.value);
+    const markAllClientBtn = overlay.querySelector('[data-action="markAllClient"]'); if(markAllClientBtn) markAllClientBtn.onclick=()=>{
+      m.parsed.clients.forEach(c=>c.destListId='clients'); render();
+    };
+    const markAllListingBtn = overlay.querySelector('[data-action="markAllListing"]'); if(markAllListingBtn) markAllListingBtn.onclick=()=>{
+      m.parsed.clients.forEach(c=>c.destListId='listings'); render();
+    };
+  }
   const confirmBtn = document.getElementById('tfConfirmBtn');
   if(confirmBtn) confirmBtn.onclick=async ()=>{
     if(!m.ownerUserId){ flashToast('Pick whose TaskFire account this is from first.'); return; }
@@ -6359,15 +6415,18 @@ function renderTaskFireImportModal(){
   };
 }
 async function runTaskFireImport(parsed, ownerUserId){
-  const clientsList = db.lists.find(l=>l.id==='clients');
   for(const c of parsed.clients){
+    const destListId = c.destListId || 'clients';
+    const targetList = db.lists.find(l=>l.id===destListId);
+    const existingId = tfExistingId(c);
     let clientObj;
-    if(c.existingClientId){
-      clientObj = clientsList.clients.find(x=>x.id===c.existingClientId);
+    if(existingId){
+      clientObj = targetList.clients.find(x=>x.id===existingId);
     } else {
       clientObj = {id:crypto.randomUUID(), name:c.name, primary:null, secondary:[], deals:[], createdBy:ownerUserId, authorizedUserIds:[]};
-      clientsList.clients.push(clientObj);
-      await supaCreateClient(clientObj, 'clients');
+      if(destListId==='listings'){ clientObj.prospects=[]; clientObj.categoryConfig=newLSRCategoryConfig(); }
+      targetList.clients.push(clientObj);
+      await supaCreateClient(clientObj, destListId);
     }
     for(const d of c.deals){
       const dealObj = {id:crypto.randomUUID(), name:d.name, complete:false, activeDeal:false, caExecuted:false, dueDate:null};
@@ -6376,7 +6435,7 @@ async function runTaskFireImport(parsed, ownerUserId){
       for(const t of d.todos){
         const todoObj = {id:crypto.randomUUID(), title:t.name, category:clientObj.name, dueDate:null, assignedTo:ownerUserId,
           createdBy:ownerUserId, type:'task', private:false, completed:false, isNew:false, notes:'',
-          listId:'clients', clientId:clientObj.id, dealId:dealObj.id, entryId:null, attachments:[]};
+          listId:destListId, clientId:clientObj.id, dealId:dealObj.id, entryId:null, attachments:[]};
         db.todos.push(todoObj);
         await supaCreateTodo(todoObj);
       }
@@ -6384,7 +6443,7 @@ async function runTaskFireImport(parsed, ownerUserId){
     for(const t of c.directTodos){
       const todoObj = {id:crypto.randomUUID(), title:t.name, category:clientObj.name, dueDate:null, assignedTo:ownerUserId,
         createdBy:ownerUserId, type:'task', private:false, completed:false, isNew:false, notes:'',
-        listId:'clients', clientId:clientObj.id, dealId:null, entryId:null, attachments:[]};
+        listId:destListId, clientId:clientObj.id, dealId:null, entryId:null, attachments:[]};
       db.todos.push(todoObj);
       await supaCreateTodo(todoObj);
     }
