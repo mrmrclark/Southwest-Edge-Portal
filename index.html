@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>Southwest Edge Portal</title>
 <link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="icon" type="image/png" sizes="180x180" href="icon-180.png">
 <meta name="theme-color" content="#E1531A">
 <link rel="apple-touch-icon" href="icon-180.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -289,8 +291,8 @@
   }
   .row-card:hover{box-shadow:var(--shadow-sm);border-color:#E3B79E;}
   .row-check{
-    width:20px;height:20px;border-radius:50%;border:2px solid #D8D4CE;flex-shrink:0;margin-top:1px;
-    display:flex;align-items:center;justify-content:center;font-size:11px;color:#fff;
+    width:26px;height:26px;border-radius:50%;border:2.5px solid var(--edge);flex-shrink:0;margin-top:1px;
+    display:flex;align-items:center;justify-content:center;font-size:13px;color:#fff;
   }
   .row-check.done{background:var(--good);border-color:var(--good);}
   .row-body{flex:1;min-width:0;}
@@ -308,7 +310,7 @@
   .progress-track{height:5px;border-radius:4px;background:var(--line-soft);margin-top:8px;overflow:hidden;}
   .progress-fill{height:100%;background:var(--good);}
   .row-right{display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0;}
-  .row-select{width:17px;height:17px;margin-top:2px;flex-shrink:0;accent-color:var(--edge);}
+  .row-select{width:14px;height:14px;margin-top:4px;flex-shrink:0;accent-color:#B8B2A8;opacity:.75;}
   .row-trash{
     background:none;border:none;font-size:14px;opacity:.55;padding:2px;border-radius:6px;line-height:1;
   }
@@ -512,6 +514,7 @@ let state = {
   taskfireImport:null,           // {step:'upload'|'review', parsed, ownerUserId}
   pendingDeletionsOpen:false,
   contactImportReview:null,      // {uniqueRows, queue:[{row,match}], index, fieldChoices, decisions}
+  moveDealPicker:null,           // {dealId, sourceListId, sourceClientId, step:'client'|'createNew', query}
   showArchivedClients:false,
   listsCollapsed:false,
   globalSearchQuery:'',
@@ -1086,6 +1089,20 @@ function fmtDate(d){
   return d.toLocaleDateString('en-US',opts);
 }
 function isSameDay(a,b){ return a && b && a.toDateString()===b.toDateString(); }
+function wireDragReorder(selector, dragAttr, onReorder){
+  let draggedId = null;
+  document.querySelectorAll(selector).forEach(el=>{
+    el.ondragstart = (ev)=>{ draggedId = el.dataset[dragAttr]; ev.dataTransfer.effectAllowed='move'; el.style.opacity='0.4'; };
+    el.ondragend = ()=>{ el.style.opacity=''; };
+    el.ondragover = (ev)=>{ ev.preventDefault(); };
+    el.ondrop = (ev)=>{
+      ev.preventDefault();
+      const targetId = el.dataset[dragAttr];
+      if(draggedId && targetId && draggedId!==targetId) onReorder(draggedId, targetId);
+      draggedId = null;
+    };
+  });
+}
 function dueStatus(d){
   if(!d) return 'none';
   const t = todayDate();
@@ -2026,6 +2043,7 @@ function render(){
   if(state.marketingListWizard) renderMarketingListWizard();
   if(state.addUsersPrompt) renderAddUsersPrompt();
   if(state.moveTodoPicker) renderMoveTodoPicker();
+  if(state.moveDealPicker) renderMoveDealPicker();
   if(state.commissionModal) renderCommissionModal();
   if(state.myNotesOpen) renderMyNotesModal();
   if(state.newSmartListModal) renderNewSmartListModal();
@@ -2526,7 +2544,7 @@ function renderSidebar(){
         else if(sl.id==='todayMe'||sl.id==='todayAll') cls='mild';
         const active = state.mainView.type==='smart' && state.mainView.id===sl.id;
         const menuOpen = menu && menu.kind==='smart' && menu.id===sl.id;
-        return `<div class="nav-row-wrap ${active?'active':''}">
+        return `<div class="nav-row-wrap ${active?'active':''}" draggable="true" data-smartlistdrag="${sl.id}">
           <button class="nav-row" data-nav="smart:${sl.id}">
             <span class="nav-icon">${sl.icon}</span><span class="nav-label">${escapeHtml(sl.name)}</span>
             ${countBadge(items,cls)}
@@ -2758,10 +2776,9 @@ function renderQuickLinksWidget(){
   <div class="widget-card">
     <div class="widget-head"><div class="widget-title">Quick Links</div></div>
     ${links.length ? links.map((l,i)=>`
-      <div style="display:flex;align-items:center;gap:4px;padding:6px 0;border-bottom:1px solid var(--line-soft);">
+      <div draggable="true" data-quicklinkdrag="${l.id}" style="display:flex;align-items:center;gap:4px;padding:6px 0;border-bottom:1px solid var(--line-soft);cursor:grab;">
+        <span style="color:var(--ink-soft);font-size:12px;">⠿</span>
         <a href="${escapeAttr(l.url)}" target="_blank" rel="noopener" style="flex:1;font-size:12.5px;color:var(--ink);text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">🔗 ${escapeHtml(l.name)}</a>
-        <button class="row-trash" data-movequicklink="up:${l.id}" title="Move up" style="opacity:.5;" ${i===0?'disabled':''}>↑</button>
-        <button class="row-trash" data-movequicklink="down:${l.id}" title="Move down" style="opacity:.5;" ${i===links.length-1?'disabled':''}>↓</button>
         <button class="row-trash" data-removequicklink="${l.id}" title="Remove" style="opacity:.5;">✕</button>
       </div>`).join('') : `<div class="tiny" style="color:var(--ink-soft);margin-bottom:8px;">No links yet.</div>`}
     <button class="btn ghost sm" data-action="addQuickLink" style="margin-top:8px;width:100%;">+ Add Link</button>
@@ -3159,11 +3176,8 @@ function renderSidePanel(){
   const order = (state.widgetOrder||['calendar','weather','news','quicklinks']).filter(k=>WIDGET_RENDERERS[k]);
   const visibleOrder = order.filter(k=>w[k]);
   const widgetsHtml = visibleOrder.map((key,i)=>`
-    <div style="position:relative;">
-      <div style="position:absolute;top:12px;right:16px;display:flex;gap:2px;z-index:2;">
-        <button class="row-trash" data-movewidget="up:${key}" ${i===0?'disabled':''} title="Move up" style="opacity:.5;">↑</button>
-        <button class="row-trash" data-movewidget="down:${key}" ${i===visibleOrder.length-1?'disabled':''} title="Move down" style="opacity:.5;">↓</button>
-      </div>
+    <div draggable="true" data-widgetdrag="${key}" style="position:relative;cursor:grab;">
+      <div style="position:absolute;top:12px;right:16px;z-index:2;color:var(--ink-soft);font-size:14px;" title="Drag to reorder">⠿</div>
       ${WIDGET_RENDERERS[key]()}
     </div>`).join('');
   return `
@@ -3652,6 +3666,14 @@ function attachShellHandlers(){
     state.screen='login'; state.currentUser=null; state.mainView={type:'smart',id:'todayMe'}; state.modalStack=[]; state.mobileScreen='nav'; render();
   };
   document.querySelectorAll('[data-action="addSmartList"]').forEach(el=>el.onclick=()=>promptAddSmartList());
+  wireDragReorder('[data-smartlistdrag]', 'smartlistdrag', (fromId, toId)=>{
+    const fromIdx = smartListsArr.findIndex(s=>s.id===fromId), toIdx = smartListsArr.findIndex(s=>s.id===toId);
+    if(fromIdx<0 || toIdx<0) return;
+    const [moved] = smartListsArr.splice(fromIdx, 1);
+    smartListsArr.splice(toIdx, 0, moved);
+    saveAppState();
+    render();
+  });
   document.querySelectorAll('[data-action="addList"]').forEach(el=>el.onclick=()=>promptAddList());
   document.querySelectorAll('[data-ellipsis]').forEach(el=>el.onclick=(ev)=>{
     ev.stopPropagation();
@@ -3727,30 +3749,21 @@ function attachShellHandlers(){
     supaDeleteQuickLink(id);
     render();
   });
-  document.querySelectorAll('[data-movequicklink]').forEach(el=>el.onclick=()=>{
-    const [dir, id] = el.dataset.movequicklink.split(':');
+  wireDragReorder('[data-quicklinkdrag]', 'quicklinkdrag', (fromId, toId)=>{
     const links = state.quickLinks || [];
-    const idx = links.findIndex(l=>l.id===id);
-    const swap = dir==='up' ? idx-1 : idx+1;
-    if(idx<0 || swap<0 || swap>=links.length) return;
-    const tmp = links[idx]; links[idx] = links[swap]; links[swap] = tmp;
+    const fromIdx = links.findIndex(l=>l.id===fromId), toIdx = links.findIndex(l=>l.id===toId);
+    if(fromIdx<0 || toIdx<0) return;
+    const [moved] = links.splice(fromIdx, 1);
+    links.splice(toIdx, 0, moved);
     supaReorderQuickLinks();
     render();
   });
-  document.querySelectorAll('[data-movewidget]').forEach(el=>el.onclick=()=>{
-    const [dir, key] = el.dataset.movewidget.split(':');
+  wireDragReorder('[data-widgetdrag]', 'widgetdrag', (fromKey, toKey)=>{
     if(!state.widgetOrder) state.widgetOrder = ['calendar','weather','news','quicklinks'];
-    const w = state.sidePanelWidgets;
-    const visibleOrder = state.widgetOrder.filter(k=>w[k]);
-    const vIdx = visibleOrder.indexOf(key);
-    const vSwap = dir==='up' ? vIdx-1 : vIdx+1;
-    if(vIdx<0 || vSwap<0 || vSwap>=visibleOrder.length) return;
-    const neighborKey = visibleOrder[vSwap];
-    const fullIdxA = state.widgetOrder.indexOf(key);
-    const fullIdxB = state.widgetOrder.indexOf(neighborKey);
-    const tmp = state.widgetOrder[fullIdxA];
-    state.widgetOrder[fullIdxA] = state.widgetOrder[fullIdxB];
-    state.widgetOrder[fullIdxB] = tmp;
+    const fromIdx = state.widgetOrder.indexOf(fromKey), toIdx = state.widgetOrder.indexOf(toKey);
+    if(fromIdx<0 || toIdx<0) return;
+    const [moved] = state.widgetOrder.splice(fromIdx, 1);
+    state.widgetOrder.splice(toIdx, 0, moved);
     supaSaveWidgetOrder();
     render();
   });
@@ -4112,6 +4125,86 @@ function getTodoLinkSummary(td){
     if(e) return `${l.name}: ${e.name}`;
   }
   return 'Not linked to anything — a floating to-do';
+}
+function renderMoveDealPicker(){
+  const m = state.moveDealPicker;
+  const srcList = db.lists.find(x=>x.id===m.sourceListId);
+  const srcClient = srcList && srcList.clients.find(x=>x.id===m.sourceClientId);
+  const deal = srcClient && srcClient.deals.find(x=>x.id===m.dealId);
+  if(!deal){ state.moveDealPicker=null; return; }
+  const overlay = document.createElement('div');
+  overlay.className='modal-overlay'; overlay.style.zIndex=210;
+  let bodyHtml = '';
+  if(m.step==='createNew'){
+    bodyHtml = `
+    <button class="toggle-all" data-action="moveDealBack" style="margin-bottom:10px;">← Back to search</button>
+    <div class="field"><label>New account name</label><input id="moveDealNewName" placeholder="e.g., ${escapeAttr(deal.name)}" value="${escapeAttr(deal.name)}"></div>
+    <div class="type-toggle">
+      <button class="${m.newType!=='listings'?'active':''}" data-newaccttype="clients">Client</button>
+      <button class="${m.newType==='listings'?'active':''}" data-newaccttype="listings">Listing</button>
+    </div>
+    <button class="btn" data-action="createAndMoveDeal" style="width:100%;margin-top:10px;">Create &amp; Move Here</button>`;
+  } else {
+    const q = (m.query||'').toLowerCase();
+    const allClients = [];
+    db.lists.filter(l=>l.type==='deep').forEach(l=>l.clients.forEach(c=>{
+      if(c.id===m.sourceClientId) return; // can't move to the account it's already in
+      if(!q || c.name.toLowerCase().includes(q)) allClients.push({l, c});
+    }));
+    bodyHtml = `
+    <input class="searchbox" id="moveDealSearch" placeholder="🔍 Search Clients/Listings…" value="${escapeAttr(m.query||'')}">
+    <button class="btn secondary sm" data-action="goCreateNewAccount" style="width:100%;margin-bottom:10px;">+ Create a New Account</button>
+    <div style="max-height:320px;overflow-y:auto;">
+      ${allClients.map(({l,c})=>`
+        <div class="row-card" data-pickmovedealto="${c.id}" data-listid="${l.id}">
+          <div class="row-body"><div class="row-title">${escapeHtml(c.name)}</div><div class="row-meta"><span class="pill gray">${l.id==='listings'?'Listing':'Client'}</span></div></div>
+        </div>`).join('') || `<div class="tiny" style="color:var(--ink-soft);padding:10px 0;">No matches.</div>`}
+    </div>`;
+  }
+  overlay.innerHTML = `
+  <div class="modal-card">
+    <div class="modal-head"><div class="modal-title">Move "${escapeHtml(deal.name)}"</div><button class="modal-close" data-action="closeMoveDeal">✕</button></div>
+    <div class="modal-body">${bodyHtml}</div>
+  </div>`;
+  document.getElementById('app').appendChild(overlay);
+  overlay.querySelector('[data-action="closeMoveDeal"]').onclick=()=>{ state.moveDealPicker=null; render(); };
+  const searchEl = document.getElementById('moveDealSearch');
+  if(searchEl) searchEl.oninput=()=>{ m.query=searchEl.value; render(); };
+  const goCreateBtn = overlay.querySelector('[data-action="goCreateNewAccount"]'); if(goCreateBtn) goCreateBtn.onclick=()=>{
+    m.step='createNew'; m.newType = m.sourceListId; render();
+  };
+  const backBtn = overlay.querySelector('[data-action="moveDealBack"]'); if(backBtn) backBtn.onclick=()=>{ m.step='client'; render(); };
+  overlay.querySelectorAll('[data-newaccttype]').forEach(b=>b.onclick=()=>{ m.newType=b.dataset.newaccttype; render(); });
+
+  function performMove(targetListId, targetClientId){
+    const targetList = db.lists.find(x=>x.id===targetListId);
+    const targetClient = targetList.clients.find(x=>x.id===targetClientId);
+    srcClient.deals = srcClient.deals.filter(d=>d.id!==deal.id);
+    targetClient.deals.push(deal);
+    supaUpdateDeal(deal, targetClient.id);
+    // Any to-do's hanging directly off this deal need to follow it to its new home.
+    db.todos.filter(t=>t.dealId===deal.id).forEach(t=>{
+      t.listId = targetListId; t.clientId = targetClient.id;
+      supaUpdateTodo(t);
+    });
+    state.moveDealPicker=null;
+    flashToast(`Moved to ${targetClient.name}.`);
+    render();
+  }
+  overlay.querySelectorAll('[data-pickmovedealto]').forEach(el=>el.onclick=()=>{
+    performMove(el.dataset.listid, el.dataset.pickmovedealto);
+  });
+  const createBtn = overlay.querySelector('[data-action="createAndMoveDeal"]'); if(createBtn) createBtn.onclick=async ()=>{
+    const name = document.getElementById('moveDealNewName').value.trim();
+    if(!name){ flashToast('Give the new account a name first.'); return; }
+    const targetListId = m.newType || 'clients';
+    const targetList = db.lists.find(x=>x.id===targetListId);
+    const newClient = {id:crypto.randomUUID(), name, primary:null, secondary:[], deals:[], createdBy:state.currentUser.id, authorizedUserIds:[]};
+    if(targetListId==='listings'){ newClient.prospects=[]; newClient.categoryConfig=newLSRCategoryConfig(); }
+    targetList.clients.push(newClient);
+    await supaCreateClient(newClient, targetListId);
+    performMove(targetListId, newClient.id);
+  };
 }
 function renderMoveTodoPicker(){
   const m = state.moveTodoPicker;
@@ -4576,6 +4669,11 @@ function renderClientModalBody(l,c,viewMode){
   ${doneDeals.length? `<div class="section-label">Completed</div>${doneDeals.map(d=>renderDealRowInClient(l,c,d)).join('')}`:''}
   ` : ''}
   ${showProspecting ? renderLSRInline(c, viewMode) : ''}
+  ${showDeals ? `
+  <div class="section-label">General To-Do's <span style="font-weight:400;color:var(--ink-soft);">(not tied to a specific site)</span></div>
+  <button class="btn secondary sm" data-action="newAccountTodo" data-listid="${l.id}" data-client="${c.id}" style="margin-bottom:10px;">+ New To-Do</button>
+  ${renderTodoList(db.todos.filter(t=>t.clientId===c.id && !t.dealId).filter(visibleTodo))}
+  ` : ''}
   ${showDeals ? accessHtml : ''}
   `;
 }
@@ -4821,7 +4919,10 @@ function renderDealModalBody(l,c,d){
     <div class="field"><label>Term</label><input id="dtTerm" value="${escapeAttr(d.term||'')}"></div>
     <div class="field"><label>TI Allowance</label><input id="dtTI" value="${escapeAttr(d.tiAllowance||'')}"></div>
   </div>
-  <button class="btn secondary sm" data-action="openCommission" data-kind="deal" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}" style="margin-bottom:14px;">💰 Commission</button>
+  <div style="display:flex;gap:8px;margin-bottom:14px;">
+    <button class="btn secondary sm" data-action="openCommission" data-kind="deal" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">💰 Commission</button>
+    <button class="btn secondary sm" data-action="openMoveDeal" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">↔️ Move to Another Account</button>
+  </div>
   <div class="field"><label>Notes</label><textarea id="dtNotes" rows="3">${escapeHtml(d.notes||'')}</textarea></div>
   <button class="btn sm" data-action="saveDealTerms" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}" style="margin-bottom:6px;">Save Deal Terms</button>
   <div class="section-label">To-Do's</div>
@@ -5607,8 +5708,15 @@ function attachModalHandlers(root){
     }
     render();
   };
+  const openMoveDealBtn = root.querySelector('[data-action="openMoveDeal"]'); if(openMoveDealBtn) openMoveDealBtn.onclick=()=>{
+    state.moveDealPicker = {dealId:openMoveDealBtn.dataset.deal, sourceListId:openMoveDealBtn.dataset.listid, sourceClientId:openMoveDealBtn.dataset.client, step:'client', query:''};
+    render();
+  };
   const ntEntry = root.querySelector('[data-action="newTodoInEntry"]'); if(ntEntry) ntEntry.onclick=()=>{
     openNewTodoModal({listId:ntEntry.dataset.listid, entryId:ntEntry.dataset.entry}); render();
+  };
+  const ntAccount = root.querySelector('[data-action="newAccountTodo"]'); if(ntAccount) ntAccount.onclick=()=>{
+    openNewTodoModal({listId:ntAccount.dataset.listid, clientId:ntAccount.dataset.client}); render();
   };
   const conv = root.querySelector('[data-action="convertToDeal"]'); if(conv) conv.onclick=()=>{
     convertEntryToDeal(conv.dataset.listid, conv.dataset.entry); render();
@@ -5910,6 +6018,7 @@ function renderNewTodoModal(){
     </div>
   </div>`;
   document.getElementById('app').appendChild(overlay);
+  const ntTitleEl = document.getElementById('ntTitle'); if(ntTitleEl) setTimeout(()=>ntTitleEl.focus(), 0);
   overlay.querySelectorAll('[data-settype]').forEach(b=>b.onclick=()=>{ m.type=b.dataset.settype; render(); });
   overlay.querySelectorAll('[data-quickdate]').forEach(b=>b.onclick=()=>{
     document.getElementById('ntDue').value = b.dataset.quickdate;
@@ -7039,6 +7148,7 @@ document.addEventListener('keydown', (ev)=>{
   if(state.lsrCategoryManagerOpen){ state.lsrCategoryManagerOpen=null; render(); return; }
   if(state.addUsersPrompt){ state.addUsersPrompt=null; render(); return; }
   if(state.moveTodoPicker){ state.moveTodoPicker=null; render(); return; }
+  if(state.moveDealPicker){ state.moveDealPicker=null; render(); return; }
   if(state.commissionModal){ state.commissionModal=null; render(); return; }
   if(state.myNotesOpen){ state.myNotesOpen=false; render(); return; }
   if(state.editContactModal){ state.editContactModal=null; render(); return; }
