@@ -518,6 +518,7 @@ let state = {
   moveDealPicker:null,           // {dealId, sourceListId, sourceClientId, step:'client'|'createNew', query}
   showArchivedClients:false,
   listsCollapsed:false,
+  otherAccountsOpen:{},          // {listId: bool} — persisted, remembers last view per Michael's request
   globalSearchQuery:'',
   globalSearchFocused:false,
   quickLinks:null,
@@ -898,9 +899,9 @@ function renderAddUsersPrompt(){
         Right now, only you can see this ${l.id==='listings'?'listing':'client'} (Admins can always see everything, regardless). Check anyone else who should have access — you can always change this later from the record itself.
       </p>
       ${others.length ? others.map(u=>`
-        <label style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line-soft);font-size:13.5px;${u.role==='Admin'?'color:var(--ink-soft);':''}">
-          <input type="checkbox" class="addUsersCheck" value="${u.id}" style="width:auto;" ${u.role==='Admin'?'checked disabled':''}>
-          ${escapeHtml(u.name)}${u.role==='Admin'? ' <span class="tiny">(Admin — always has access)</span>':''}
+        <label style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line-soft);font-size:13.5px;">
+          <input type="checkbox" class="addUsersCheck" value="${u.id}" style="width:auto;">
+          ${escapeHtml(u.name)}
         </label>`).join('') : `<div class="tiny" style="color:var(--ink-soft);">No other teammates yet.</div>`}
     </div>
     <div class="modal-foot">
@@ -911,7 +912,7 @@ function renderAddUsersPrompt(){
   document.getElementById('app').appendChild(overlay);
   overlay.querySelector('[data-action="skipAddUsers"]').onclick=()=>{ state.addUsersPrompt=null; render(); };
   overlay.querySelector('[data-action="confirmAddUsers"]').onclick=()=>{
-    const checked = Array.from(overlay.querySelectorAll('.addUsersCheck:checked:not(:disabled)')).map(el=>el.value);
+    const checked = Array.from(overlay.querySelectorAll('.addUsersCheck:checked')).map(el=>el.value);
     if(!c.authorizedUserIds) c.authorizedUserIds=[];
     checked.forEach(userId=>{
       if(!c.authorizedUserIds.includes(userId)){
@@ -3533,7 +3534,7 @@ function renderListMain(listId){
   if(l.type==='deep'){
     const addBtn = `<button class="btn sm" data-action="addClient" data-listid="${l.id}" style="margin-bottom:14px;">+ New ${singular}</button>`;
     if(!l.clients.length) return addBtn + `<div class="empty-state"><div class="big">No ${l.name.toLowerCase()} yet.</div><div class="tiny">Add your first one to get moving.</div></div>`;
-    return addBtn + l.clients.map(c=>{
+    const renderRow = (c)=>{
       const dealCount = c.deals.length;
       const openDeals = c.deals.filter(d=>!d.complete).length;
       const isListingsRow = l.id==='listings' && !state.isMobile;
@@ -3551,7 +3552,22 @@ function renderListMain(listId){
           <button class="btn sm" data-openlisting="all" data-client="${c.id}" data-listid="${l.id}">Open All</button>
         </div>` : ''}
       </div>`;
-    }).join('');
+    };
+    const byName = (a,b)=>a.name.localeCompare(b.name);
+    if(state.currentUser.role==='Admin'){
+      const me = state.currentUser.id;
+      const mine = l.clients.filter(c=>c.createdBy===me || (c.authorizedUserIds||[]).includes(me)).sort(byName);
+      const others = l.clients.filter(c=>!(c.createdBy===me || (c.authorizedUserIds||[]).includes(me))).sort(byName);
+      const otherOpen = !!(state.otherAccountsOpen && state.otherAccountsOpen[l.id]);
+      return addBtn + mine.map(renderRow).join('') +
+        (others.length ? `
+        <div class="nav-section-label" style="cursor:pointer;margin-top:10px;" data-action="toggleOtherAccounts" data-listid="${l.id}">
+          <span>${otherOpen?'▾':'▸'} Other ${l.name} <span class="tiny" style="color:var(--ink-soft);">(${others.length} — you're not on ${others.length===1?'this one':'these'})</span></span>
+        </div>
+        ${otherOpen ? others.map(renderRow).join('') : ''}
+        ` : '');
+    }
+    return addBtn + l.clients.slice().sort(byName).map(renderRow).join('');
   } else {
     const isAdmin = state.currentUser.role==='Admin';
     const visibleEntries = isAdmin ? l.entries : l.entries.filter(e=>e.ownerId===state.currentUser.id);
@@ -3667,6 +3683,12 @@ function attachShellHandlers(){
   const toggleListsBtn = document.querySelector('[data-action="toggleListsCollapsed"]'); if(toggleListsBtn) toggleListsBtn.onclick=()=>{
     state.listsCollapsed = !state.listsCollapsed; render();
   };
+  document.querySelectorAll('[data-action="toggleOtherAccounts"]').forEach(el=>el.onclick=()=>{
+    const id = el.dataset.listid;
+    state.otherAccountsOpen[id] = !state.otherAccountsOpen[id];
+    saveAppState();
+    render();
+  });
   const toggleArchivedBtn = document.querySelector('[data-action="toggleShowArchivedClients"]'); if(toggleArchivedBtn) toggleArchivedBtn.onclick=()=>{
     state.showArchivedClients = !state.showArchivedClients; render();
   };
@@ -4681,7 +4703,7 @@ function renderClientModalBody(l,c,viewMode){
   const canManageAccess = state.currentUser.role==='Admin' || c.createdBy===state.currentUser.id;
   const creator = USERS.find(u=>u.id===c.createdBy);
   const authorizedUsers = (c.authorizedUserIds||[]).map(id=>USERS.find(u=>u.id===id)).filter(Boolean);
-  const notYetAuthorized = USERS.filter(u=>u.id!==c.createdBy && u.role!=='Admin' && !(c.authorizedUserIds||[]).includes(u.id));
+  const notYetAuthorized = USERS.filter(u=>u.id!==c.createdBy && !(c.authorizedUserIds||[]).includes(u.id));
   const accessHtml = `
   <div class="contact-card" style="background:#EFF6FA;border-color:#CBE0EE;margin-top:20px;">
     <div class="label" style="color:#2C6E9E;">🔒 Access${creator? ` — created by ${escapeHtml(creator.name)}`:''}</div>
@@ -7254,6 +7276,7 @@ function saveAppState(){
     const snapshot = {
       smartLists: smartListsArr,
       adminDefaultSchedule,
+      otherAccountsOpen: state.otherAccountsOpen,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot, dateAwareReplacer));
   } catch(e){ /* private-browsing mode, storage full, etc. — fail quietly, app still works */ }
@@ -7282,6 +7305,7 @@ function loadAppState(){
       smartListsArr = [...prunedCached, ...missingDefaults];
     }
     if(saved.adminDefaultSchedule) adminDefaultSchedule = saved.adminDefaultSchedule;
+    if(saved.otherAccountsOpen) state.otherAccountsOpen = saved.otherAccountsOpen;
     appStateWasLoaded = true;
   } catch(e){ /* corrupted/old save shape — just fall back to the seed data */ }
 }
