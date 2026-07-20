@@ -511,6 +511,7 @@ let state = {
   myNotesActiveId:null,
   taskfireImport:null,           // {step:'upload'|'review', parsed, ownerUserId}
   pendingDeletionsOpen:false,
+  contactImportReview:null,      // {uniqueRows, queue:[{row,match}], index, fieldChoices, decisions}
   showArchivedClients:false,
   listsCollapsed:false,
   globalSearchQuery:'',
@@ -2031,6 +2032,7 @@ function render(){
   if(state.notifSettingsOpen) renderNotifSettingsModal();
   if(state.pendingUsersModalOpen) renderPendingUsersModal();
   if(state.pendingDeletionsOpen) renderPendingDeletionsModal();
+  if(state.contactImportReview) renderContactImportReviewModal();
   if(state.taskfireImport) renderTaskFireImportModal();
   wireTodoRowHandlers(app);
   if(state.undoToast) renderUndoToast();
@@ -6208,39 +6210,92 @@ function renderEditBrokerModal(){
     render();
   };
 }
+function findContactMatch(row){
+  const firstL = (row.first||'').toLowerCase().trim(), lastL = (row.last||'').toLowerCase().trim();
+  return db.contacts.find(c=>
+    (firstL && lastL && c.first.toLowerCase().trim()===firstL && c.last.toLowerCase().trim()===lastL) ||
+    (row.email && c.email && c.email.toLowerCase().trim()===row.email.toLowerCase().trim()) ||
+    (row.mobile && c.mobile && c.mobile.trim()===row.mobile.trim()) ||
+    (row.phone && c.phone && c.phone.trim()===row.phone.trim())
+  );
+}
+const CONTACT_FIELDS = [
+  {key:'first', label:'First Name'}, {key:'last', label:'Last Name'}, {key:'company', label:'Company'},
+  {key:'website', label:'Website'}, {key:'email', label:'Email'}, {key:'mobile', label:'Mobile'},
+  {key:'phone', label:'Phone'}, {key:'address', label:'Address'}, {key:'city', label:'City'},
+  {key:'state', label:'State'}, {key:'zip', label:'Zip'},
+];
 function importCSV(file){
   const reader = new FileReader();
-  reader.onload = async (e)=>{
+  reader.onload = (e)=>{
     const text = e.target.result;
     const rows = parseCSV(text);
     if(!rows.length){ flashToast('No rows found in that file.'); return; }
     const header = rows[0].map(h=>h.trim());
     const idx = (name)=>header.indexOf(name);
-    const iFirst=idx('First Name'), iLast=idx('Last Name'), iCompany=idx('Company'),
-          iEmail=idx('E-mail Address'), iMobile=idx('Mobile Phone'), iPhone=idx('Business Phone');
-    const newContacts = [];
+    const iFirst=idx('First Name'), iLast=idx('Last Name'), iCompany=idx('Company'), iWebsite=idx('Website'),
+          iEmail=idx('E-mail Address'), iMobile=idx('Mobile Phone'), iPhone=idx('Business Phone'),
+          iAddress=idx('Business Street'), iCity=idx('Business City'), iState=idx('Business State'), iZip=idx('Business Postal Code');
+    const uniqueRows = [];
+    const queue = []; // {row, match}
     for(let r=1;r<rows.length;r++){
       const row=rows[r]; if(!row || row.length<2) continue;
       const first=(row[iFirst]||'').trim(), last=(row[iLast]||'').trim();
       if(!first && !last) continue;
-      newContacts.push({
-        id:crypto.randomUUID(), first, last,
-        company:(row[iCompany]||'').trim(),
-        email:(row[iEmail]||'').trim(),
-        mobile:(row[iMobile]||'').trim(),
-        phone:(row[iPhone]||'').trim(),
-      });
+      const parsed = {
+        first, last, company:(row[iCompany]||'').trim(), website:(row[iWebsite]||'').trim(),
+        email:(row[iEmail]||'').trim(), mobile:(row[iMobile]||'').trim(), phone:(row[iPhone]||'').trim(),
+        address:(row[iAddress]||'').trim(), city:(row[iCity]||'').trim(), state:(row[iState]||'').trim(), zip:(row[iZip]||'').trim(),
+      };
+      const match = findContactMatch(parsed);
+      if(match) queue.push({row:parsed, match});
+      else uniqueRows.push(parsed);
     }
-    db.contacts.push(...newContacts);
-    flashToast(`Imported ${newContacts.length} contacts.`);
+    if(!queue.length){
+      commitContactImport(uniqueRows, []);
+      return;
+    }
+    state.contactImportReview = {uniqueRows, queue, index:0, decisions:[], fieldChoices: buildDefaultFieldChoices(queue[0])};
     render();
-    // One batch call instead of one-per-row — matters a lot at CSV scale (thousands of rows).
-    if(newContacts.length){
-      const { error } = await supabaseClient.from('contacts').insert(newContacts.map(contactLocalToRow));
-      if(error){ console.error('CSV bulk sync error:', error); flashToast('Imported here, but syncing to the server failed — check your connection and try again. (' + error.message + ')'); render(); }
-    }
   };
   reader.readAsText(file);
+}
+function buildDefaultFieldChoices(pair){
+  // Sensible starting point per field — not a stance on Skip/Merge/Delete overall,
+  // just saves a click when one side is obviously blank and the other isn't.
+  const choices = {};
+  CONTACT_FIELDS.forEach(f=>{
+    const existingVal = pair.match[f.key]||'';
+    const newVal = pair.row[f.key]||'';
+    choices[f.key] = (!existingVal && newVal) ? 'new' : 'existing';
+  });
+  return choices;
+}
+async function commitContactImport(uniqueRows, decisions){
+  // decisions: [{type:'merge'|'delete', match, row, fieldChoices}]
+  const newContacts = uniqueRows.map(row=>({id:crypto.randomUUID(), ...row}));
+  db.contacts.push(...newContacts);
+  for(const d of decisions){
+    if(d.type==='merge'){
+      CONTACT_FIELDS.forEach(f=>{ d.match[f.key] = d.fieldChoices[f.key]==='new' ? (d.row[f.key]||'') : d.match[f.key]; });
+      supaUpdateContact(d.match);
+    } else if(d.type==='delete'){
+      db.contacts = db.contacts.filter(c=>c.id!==d.match.id);
+      supaDeleteContact(d.match.id);
+      const replacement = {id:crypto.randomUUID(), ...d.row};
+      db.contacts.push(replacement);
+      newContacts.push(replacement);
+    }
+  }
+  const mergedCount = decisions.filter(d=>d.type==='merge').length;
+  const deletedCount = decisions.filter(d=>d.type==='delete').length;
+  const skippedCount = decisions.filter(d=>d.type==='skip').length;
+  flashToast(`Imported ${newContacts.length} new · ${mergedCount} merged · ${deletedCount} replaced · ${skippedCount} skipped.`);
+  render();
+  if(newContacts.length){
+    const { error } = await supabaseClient.from('contacts').insert(newContacts.map(contactLocalToRow));
+    if(error){ console.error('CSV bulk sync error:', error); flashToast('Imported here, but syncing some to the server failed. (' + error.message + ')'); render(); }
+  }
 }
 /* ---------------- TASKFIRE IMPORT (live, Admin-only) ---------------- */
 const TF_NULL_DATE_MARKER = 'Fri Dec 13 1901';
@@ -6322,6 +6377,97 @@ function parseTaskFireCSV(text){
 }
 
 function tfExistingId(c){ if(c.destListId==='skip') return null; return c.destListId==='listings' ? c.existingListingMatch : c.existingClientMatch; }
+function renderContactImportReviewModal(){
+  const s = state.contactImportReview;
+  const pair = s.queue[s.index];
+  const overlay = document.createElement('div');
+  overlay.className='modal-overlay'; overlay.style.zIndex=195;
+  if(!pair){
+    // Queue finished — nothing left to review.
+    overlay.innerHTML = `
+    <div class="modal-card">
+      <div class="modal-head"><div class="modal-title">Review Complete</div></div>
+      <div class="modal-body"><p>All ${s.queue.length} possible duplicates reviewed. Ready to finish the import.</p></div>
+      <div class="modal-foot"><button class="btn" data-action="finishContactImport">Finish Import</button></div>
+    </div>`;
+    document.getElementById('app').appendChild(overlay);
+    overlay.querySelector('[data-action="finishContactImport"]').onclick=()=>{
+      commitContactImport(s.uniqueRows, s.decisions);
+      state.contactImportReview=null;
+      render();
+    };
+    return;
+  }
+  overlay.innerHTML = `
+  <div class="modal-card">
+    <div class="modal-head">
+      <div class="modal-title">Possible Duplicate — ${s.index+1} of ${s.queue.length}</div>
+      <button class="modal-close" data-action="closeContactImportReview">✕</button>
+    </div>
+    <div class="modal-body">
+      <p class="tiny" style="color:var(--ink-soft);margin-top:0;">For each field, pick which value to keep if you choose "Merge & Update." Skip leaves the existing contact untouched. Delete removes the existing one and uses the CSV version instead.</p>
+      <table style="width:100%;border-collapse:collapse;font-size:12.5px;">
+        <tr style="text-align:left;color:var(--ink-soft);">
+          <th style="padding:6px 4px;">Field</th><th style="padding:6px 4px;">Already in Database</th><th style="padding:6px 4px;">From CSV</th>
+        </tr>
+        ${CONTACT_FIELDS.map(f=>{
+          const existingVal = pair.match[f.key]||'';
+          const newVal = pair.row[f.key]||'';
+          const choice = s.fieldChoices[f.key];
+          return `
+          <tr style="border-top:1px solid var(--line-soft);">
+            <td style="padding:6px 4px;font-weight:600;">${f.label}</td>
+            <td style="padding:6px 4px;">
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;${choice==='existing'?'font-weight:600;':'color:var(--ink-soft);'}">
+                <input type="radio" name="fieldchoice_${f.key}" data-fieldchoice="${f.key}:existing" ${choice==='existing'?'checked':''} style="width:auto;">
+                ${escapeHtml(existingVal)||'<span class="tiny">(blank)</span>'}
+              </label>
+            </td>
+            <td style="padding:6px 4px;">
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;${choice==='new'?'font-weight:600;':'color:var(--ink-soft);'}">
+                <input type="radio" name="fieldchoice_${f.key}" data-fieldchoice="${f.key}:new" ${choice==='new'?'checked':''} style="width:auto;">
+                ${escapeHtml(newVal)||'<span class="tiny">(blank)</span>'}
+              </label>
+            </td>
+          </tr>`;
+        }).join('')}
+      </table>
+    </div>
+    <div class="modal-foot" style="justify-content:space-between;">
+      <button class="btn secondary" data-action="skipContactDup">Skip</button>
+      <div style="display:flex;gap:8px;">
+        <button class="btn danger" data-action="deleteContactDup">Delete Old, Use CSV</button>
+        <button class="btn" data-action="mergeContactDup">Merge &amp; Update</button>
+      </div>
+    </div>
+  </div>`;
+  document.getElementById('app').appendChild(overlay);
+  overlay.querySelector('[data-action="closeContactImportReview"]').onclick=()=>{
+    if(confirm('Stop reviewing? Anything already decided stays queued — nothing has been imported yet, and you can re-open this file to pick up where you left off, but progress in this session will be lost.')){
+      state.contactImportReview=null; render();
+    }
+  };
+  overlay.querySelectorAll('[data-fieldchoice]').forEach(el=>el.onchange=()=>{
+    const [key, val] = el.dataset.fieldchoice.split(':');
+    s.fieldChoices[key] = val;
+    render();
+  });
+  function advance(decision){
+    if(decision) s.decisions.push(decision);
+    s.index++;
+    s.fieldChoices = s.queue[s.index] ? buildDefaultFieldChoices(s.queue[s.index]) : {};
+    render();
+  }
+  overlay.querySelector('[data-action="skipContactDup"]').onclick=()=>{ advance({type:'skip', match:pair.match}); };
+  overlay.querySelector('[data-action="deleteContactDup"]').onclick=()=>{
+    if(confirm(`Permanently delete the existing "${pair.match.first} ${pair.match.last}" and replace it with the CSV version?`)){
+      advance({type:'delete', match:pair.match, row:pair.row});
+    }
+  };
+  overlay.querySelector('[data-action="mergeContactDup"]').onclick=()=>{
+    advance({type:'merge', match:pair.match, row:pair.row, fieldChoices:{...s.fieldChoices}});
+  };
+}
 function renderTaskFireImportModal(){
   const m = state.taskfireImport;
   const overlay = document.createElement('div');
@@ -6908,6 +7054,10 @@ document.addEventListener('keydown', (ev)=>{
   if(state.contactModal){ state.contactModal=null; render(); return; }
   if(state.pendingUsersModalOpen){ state.pendingUsersModalOpen=false; render(); return; }
   if(state.pendingDeletionsOpen){ state.pendingDeletionsOpen=false; render(); return; }
+  if(state.contactImportReview){
+    if(confirm('Stop reviewing? Nothing has been imported yet, and progress in this session will be lost.')){ state.contactImportReview=null; render(); }
+    return;
+  }
   if(state.taskfireImport){ state.taskfireImport=null; render(); return; }
   if(state.modalStack.length){ closeModalStack(); return; }
   // Small dropdowns/menus — already had Escape support, kept as the final fallback.
