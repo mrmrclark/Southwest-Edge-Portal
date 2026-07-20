@@ -3335,11 +3335,17 @@ function assigneeRank(td){
   const idx = others.indexOf(td.assignedTo);
   return idx>=0 ? idx+1 : 999;
 }
-const TODO_ROW_LEGEND = `
+function todoRowLegend(ids){
+  const allSelected = ids.length>0 && ids.every(id=>state.selectedTodoIds.includes(id));
+  return `
   <div style="display:flex;gap:20px;font-size:13.5px;font-weight:600;color:var(--ink);margin-bottom:12px;padding:0 2px;align-items:center;">
-    <span><span style="display:inline-block;width:15px;height:15px;border:2px solid var(--ink);border-radius:3px;vertical-align:middle;margin-right:6px;"></span>Select (for bulk actions)</span>
+    <label style="display:flex;align-items:center;cursor:pointer;">
+      <input type="checkbox" id="selectAllTodosCheckbox" data-selectallids="${ids.join(',')}" ${allSelected?'checked':''} style="width:15px;height:15px;margin-right:6px;">
+      Select all (for bulk actions)
+    </label>
     <span><span style="display:inline-block;width:15px;height:15px;border:2px solid var(--ink);border-radius:50%;vertical-align:middle;margin-right:6px;"></span>Mark complete</span>
   </div>`;
+}
 function renderTodoList(list){
   if(!list.length){
     return `<div class="empty-state"><div class="big">All clear.</div><div class="tiny">Nothing here right now. Nice work. Take five.</div></div>`;
@@ -3360,9 +3366,10 @@ function renderTodoList(list){
     if(!b.dueDate) return -1;
     return a.dueDate-b.dueDate;
   });
+  const allIds = sorted.map(td=>td.id);
   const multiAssignee = new Set(list.map(t=>t.assignedTo)).size > 1;
-  if(!multiAssignee) return TODO_ROW_LEGEND + sorted.map(td=>renderTodoRow(td)).join('');
-  let html=TODO_ROW_LEGEND; let lastAssignee=undefined;
+  if(!multiAssignee) return todoRowLegend(allIds) + sorted.map(td=>renderTodoRow(td)).join('');
+  let html=todoRowLegend(allIds); let lastAssignee=undefined;
   sorted.forEach(td=>{
     if(td.assignedTo!==lastAssignee){
       const isMine = td.assignedTo===state.currentUser.id;
@@ -4334,6 +4341,16 @@ function renderTodoDetailModal(){
 
 /* ---------------- CENTRALIZED TODO ROW WIRING ---------------- */
 function wireTodoRowHandlers(root){
+  const selectAllCb = root.querySelector('#selectAllTodosCheckbox');
+  if(selectAllCb) selectAllCb.onchange=()=>{
+    const ids = selectAllCb.dataset.selectallids ? selectAllCb.dataset.selectallids.split(',').filter(Boolean) : [];
+    if(selectAllCb.checked){
+      ids.forEach(id=>{ if(!state.selectedTodoIds.includes(id)) state.selectedTodoIds.push(id); });
+    } else {
+      state.selectedTodoIds = state.selectedTodoIds.filter(id=>!ids.includes(id));
+    }
+    render();
+  };
   root.querySelectorAll('[data-todo]').forEach(el=>{
     el.onclick=(ev)=>{
       if(ev.target.closest('[data-toggle],[data-select],[data-delete],[data-stopprop]')) return;
