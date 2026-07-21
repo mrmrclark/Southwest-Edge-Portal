@@ -762,7 +762,7 @@ function dealRowToLocal(r){
 }
 function dealLocalToRow(d, clientId){
   return {id:d.id, client_id:clientId, name:d.name, complete:!!d.complete, active_deal:!!d.activeDeal,
-          ca_executed:!!d.caExecuted, due_date: d.dueDate? d.dueDate.toISOString().slice(0,10) : null, contact_id:d.contactId||null,
+          ca_executed:!!d.caExecuted, due_date: d.dueDate? toLocalDateStr(d.dueDate) : null, contact_id:d.contactId||null,
           deal_type: d.dealType||null, building:d.building||null, space_num:d.spaceNum||null, size:d.size||null, stage:d.stage||null, category_id:d.categoryId||null,
           deal_terms_ever_saved: !!d.dealTermsEverSaved,
           rent:d.rent||null, price:d.price||null, term:d.term||null, ti_allowance:d.tiAllowance||null,
@@ -949,7 +949,7 @@ function prospectRowToLocal(r){
 function prospectLocalToRow(p, listingId){
   return {id:p.id, listing_id:listingId, tenant_name:p.tenantName, contact_id:p.contactId||null, broker_id:p.brokerId||null,
     category_id:p.categoryId||null, stage:p.stage, deal_type:p.dealType||null,
-    date_of_contact:p.dateOfContact? p.dateOfContact.toISOString().slice(0,10):null, notes:p.notes||null,
+    date_of_contact:p.dateOfContact? toLocalDateStr(p.dateOfContact):null, notes:p.notes||null,
     edge_tracker: localUserIdToAuthId(p.edgeTracker), dead_date:p.deadDate? p.deadDate.toISOString():null,
     building:p.building||null, space_num:p.spaceNum||null, size:p.size||null, rent:p.rent||null, price:p.price||null,
     term:p.term||null, ti_allowance:p.tiAllowance||null, total_fee:p.totalFee||null, splits:p.splits||null,
@@ -985,7 +985,7 @@ function entryRowToLocal(r){
           contactId:r.contact_id, ownerId: authIdToLocalUserId(r.owner_id) || r.owner_id};
 }
 function entryLocalToRow(e, listId){
-  return {id:e.id, list_id:listId, name:e.name, last_call:e.lastCall? e.lastCall.toISOString().slice(0,10):null,
+  return {id:e.id, list_id:listId, name:e.name, last_call:e.lastCall? toLocalDateStr(e.lastCall):null,
           feedback:e.feedback||null, contact_id:e.contactId||null, owner_id: localUserIdToAuthId(e.ownerId)};
 }
 async function fetchEntriesFromSupabase(){
@@ -1019,7 +1019,7 @@ function todoRowToLocal(r){
     archivedAt: r.archived_at ? new Date(r.archived_at) : undefined};
 }
 function todoLocalToRow(t){
-  return {id:t.id, title:t.title, category:t.category||null, due_date:t.dueDate? t.dueDate.toISOString().slice(0,10):null,
+  return {id:t.id, title:t.title, category:t.category||null, due_date:t.dueDate? toLocalDateStr(t.dueDate):null,
     assigned_to: localUserIdToAuthId(t.assignedTo), created_by: localUserIdToAuthId(t.createdBy),
     type:t.type||'task', is_private:!!t.private, is_completed:!!t.completed, is_new:!!t.isNew, notes:t.notes||null,
     list_id:t.listId||null, client_id:t.clientId||null, deal_id:t.dealId||null, entry_id:t.entryId||null,
@@ -1039,7 +1039,15 @@ async function supaCreateTodo(t){
 }
 async function supaUpdateTodo(t){
   const { error } = await supabaseClient.from('todos').update(todoLocalToRow(t)).eq('id', t.id);
-  if(error) console.error('supaUpdateTodo error:', error);
+  if(error){
+    console.error('supaUpdateTodo error:', error);
+    // Without this, a failed save looks fine in the moment (the change shows locally)
+    // but silently reverts the next time this to-do is loaded from the server — since
+    // the database never actually got the update. Surfacing it here means a save that
+    // didn't take is visible immediately, not discovered later as "this didn't work."
+    flashToast(`"${t.title}" didn't save to the server (${error.message}). Try again, or check your connection.`);
+    render();
+  }
 }
 async function supaDeleteTodo(id){
   const { error } = await supabaseClient.from('todos').delete().eq('id', id);
@@ -1117,6 +1125,15 @@ async function fetchPersonalNotes(authId){
 
 /* ---------------- DATE HELPERS ---------------- */
 function todayDate(){ const d=new Date(); d.setHours(0,0,0,0); return d; }
+// Local-calendar-date formatter for date-only fields (due dates, date of contact, etc).
+// Deliberately NOT toISOString() — that converts through UTC first, which can silently
+// shift a date backward a day for any browser/timezone that isn't behind UTC. This just
+// reads the date's own local year/month/day, so what you see is what gets saved.
+function toLocalDateStr(d){
+  if(!d) return null;
+  const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), day=String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
+}
 function addDays(d,n){ const r=new Date(d); r.setDate(r.getDate()+n); return r; }
 function fmtDate(d){
   if(!d) return null;
@@ -1152,7 +1169,7 @@ function dueStatus(d){
 // Natural language date parser: today, tomorrow, next monday, 7/20, 7/20/26, 7/20/2026
 function parseNaturalDate(str){
   if(!str) return null;
-  str = str.trim().toLowerCase();
+  str = str.trim().toLowerCase().replace(/[.!,;]+$/,'');
   const t = todayDate();
   if(str==='today') return t;
   if(str==='tomorrow') return addDays(t,1);
@@ -3630,7 +3647,6 @@ function renderAdminMenu(){
   return `
   <div class="admin-menu">
     <div class="admin-item" data-action="adminPending">🆕 Pending User Requests ${pendingUsers.length? `<span class="nav-count urgent" style="margin-left:auto;">${pendingUsers.length}</span>`:''}</div>
-    <div class="admin-item" data-action="adminPendingDeletions">🗑️ Pending Deletions ${db.deletionRequests.length? `<span class="nav-count urgent" style="margin-left:auto;">${db.deletionRequests.length}</span>`:''}</div>
     <div class="admin-item" data-action="adminFullTeam">👥 Full Team To-Do's (unfiltered)</div>
     ${!state.isMobile ? `<div class="admin-item" data-action="adminImportTodos">⬆️ Import To-Do's (CSV)</div>` : ''}
     ${!state.isMobile ? `<div class="admin-item" data-action="adminImportTaskFire">⬆️ Import from TaskFire</div>` : ''}
@@ -3864,7 +3880,7 @@ function attachShellHandlers(){
     flashToast(`${name} added to ${l.name}.`);
     render();
   };
-  ['adminPending','adminPendingDeletions','adminFullTeam','adminImportTodos','adminImportTaskFire','adminDigest','adminUsers','adminTimes','adminReset'].forEach(a=>{
+  ['adminPending','adminFullTeam','adminImportTodos','adminImportTaskFire','adminDigest','adminUsers','adminTimes','adminReset'].forEach(a=>{
     const e=document.querySelector(`[data-action="${a}"]`);
     if(e) e.onclick=()=>{ state.showAdminMenu=false; handleAdminAction(a); };
   });
@@ -4384,7 +4400,7 @@ function renderTodoDetailModal(){
       </div>
       <div class="field">
         <label>Due date</label>
-        <input id="detDue" placeholder="today, tomorrow, 7/20/26…" value="${td.dueDate? td.dueDate.toISOString().slice(0,10):''}">
+        <input id="detDue" placeholder="today, tomorrow, 7/20/26…" value="${td.dueDate? toLocalDateStr(td.dueDate):''}">
         <div class="quickdate-row">
           <button data-detquickdate="today">Today</button>
           <button data-detquickdate="tomorrow">Tomorrow</button>
@@ -5225,7 +5241,7 @@ function renderLSRProspectBody(l, listing, p){
     <label>Category</label>
     <select id="lpCategory">${allCats.map(c=>`<option value="${c.id}" ${p.categoryId===c.id?'selected':''}>${escapeHtml(c.name)}</option>`).join('')}<option value="__new__">➕ Create New Category…</option></select>
   </div>
-  <div class="field"><label>Date of Contact</label><input id="lpDate" placeholder="today, tomorrow, 7/20/26…" value="${p.dateOfContact? p.dateOfContact.toISOString().slice(0,10):''}"></div>
+  <div class="field"><label>Date of Contact</label><input id="lpDate" placeholder="today, tomorrow, 7/20/26…" value="${p.dateOfContact? toLocalDateStr(p.dateOfContact):''}"></div>
   <div class="field"><label>Notes / Next Steps</label><textarea id="lpNotes" rows="3">${escapeHtml(p.notes||'')}</textarea></div>
   <div class="field">
     <label>Edge Tracker</label>
@@ -5666,7 +5682,7 @@ function renderEntryModalBody(l,e){
   <div class="contact-card">
     <div class="label">Prospect Details${owner?` · Owner: ${escapeHtml(owner.name)}`:''}</div>
     <div class="field" style="margin-top:8px;"><label>Client Name</label><input value="${escapeAttr(e.name)}" data-edit="name" data-entry="${e.id}" data-listid="${l.id}"></div>
-    <div class="field"><label>Last Call</label><input value="${e.lastCall?e.lastCall.toISOString().slice(0,10):''}" placeholder="e.g. today" data-edit="lastCall" data-entry="${e.id}" data-listid="${l.id}"></div>
+    <div class="field"><label>Last Call</label><input value="${e.lastCall?toLocalDateStr(e.lastCall):''}" placeholder="e.g. today" data-edit="lastCall" data-entry="${e.id}" data-listid="${l.id}"></div>
     <div class="field"><label>Latest Feedback / Notes</label><textarea rows="2" data-edit="feedback" data-entry="${e.id}" data-listid="${l.id}">${escapeHtml(e.feedback||'')}</textarea></div>
   </div>
   <div class="section-label">To-Do's</div>
@@ -5735,11 +5751,12 @@ function attachModalHandlers(root){
   const deleteClientBtn = root.querySelector('[data-action="deleteClient"]'); if(deleteClientBtn) deleteClientBtn.onclick=()=>{
     const l=db.lists.find(x=>x.id===deleteClientBtn.dataset.listid); const c=l.clients.find(x=>x.id===deleteClientBtn.dataset.client);
     const noun = deleteClientBtn.dataset.noun;
-    const existing = db.deletionRequests.find(r=>r.clientId===c.id);
-    if(existing){ flashToast(`A deletion request for ${c.name} is already pending approval.`); return; }
-    if(confirm(`Request deletion of this ${noun}? Since this is permanent, it needs approval from the other Admin before it actually happens — "${c.name}" stays fully visible and usable until then.`)){
-      supaCreateDeletionRequest(c, l.id);
-      flashToast(`Deletion requested — waiting on the other Admin to approve.`);
+    if(confirm(`Permanently delete this ${noun} — "${c.name}"? This cannot be undone.`)){
+      // Detach (don't delete) any to-do's pointing at this client, so they aren't silently lost.
+      db.todos.filter(t=>t.clientId===c.id).forEach(t=>{ t.clientId=null; t.listId=null; supaUpdateTodo(t); });
+      l.clients = l.clients.filter(x=>x.id!==c.id);
+      supaDeleteClient(c.id);
+      flashToast(`"${c.name}" deleted.`);
       render();
     }
   };
