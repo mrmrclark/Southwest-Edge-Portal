@@ -1,6 +1,5 @@
 [[redirects]]
-from = "/*"
+from = "https://southwestedge.netlify.app/*"
 to = "https://southwestedge.net/:splat"
 status = 301
 force = true
-conditions = { Host = "southwestedge.netlify.app" }
