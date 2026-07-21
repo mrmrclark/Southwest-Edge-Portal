@@ -135,8 +135,8 @@
   }
 
   /* ---------- CALENDAR VIEW ---------- */
-  .cv-overlay{position:fixed;inset:0;background:rgba(20,14,8,0.5);z-index:150;display:flex;align-items:center;justify-content:center;}
-  .cv-card{background:var(--canvas);width:96vw;height:92vh;border-radius:14px;box-shadow:var(--shadow);display:flex;flex-direction:column;overflow:hidden;}
+  .cv-overlay{position:fixed;inset:0;background:rgba(20,14,8,0.5);z-index:150;display:flex;align-items:stretch;justify-content:stretch;}
+  .cv-card{background:var(--canvas);width:100vw;height:100vh;border-radius:0;box-shadow:var(--shadow);display:flex;flex-direction:column;overflow:hidden;}
   .cv-head{background:var(--edge);color:#fff;padding:14px 22px;display:flex;align-items:center;gap:14px;}
   .cv-head-title{font-size:19px;font-weight:700;flex:1;}
   .cv-nav-btn{background:rgba(255,255,255,.18);border:none;color:#fff;width:32px;height:32px;border-radius:8px;font-size:15px;}
@@ -551,7 +551,7 @@ let state = {
   lsrCategoryManagerOpen:null, // clientId of the listing being managed, or null
   calendarViewOpen:false,
   calendarCursor:null,        // {year, month} — used in Month mode
-  calendarViewMode:'month',   // 'month' | 'week' | '2week'
+  calendarViewMode:'month',   // 'month' | 'week' | '2week' | '3week' | '4week'
   calendarWeekStart:null,     // Date (always a Sunday) — anchor for Week/2 Week modes
   marketingListWizard:null,   // {step, clientId, selectedCategoryIds, reviewItems}
   lsrNewProspectModal:null,   // creation state
@@ -644,12 +644,12 @@ async function fetchAllProfilesIntoUsers(){
 function contactRowToLocal(r){
   return {id:r.id, first:r.first_name, last:r.last_name, company:r.company||'', website:r.website||'',
           email:r.email||'', mobile:r.mobile||'', phone:r.phone||'', address:r.address||'',
-          city:r.city||'', state:r.state||'', zip:r.zip||''};
+          city:r.city||'', state:r.state||'', zip:r.zip||'', categories:r.categories||[]};
 }
 function contactLocalToRow(c){
   return {id:c.id, first_name:c.first, last_name:c.last, company:c.company||null, website:c.website||null,
           email:c.email||null, mobile:c.mobile||null, phone:c.phone||null, address:c.address||null,
-          city:c.city||null, state:c.state||null, zip:c.zip||null,
+          city:c.city||null, state:c.state||null, zip:c.zip||null, categories:c.categories||[],
           created_by: (state.currentUser && state.currentUser.authId) || null};
 }
 async function fetchContactsFromSupabase(){
@@ -754,7 +754,8 @@ function clientLocalToRow(c, listId){
 function dealRowToLocal(r){
   return {id:r.id, name:r.name, complete:r.complete, activeDeal:r.active_deal, caExecuted:r.ca_executed,
           dueDate: r.due_date? new Date(r.due_date+'T00:00:00'):null, contactId:r.contact_id||null,
-          dealType:r.deal_type, building:r.building||'', spaceNum:r.space_num||'', size:r.size||'',
+          dealType:r.deal_type, building:r.building||'', spaceNum:r.space_num||'', size:r.size||'', stage:r.stage||'', categoryId:r.category_id||null,
+          dealTermsEverSaved: !!r.deal_terms_ever_saved,
           rent:r.rent||'', price:r.price||'', term:r.term||'', tiAllowance:r.ti_allowance||'',
           totalFee:r.total_fee||'', splits:r.splits||[], commissionStructure:r.commission_structure||'',
           commission1Paid:r.commission1_paid, commission2Paid:r.commission2_paid, notes:r.notes||''};
@@ -762,7 +763,8 @@ function dealRowToLocal(r){
 function dealLocalToRow(d, clientId){
   return {id:d.id, client_id:clientId, name:d.name, complete:!!d.complete, active_deal:!!d.activeDeal,
           ca_executed:!!d.caExecuted, due_date: d.dueDate? d.dueDate.toISOString().slice(0,10) : null, contact_id:d.contactId||null,
-          deal_type: d.dealType||null, building:d.building||null, space_num:d.spaceNum||null, size:d.size||null,
+          deal_type: d.dealType||null, building:d.building||null, space_num:d.spaceNum||null, size:d.size||null, stage:d.stage||null, category_id:d.categoryId||null,
+          deal_terms_ever_saved: !!d.dealTermsEverSaved,
           rent:d.rent||null, price:d.price||null, term:d.term||null, ti_allowance:d.tiAllowance||null,
           total_fee:d.totalFee||null, splits:d.splits||[], commission_structure:d.commissionStructure||null,
           commission1_paid:!!d.commission1Paid, commission2_paid:!!d.commission2Paid, notes:d.notes||null};
@@ -1183,6 +1185,8 @@ function uid(){ return 'id'+(idCounter++); }
 let adminDefaultSchedule = {type:'weekly', days:['sunday'], time:'00:00'};
 
 /* ---------------- LEASING / PROSPECTING REPORT (LSR) MODEL ---------------- */
+const CONTACT_CATEGORIES = ['Broker','Owner','Landlord','Tenant','Buyer','Title Company','Architect','Civil Engineer',
+  'General Contractor','Real Estate Manager','Hospitality','Restaurant','QSR Tenant','Developer','City Planner','Legal','Minority Partner'];
 const DEFAULT_PROPERTY_CATEGORIES = [
   {id:'qsrfastfood', name:'QSR - Fast Food'},
   {id:'qsrfastcasual', name:'QSR - Fast Casual'},
@@ -2945,8 +2949,8 @@ function renderCalendarViewModal(){
       cellsHtml += renderCalendarDayCell(ny, nm, i, todosByDateKey, today, true);
     }
   } else {
-    // week or 2week — always a fixed Sun–Sat span (or two of them), never a rolling window
-    const numWeeks = mode==='2week' ? 2 : 1;
+    // week/2week/3week/4week — always a fixed Sun–Sat span (or several), never a rolling window
+    const numWeeks = mode==='4week' ? 4 : mode==='3week' ? 3 : mode==='2week' ? 2 : 1;
     const start = state.calendarWeekStart;
     const end = new Date(start); end.setDate(end.getDate() + (numWeeks*7 - 1));
     const sameMonth = start.getMonth()===end.getMonth() && start.getFullYear()===end.getFullYear();
@@ -2974,6 +2978,8 @@ function renderCalendarViewModal(){
         <button class="${mode==='month'?'active':''}" data-cvmode="month">Month</button>
         <button class="${mode==='week'?'active':''}" data-cvmode="week">1 Week</button>
         <button class="${mode==='2week'?'active':''}" data-cvmode="2week">2 Weeks</button>
+        <button class="${mode==='3week'?'active':''}" data-cvmode="3week">3 Weeks</button>
+        <button class="${mode==='4week'?'active':''}" data-cvmode="4week">4 Weeks</button>
       </div>
       <div style="flex:1;"></div>
       <button class="modal-close" data-action="closeCalendarView">✕ Done</button>
@@ -3012,7 +3018,7 @@ function wireCalendarViewHandlers(overlay){
       state.calendarCursor = {year,month};
     } else {
       // week/2week: jump by exactly the span currently shown (7 or 14 days)
-      const span = mode==='2week' ? 14 : 7;
+      const span = mode==='4week' ? 28 : mode==='3week' ? 21 : mode==='2week' ? 14 : 7;
       const d = new Date(state.calendarWeekStart);
       d.setDate(d.getDate() + (nav==='next'? span : -span));
       state.calendarWeekStart = d;
@@ -4359,7 +4365,10 @@ function renderTodoDetailModal(){
   <div class="modal-card">
     <div class="modal-head">
       <div class="modal-title">To-Do Details</div>
-      <button class="modal-close" data-action="closeTodoDetail">✕</button>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <button class="btn sm" data-action="detSave" id="detSaveBtnTop" style="background:#fff;color:var(--edge);">${isForMe? 'Save & Close' : 'Save & Assign'}</button>
+        <button class="modal-close" data-action="closeTodoDetail">✕</button>
+      </div>
     </div>
     <div class="modal-body">
       <div class="type-toggle">
@@ -4472,13 +4481,14 @@ function renderTodoDetailModal(){
   detAssign.onchange = ()=>{
     const forMe = detAssign.value===state.currentUser.id;
     document.getElementById('detSaveBtn').textContent = forMe? 'Save & Close' : 'Save & Assign';
+    document.getElementById('detSaveBtnTop').textContent = forMe? 'Save & Close' : 'Save & Assign';
   };
   wireAttachmentZone(overlay, 'detDropZone', 'detFileInput', ()=>td.attachments, 'det');
   overlay.querySelector('[data-action="detDelete"]').onclick=()=>{
     if(confirm(`Delete "${td.title}"? This can't be undone.`)){ deleteTodo(td.id); render(); }
   };
   overlay.querySelector('[data-action="detToggleComplete"]').onclick=()=>{ td.completed=!td.completed; supaUpdateTodo(td); render(); };
-  overlay.querySelector('[data-action="detSave"]').onclick=()=>{
+  overlay.querySelectorAll('[data-action="detSave"]').forEach(btn=>btn.onclick=()=>{
     td.title=document.getElementById('detTitle').value.trim()||td.title;
     td.category=document.getElementById('detCategory').value.trim();
     td.dueDate=parseNaturalDate(document.getElementById('detDue').value.trim());
@@ -4500,7 +4510,7 @@ function renderTodoDetailModal(){
     supaUpdateTodo(td);
     flashToast('Changes saved.');
     render();
-  };
+  });
 }
 
 /* ---------------- CENTRALIZED TODO ROW WIRING ---------------- */
@@ -4667,6 +4677,7 @@ function renderTopModalCard(){
         <div class="modal-title-row">${brandLogoImg(brandName)}<div class="modal-title">${escapeHtml(titleText)}</div></div>
       </div>
       ${clientAdminActions}
+      ${frame.kind==='deal' ? `<button class="btn sm" data-action="saveAndCloseDeal" style="background:#fff;color:var(--edge);">Save &amp; Close</button>` : ''}
       <button class="modal-close" data-action="closeModal">✕ Done</button>
     </div>
     <div class="modal-body">${bodyHtml}</div>
@@ -4678,7 +4689,8 @@ function contactRow(contactId){
   const addrParts = [c.address, [c.city, c.state].filter(Boolean).join(', '), c.zip].filter(Boolean).join(' · ');
   return `
   <div class="contact-line"><span>Name</span><b>${c.first} ${c.last}</b></div>
-  <div class="contact-line"><span>Email</span><b>${c.email||'—'}</b></div>
+  ${(c.categories && c.categories.length) ? `<div class="contact-line"><span>Category</span><b>${c.categories.map(cat=>`<span class="pill gray" style="margin-right:4px;">${escapeHtml(cat)}</span>`).join('')}</b></div>` : ''}
+  <div class="contact-line"><span>Email</span><b>${c.email? `<a href="mailto:${escapeAttr(c.email)}" style="color:var(--edge);text-decoration:none;">${escapeHtml(c.email)}</a>` : '—'}</b></div>
   <div class="contact-line"><span>Mobile</span><b>${c.mobile||'—'}</b></div>
   <div class="contact-line"><span>Phone</span><b>${c.phone||'—'}</b></div>
   ${c.website ? `<div class="contact-line"><span>Website</span><b>${escapeHtml(c.website)}</b></div>`:''}
@@ -4690,7 +4702,7 @@ function brokerRow(brokerId){
   return `
   <div class="contact-line"><span>Name</span><b>${escapeHtml(b.name)}</b></div>
   <div class="contact-line"><span>Company</span><b>${escapeHtml(b.company||'—')}</b></div>
-  <div class="contact-line"><span>Email</span><b>${escapeHtml(b.email||'—')}</b></div>
+  <div class="contact-line"><span>Email</span><b>${b.email? `<a href="mailto:${escapeAttr(b.email)}" style="color:var(--edge);text-decoration:none;">${escapeHtml(b.email)}</a>` : '—'}</b></div>
   <div class="contact-line"><span>Mobile</span><b>${escapeHtml(b.mobile||'—')}</b></div>
   <div class="contact-line"><span>Phone</span><b>${escapeHtml(b.phone||'—')}</b></div>`;
 }
@@ -4978,6 +4990,23 @@ function renderDealModalBody(l,c,d){
     <button class="${d.dealType==='sale'?'active':''}" data-dealtypebtn="sale">Sale</button>
   </div>
   <div class="field-row">
+    <div class="field">
+      <label>Stage *</label>
+      <select id="dtStage">
+        <option value="">— choose —</option>
+        ${lsrStagesForTrack(d.dealType||'lease').map(sid=>`<option value="${sid}" ${d.stage===sid?'selected':''}>${LSR_STAGE_MAP[sid].name}</option>`).join('')}
+      </select>
+    </div>
+    ${l.id==='listings' ? `
+    <div class="field autocomplete-box">
+      <label>Category</label>
+      <select id="dtCategory">
+        <option value="">— none yet —</option>
+        ${DEFAULT_PROPERTY_CATEGORIES.concat(c.categoryConfig ? c.categoryConfig.custom : []).map(cat=>`<option value="${cat.id}" ${d.categoryId===cat.id?'selected':''}>${escapeHtml(cat.name)}</option>`).join('')}
+      </select>
+    </div>` : ''}
+  </div>
+  <div class="field-row">
     <div class="field"><label>Building</label><input id="dtBuilding" value="${escapeAttr(d.building||'')}"></div>
     <div class="field"><label>Space #</label><input id="dtSpaceNum" value="${escapeAttr(d.spaceNum||'')}"></div>
   </div>
@@ -5092,7 +5121,7 @@ function renderLSRInline(listing, mode){
   return `${toolbarHtml}<div id="lsrPrintArea">${html}</div>${tradeAreaHtml}`;
 }
 function renderLSRSectionInline(opts){
-  const collapsed = !!state.lsrCollapsed[opts.key];
+  const collapsed = state.lsrCollapsed[opts.key] !== false; // closed by default — has to be explicitly opened once
   let body = '';
   if(!collapsed){
     if(!opts.rows.length){
@@ -5164,7 +5193,9 @@ function renderLSRRowCard(p, listing, kind){
 
 /* ---- Prospect detail — nested modal frame, same chrome as Deal modal ---- */
 function openLSRProspect(clientId, prospectId){
-  state.modalStack.push({kind:'lsrProspect', clientId, prospectId});
+  const scroller = document.querySelector('.modal-body');
+  const parentScrollTop = scroller ? scroller.scrollTop : 0;
+  state.modalStack.push({kind:'lsrProspect', clientId, prospectId, parentScrollTop});
 }
 function renderLSRProspectBody(l, listing, p){
   const isConverted = p.stage!=='contacted' && p.stage!=='interested' && p.stage!=='dead' && p.stage!=='notInterested';
@@ -5504,7 +5535,7 @@ function wireLSRInlineHandlers(root){
   const trackerSel = root.querySelector('#lsrTrackerSelect');
   if(trackerSel) trackerSel.onchange=()=>{ state.lsrTrackerFilter=trackerSel.value; render(); };
   root.querySelectorAll('[data-lsrtoggle]').forEach(el=>el.onclick=()=>{
-    const k=el.dataset.lsrtoggle; state.lsrCollapsed[k]=!state.lsrCollapsed[k]; render();
+    const k=el.dataset.lsrtoggle; const currentlyCollapsed = state.lsrCollapsed[k] !== false; state.lsrCollapsed[k]=!currentlyCollapsed; render();
   });
   root.querySelectorAll('[data-lsropen]').forEach(el=>el.onclick=(ev)=>{
     if(ev.target.closest('[data-stopprop]')) return;
@@ -5648,7 +5679,38 @@ function attachModalHandlers(root){
     const idx=parseInt(el.dataset.crumb);
     if(idx===-1) closeModalStack(); else popModalTo(idx);
   });
-  const closeBtn = root.querySelector('[data-action="closeModal"]'); if(closeBtn) closeBtn.onclick=()=>closeModalStack();
+  const closeBtn = root.querySelector('[data-action="closeModal"]'); if(closeBtn) closeBtn.onclick=()=>{
+    // Closing a nested Deal (or similar) should reveal its parent Client/Listing,
+    // not wipe all the way back out to the main list — only actually exit
+    // everything once you're already at the outermost frame.
+    if(state.modalStack.length > 1){
+      const closingFrame = state.modalStack[state.modalStack.length-1];
+      state.modalStack.pop();
+      render();
+      if(closingFrame.kind==='lsrProspect' && typeof closingFrame.parentScrollTop==='number'){
+        requestAnimationFrame(()=>{
+          const scroller = document.querySelector('.modal-body');
+          if(scroller) scroller.scrollTop = closingFrame.parentScrollTop;
+        });
+      }
+    }
+    else closeModalStack();
+  };
+  const saveCloseBtn = root.querySelector('[data-action="saveAndCloseDeal"]'); if(saveCloseBtn) saveCloseBtn.onclick=()=>{
+    const stageEl = document.getElementById('dtStage');
+    const catEl = document.getElementById('dtCategory');
+    const realSaveBtn = document.querySelector('[data-action="saveDealTerms"]');
+    if(stageEl && !stageEl.value){ realSaveBtn.click(); return; }
+    if(catEl){
+      const frame = state.modalStack[state.modalStack.length-1];
+      const l=db.lists.find(x=>x.id===frame.listId); const c=l.clients.find(x=>x.id===frame.clientId);
+      const d=c.deals.find(x=>x.id===frame.dealId);
+      if(!catEl.value && d.dealTermsEverSaved){ realSaveBtn.click(); return; }
+    }
+    realSaveBtn.click();
+    state.modalStack.pop();
+    render();
+  };
   const archiveClientBtn = root.querySelector('[data-action="archiveClient"]'); if(archiveClientBtn) archiveClientBtn.onclick=()=>{
     const l=db.lists.find(x=>x.id===archiveClientBtn.dataset.listid); const c=l.clients.find(x=>x.id===archiveClientBtn.dataset.client);
     const noun = l.id==='listings' ? 'listing' : 'client';
@@ -5761,6 +5823,17 @@ function attachModalHandlers(root){
   const saveDealTermsBtn = root.querySelector('[data-action="saveDealTerms"]'); if(saveDealTermsBtn) saveDealTermsBtn.onclick=()=>{
     const l=db.lists.find(x=>x.id===saveDealTermsBtn.dataset.listid); const c=l.clients.find(x=>x.id===saveDealTermsBtn.dataset.client);
     const d=c.deals.find(x=>x.id===saveDealTermsBtn.dataset.deal);
+    const stage = document.getElementById('dtStage').value;
+    if(!stage){ flashToast('Pick a Stage before saving — this is required.'); return; }
+    const categorySelect = document.getElementById('dtCategory');
+    const categoryId = categorySelect ? categorySelect.value : '';
+    if(l.id==='listings' && !categoryId && d.dealTermsEverSaved){
+      flashToast('Pick a Category before saving — required once a deal has been saved before.');
+      return;
+    }
+    d.stage = stage;
+    if(categorySelect) d.categoryId = categoryId || null;
+    d.dealTermsEverSaved = true;
     d.building = document.getElementById('dtBuilding').value.trim();
     d.spaceNum = document.getElementById('dtSpaceNum').value.trim();
     d.size = document.getElementById('dtSize').value.trim();
@@ -5922,6 +5995,16 @@ function renderContactPickerPanel(){
             <div class="field" style="flex:2;"><label>City</label><input id="newContactCity"></div>
             <div class="field"><label>State</label><input id="newContactState" maxlength="2" style="text-transform:uppercase;"></div>
             <div class="field"><label>Zip</label><input id="newContactZip"></div>
+          </div>
+          <div class="field">
+            <label>Category (select any that apply)</label>
+            <div style="display:flex;flex-wrap:wrap;gap:8px;max-height:140px;overflow-y:auto;border:1px solid var(--line);border-radius:8px;padding:8px;">
+              ${CONTACT_CATEGORIES.map(cat=>`
+                <label style="display:flex;align-items:center;gap:5px;font-size:12.5px;background:var(--canvas);padding:4px 8px;border-radius:14px;cursor:pointer;">
+                  <input type="checkbox" class="newContactCatCheck" value="${escapeAttr(cat)}" style="width:auto;">${escapeHtml(cat)}
+                </label>`).join('')}
+            </div>
+            <input id="newContactCatOther" placeholder="Other category not listed above…" style="margin-top:6px;">
           </div>
           <button class="btn sm" data-action="createNewContact">Create Contact</button>
         </div>
@@ -7084,8 +7167,11 @@ render = function(){
       const city=document.getElementById('newContactCity').value.trim();
       const stateAbbr=document.getElementById('newContactState').value.trim();
       const zip=document.getElementById('newContactZip').value.trim();
+      const categories = Array.from(document.querySelectorAll('.newContactCatCheck:checked')).map(el=>el.value);
+      const otherCat = document.getElementById('newContactCatOther') ? document.getElementById('newContactCatOther').value.trim() : '';
+      if(otherCat) categories.push(otherCat);
       if(!first||!last){ flashToast('First and last name are required.'); return; }
-      const pending={first,last,company,website,email,mobile,phone,address,city,state:stateAbbr,zip};
+      const pending={first,last,company,website,email,mobile,phone,address,city,state:stateAbbr,zip,categories};
       const match = db.contacts.find(c=>
         (c.first.toLowerCase()===first.toLowerCase() && c.last.toLowerCase()===last.toLowerCase()) ||
         (mobile && c.mobile && c.mobile===mobile)
