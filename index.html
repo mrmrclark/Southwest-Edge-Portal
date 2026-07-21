@@ -13,6 +13,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="SW Edge">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <style>
   :root{
     --edge:#E1531A;
@@ -513,6 +514,7 @@ let state = {
   myNotesOpen:false,
   myNotesActiveId:null,
   taskfireImport:null,           // {step:'upload'|'review', parsed, ownerUserId}
+  mapsImport:null,               // {step:'upload'|'mapping'|'pickSites'|'review', ...} — see renderMapsImportModal
   pendingDeletionsOpen:false,
   contactImportReview:null,      // {uniqueRows, queue:[{row,match}], index, fieldChoices, decisions}
   moveDealPicker:null,           // {dealId, sourceListId, sourceClientId, step:'client'|'createNew', query}
@@ -762,7 +764,7 @@ function dealRowToLocal(r){
 }
 function dealLocalToRow(d, clientId){
   return {id:d.id, client_id:clientId, name:d.name, complete:!!d.complete, active_deal:!!d.activeDeal,
-          ca_executed:!!d.caExecuted, due_date: d.dueDate? d.dueDate.toISOString().slice(0,10) : null, contact_id:d.contactId||null,
+          ca_executed:!!d.caExecuted, due_date: d.dueDate? toLocalDateStr(d.dueDate) : null, contact_id:d.contactId||null,
           deal_type: d.dealType||null, building:d.building||null, space_num:d.spaceNum||null, size:d.size||null, stage:d.stage||null, category_id:d.categoryId||null,
           deal_terms_ever_saved: !!d.dealTermsEverSaved,
           rent:d.rent||null, price:d.price||null, term:d.term||null, ti_allowance:d.tiAllowance||null,
@@ -949,7 +951,7 @@ function prospectRowToLocal(r){
 function prospectLocalToRow(p, listingId){
   return {id:p.id, listing_id:listingId, tenant_name:p.tenantName, contact_id:p.contactId||null, broker_id:p.brokerId||null,
     category_id:p.categoryId||null, stage:p.stage, deal_type:p.dealType||null,
-    date_of_contact:p.dateOfContact? p.dateOfContact.toISOString().slice(0,10):null, notes:p.notes||null,
+    date_of_contact:p.dateOfContact? toLocalDateStr(p.dateOfContact):null, notes:p.notes||null,
     edge_tracker: localUserIdToAuthId(p.edgeTracker), dead_date:p.deadDate? p.deadDate.toISOString():null,
     building:p.building||null, space_num:p.spaceNum||null, size:p.size||null, rent:p.rent||null, price:p.price||null,
     term:p.term||null, ti_allowance:p.tiAllowance||null, total_fee:p.totalFee||null, splits:p.splits||null,
@@ -985,7 +987,7 @@ function entryRowToLocal(r){
           contactId:r.contact_id, ownerId: authIdToLocalUserId(r.owner_id) || r.owner_id};
 }
 function entryLocalToRow(e, listId){
-  return {id:e.id, list_id:listId, name:e.name, last_call:e.lastCall? e.lastCall.toISOString().slice(0,10):null,
+  return {id:e.id, list_id:listId, name:e.name, last_call:e.lastCall? toLocalDateStr(e.lastCall):null,
           feedback:e.feedback||null, contact_id:e.contactId||null, owner_id: localUserIdToAuthId(e.ownerId)};
 }
 async function fetchEntriesFromSupabase(){
@@ -1019,7 +1021,7 @@ function todoRowToLocal(r){
     archivedAt: r.archived_at ? new Date(r.archived_at) : undefined};
 }
 function todoLocalToRow(t){
-  return {id:t.id, title:t.title, category:t.category||null, due_date:t.dueDate? t.dueDate.toISOString().slice(0,10):null,
+  return {id:t.id, title:t.title, category:t.category||null, due_date:t.dueDate? toLocalDateStr(t.dueDate):null,
     assigned_to: localUserIdToAuthId(t.assignedTo), created_by: localUserIdToAuthId(t.createdBy),
     type:t.type||'task', is_private:!!t.private, is_completed:!!t.completed, is_new:!!t.isNew, notes:t.notes||null,
     list_id:t.listId||null, client_id:t.clientId||null, deal_id:t.dealId||null, entry_id:t.entryId||null,
@@ -1039,7 +1041,15 @@ async function supaCreateTodo(t){
 }
 async function supaUpdateTodo(t){
   const { error } = await supabaseClient.from('todos').update(todoLocalToRow(t)).eq('id', t.id);
-  if(error) console.error('supaUpdateTodo error:', error);
+  if(error){
+    console.error('supaUpdateTodo error:', error);
+    // Without this, a failed save looks fine in the moment (the change shows locally)
+    // but silently reverts the next time this to-do is loaded from the server — since
+    // the database never actually got the update. Surfacing it here means a save that
+    // didn't take is visible immediately, not discovered later as "this didn't work."
+    flashToast(`"${t.title}" didn't save to the server (${error.message}). Try again, or check your connection.`);
+    render();
+  }
 }
 async function supaDeleteTodo(id){
   const { error } = await supabaseClient.from('todos').delete().eq('id', id);
@@ -1117,6 +1127,15 @@ async function fetchPersonalNotes(authId){
 
 /* ---------------- DATE HELPERS ---------------- */
 function todayDate(){ const d=new Date(); d.setHours(0,0,0,0); return d; }
+// Local-calendar-date formatter for date-only fields (due dates, date of contact, etc).
+// Deliberately NOT toISOString() — that converts through UTC first, which can silently
+// shift a date backward a day for any browser/timezone that isn't behind UTC. This just
+// reads the date's own local year/month/day, so what you see is what gets saved.
+function toLocalDateStr(d){
+  if(!d) return null;
+  const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), day=String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
+}
 function addDays(d,n){ const r=new Date(d); r.setDate(r.getDate()+n); return r; }
 function fmtDate(d){
   if(!d) return null;
@@ -1152,7 +1171,7 @@ function dueStatus(d){
 // Natural language date parser: today, tomorrow, next monday, 7/20, 7/20/26, 7/20/2026
 function parseNaturalDate(str){
   if(!str) return null;
-  str = str.trim().toLowerCase();
+  str = str.trim().toLowerCase().replace(/[.!,;]+$/,'');
   const t = todayDate();
   if(str==='today') return t;
   if(str==='tomorrow') return addDays(t,1);
@@ -2091,6 +2110,7 @@ function render(){
   if(state.pendingDeletionsOpen) renderPendingDeletionsModal();
   if(state.contactImportReview) renderContactImportReviewModal();
   if(state.taskfireImport) renderTaskFireImportModal();
+  if(state.mapsImport) renderMapsImportModal();
   wireTodoRowHandlers(app);
   if(state.undoToast) renderUndoToast();
   if(state.toast) showToastNow();
@@ -3630,10 +3650,10 @@ function renderAdminMenu(){
   return `
   <div class="admin-menu">
     <div class="admin-item" data-action="adminPending">🆕 Pending User Requests ${pendingUsers.length? `<span class="nav-count urgent" style="margin-left:auto;">${pendingUsers.length}</span>`:''}</div>
-    <div class="admin-item" data-action="adminPendingDeletions">🗑️ Pending Deletions ${db.deletionRequests.length? `<span class="nav-count urgent" style="margin-left:auto;">${db.deletionRequests.length}</span>`:''}</div>
     <div class="admin-item" data-action="adminFullTeam">👥 Full Team To-Do's (unfiltered)</div>
     ${!state.isMobile ? `<div class="admin-item" data-action="adminImportTodos">⬆️ Import To-Do's (CSV)</div>` : ''}
     ${!state.isMobile ? `<div class="admin-item" data-action="adminImportTaskFire">⬆️ Import from TaskFire</div>` : ''}
+    ${!state.isMobile ? `<div class="admin-item" data-action="adminImportMaps">🗺️ Import from MyMaps</div>` : ''}
     <div class="admin-item" data-action="adminDigest">📨 Compose Weekly Digest</div>
     <div class="admin-item" data-action="adminUsers">👥 Manage Users</div>
     <div class="admin-item" data-action="adminTimes">⏱️ Email Send Times</div>
@@ -3864,7 +3884,7 @@ function attachShellHandlers(){
     flashToast(`${name} added to ${l.name}.`);
     render();
   };
-  ['adminPending','adminPendingDeletions','adminFullTeam','adminImportTodos','adminImportTaskFire','adminDigest','adminUsers','adminTimes','adminReset'].forEach(a=>{
+  ['adminPending','adminFullTeam','adminImportTodos','adminImportTaskFire','adminImportMaps','adminDigest','adminUsers','adminTimes','adminReset'].forEach(a=>{
     const e=document.querySelector(`[data-action="${a}"]`);
     if(e) e.onclick=()=>{ state.showAdminMenu=false; handleAdminAction(a); };
   });
@@ -3959,6 +3979,7 @@ function handleAdminAction(a){
   if(a==='adminFullTeam'){ state.mainView = {type:'smart', id:'fullTeam'}; if(state.isMobile) state.mobileScreen='main'; }
   if(a==='adminImportTodos'){ state.importTodosModal = {step:'upload'}; }
   if(a==='adminImportTaskFire'){ state.taskfireImport = {step:'upload'}; }
+  if(a==='adminImportMaps'){ state.mapsImport = {step:'upload', clientQuery:'', pickedClient:null, newClientName:''}; }
   if(a==='adminDigest'){ state.notifSettingsOpen=true; }
   if(a==='adminUsers'){ flashToast('User management: ' + USERS.map(u=>u.name).join(', ')); }
   if(a==='adminTimes'){ state.notifSettingsOpen=true; }
@@ -4384,7 +4405,7 @@ function renderTodoDetailModal(){
       </div>
       <div class="field">
         <label>Due date</label>
-        <input id="detDue" placeholder="today, tomorrow, 7/20/26…" value="${td.dueDate? td.dueDate.toISOString().slice(0,10):''}">
+        <input id="detDue" placeholder="today, tomorrow, 7/20/26…" value="${td.dueDate? toLocalDateStr(td.dueDate):''}">
         <div class="quickdate-row">
           <button data-detquickdate="today">Today</button>
           <button data-detquickdate="tomorrow">Tomorrow</button>
@@ -5225,7 +5246,7 @@ function renderLSRProspectBody(l, listing, p){
     <label>Category</label>
     <select id="lpCategory">${allCats.map(c=>`<option value="${c.id}" ${p.categoryId===c.id?'selected':''}>${escapeHtml(c.name)}</option>`).join('')}<option value="__new__">➕ Create New Category…</option></select>
   </div>
-  <div class="field"><label>Date of Contact</label><input id="lpDate" placeholder="today, tomorrow, 7/20/26…" value="${p.dateOfContact? p.dateOfContact.toISOString().slice(0,10):''}"></div>
+  <div class="field"><label>Date of Contact</label><input id="lpDate" placeholder="today, tomorrow, 7/20/26…" value="${p.dateOfContact? toLocalDateStr(p.dateOfContact):''}"></div>
   <div class="field"><label>Notes / Next Steps</label><textarea id="lpNotes" rows="3">${escapeHtml(p.notes||'')}</textarea></div>
   <div class="field">
     <label>Edge Tracker</label>
@@ -5666,7 +5687,7 @@ function renderEntryModalBody(l,e){
   <div class="contact-card">
     <div class="label">Prospect Details${owner?` · Owner: ${escapeHtml(owner.name)}`:''}</div>
     <div class="field" style="margin-top:8px;"><label>Client Name</label><input value="${escapeAttr(e.name)}" data-edit="name" data-entry="${e.id}" data-listid="${l.id}"></div>
-    <div class="field"><label>Last Call</label><input value="${e.lastCall?e.lastCall.toISOString().slice(0,10):''}" placeholder="e.g. today" data-edit="lastCall" data-entry="${e.id}" data-listid="${l.id}"></div>
+    <div class="field"><label>Last Call</label><input value="${e.lastCall?toLocalDateStr(e.lastCall):''}" placeholder="e.g. today" data-edit="lastCall" data-entry="${e.id}" data-listid="${l.id}"></div>
     <div class="field"><label>Latest Feedback / Notes</label><textarea rows="2" data-edit="feedback" data-entry="${e.id}" data-listid="${l.id}">${escapeHtml(e.feedback||'')}</textarea></div>
   </div>
   <div class="section-label">To-Do's</div>
@@ -5735,11 +5756,12 @@ function attachModalHandlers(root){
   const deleteClientBtn = root.querySelector('[data-action="deleteClient"]'); if(deleteClientBtn) deleteClientBtn.onclick=()=>{
     const l=db.lists.find(x=>x.id===deleteClientBtn.dataset.listid); const c=l.clients.find(x=>x.id===deleteClientBtn.dataset.client);
     const noun = deleteClientBtn.dataset.noun;
-    const existing = db.deletionRequests.find(r=>r.clientId===c.id);
-    if(existing){ flashToast(`A deletion request for ${c.name} is already pending approval.`); return; }
-    if(confirm(`Request deletion of this ${noun}? Since this is permanent, it needs approval from the other Admin before it actually happens — "${c.name}" stays fully visible and usable until then.`)){
-      supaCreateDeletionRequest(c, l.id);
-      flashToast(`Deletion requested — waiting on the other Admin to approve.`);
+    if(confirm(`Permanently delete this ${noun} — "${c.name}"? This cannot be undone.`)){
+      // Detach (don't delete) any to-do's pointing at this client, so they aren't silently lost.
+      db.todos.filter(t=>t.clientId===c.id).forEach(t=>{ t.clientId=null; t.listId=null; supaUpdateTodo(t); });
+      l.clients = l.clients.filter(x=>x.id!==c.id);
+      supaDeleteClient(c.id);
+      flashToast(`"${c.name}" deleted.`);
       render();
     }
   };
@@ -6952,6 +6974,265 @@ async function runTaskFireImport(parsed, ownerUserId){
   // importing on someone else's behalf genuinely can't write into their private
   // notes even if we wanted to — that's not a bug, it's the privacy rule working
   // as intended. The account owner can add anything worth keeping themselves.
+}
+
+/* ---------------- IMPORT FROM MYMAPS (KML/KMZ) ----------------
+   Google MyMaps exports one file per client — each pin is a site/deal, grouped
+   into folders (layers) that usually correspond to how far along a deal is.
+   This walks an admin through: pick which client the sites belong to, decide
+   what each MyMaps folder should become in the Portal (a fixed stage, an
+   auto-detected stage, hand-picked individually, or skipped entirely), then
+   commits the resulting Deals for real. */
+const MAPS_STAGE_OPTIONS = [
+  {id:'skip', label:'Skip this folder — don\'t import'},
+  {id:'loi', label:'→ LOI'},
+  {id:'signedLOI', label:'→ Signed LOI'},
+  {id:'negotiating', label:'→ Negotiating Lease'},
+  {id:'signedLease', label:'→ Signed Lease'},
+  {id:'auto', label:'→ Auto: store number (AZ####) = Signed LOI, else LOI'},
+  {id:'manual', label:'→ No stage yet — let me pick individually which sites import'},
+];
+function mapsNormalizeStoreNumber(name){
+  // "AZ 0808 -Twin Peaks..." -> "AZ0808 -Twin Peaks..." — store numbers should read
+  // consistently with no space, regardless of how the pin was typed in MyMaps.
+  return name.replace(/^(AZ)\s+(\d{3,4})/i, '$1$2');
+}
+function mapsHasStoreNumber(name){
+  return /^AZ\s?\d{3,4}\b/i.test(name.trim());
+}
+async function mapsReadKmlText(file){
+  if(!/\.kmz$/i.test(file.name)) return await file.text();
+  const zip = await JSZip.loadAsync(file);
+  let entry = zip.file('doc.kml');
+  if(!entry){
+    const kmlPath = Object.keys(zip.files).find(p=>/\.kml$/i.test(p));
+    if(kmlPath) entry = zip.file(kmlPath);
+  }
+  if(!entry) throw new Error("Couldn't find a .kml file inside that .kmz — is this really a MyMaps export?");
+  return await entry.async('text');
+}
+function mapsParseFolders(kmlText){
+  const xml = new DOMParser().parseFromString(kmlText, 'text/xml');
+  if(xml.querySelector('parsererror')) throw new Error("That file doesn't look like valid KML.");
+  // Only Point placemarks are real, single sites. MyMaps often also draws a second
+  // shape (a ring/outline) per site under the same folder — same or a near-identical
+  // name, different geometry — which would double-count every site if not filtered out.
+  return [...xml.querySelectorAll('Folder')].map(folderEl=>{
+    const nameEl = folderEl.querySelector(':scope > name');
+    const name = nameEl ? nameEl.textContent.trim() : '(unnamed folder)';
+    const placemarks = [...folderEl.querySelectorAll(':scope > Placemark')]
+      .filter(p=>p.querySelector('Point'))
+      .map(p=>{
+        const n = p.querySelector('name');
+        return {name: n ? n.textContent.trim() : '(unnamed site)'};
+      });
+    return {name, placemarks};
+  }).filter(f=>f.placemarks.length);
+}
+function mapsAllClientsFlat(){
+  // Every real Client/Listing across every "deep" list, for the search/attach picker.
+  const out = [];
+  db.lists.filter(l=>l.type==='deep').forEach(l=>{
+    l.clients.forEach(c=>out.push({id:c.id, name:c.name, listId:l.id, listName:l.name}));
+  });
+  return out;
+}
+function mapsComputeResultDeals(m){
+  const results = [];
+  m.folders.forEach((folder, fIdx)=>{
+    const stage = m.folderStage[fIdx];
+    if(stage==='skip') return;
+    folder.placemarks.forEach((p, pIdx)=>{
+      const name = mapsNormalizeStoreNumber(p.name);
+      if(stage==='manual'){
+        if(m.manualPicks[fIdx] && m.manualPicks[fIdx][pIdx]){
+          results.push({folderName:folder.name, name, stage:null});
+        }
+        return;
+      }
+      if(stage==='auto'){
+        results.push({folderName:folder.name, name, stage: mapsHasStoreNumber(p.name) ? 'signedLOI' : 'loi'});
+        return;
+      }
+      results.push({folderName:folder.name, name, stage});
+    });
+  });
+  return results;
+}
+function renderMapsImportModal(){
+  const m = state.mapsImport;
+  const overlay = document.createElement('div');
+  overlay.className='modal-overlay'; overlay.style.zIndex=190;
+  let body='';
+  if(m.step==='upload'){
+    const matches = mapsAllClientsFlat().filter(c=>!m.clientQuery || c.name.toLowerCase().includes(m.clientQuery.toLowerCase()));
+    body = `
+      <p style="font-size:13px;line-height:1.5;color:var(--ink-soft);margin-top:0;">
+        Export a Client's MyMaps as KML or KMZ (Menu → Export to KML/KMZ) and drop it here.
+        Only pinned sites (points) are imported — outline/ring shapes are skipped automatically.
+      </p>
+      <div class="field">
+        <label>Which Client/Listing do these sites belong to? *</label>
+        <input class="searchbox" id="mapsClientSearch" placeholder="🔍 Search existing…" value="${escapeAttr(m.clientQuery)}" style="margin-bottom:6px;">
+        <div id="mapsClientList" style="max-height:160px;overflow-y:auto;border:1px solid var(--line);border-radius:8px;margin-bottom:10px;">
+          ${matches.length ? matches.map(c=>`
+            <div class="row-card" data-mapspickclient="${c.id}:${c.listId}" style="cursor:pointer;padding:8px 12px;${m.pickedClient&&m.pickedClient.id===c.id?'background:var(--edge-light);':''}">
+              <div class="row-body"><div class="row-title" style="font-size:13px;">${escapeHtml(c.name)}</div><div class="row-meta"><span>${escapeHtml(c.listName)}</span></div></div>
+            </div>`).join('') : `<div class="tiny" style="padding:10px;color:var(--ink-soft);">No matches — type a name below to create a new one instead.</div>`}
+        </div>
+        ${!m.pickedClient ? `
+        <label style="margin-top:4px;">…or create a new one:</label>
+        <input id="mapsNewClientName" placeholder="New client/listing name" value="${escapeAttr(m.newClientName)}" style="margin-bottom:6px;">
+        ${m.newClientName ? `
+        <div class="type-toggle" style="transform:scale(0.85);transform-origin:left center;">
+          <button class="${m.newClientListId==='clients'?'active':''}" data-mapsnewlist="clients">New Client</button>
+          <button class="${m.newClientListId==='listings'?'active':''}" data-mapsnewlist="listings">New Listing</button>
+        </div>` : ''}` : `<div class="tiny" style="color:var(--ink-soft);">Attaching to <b>${escapeHtml(m.pickedClient.name)}</b>. <a href="#" data-mapsclearclient style="color:var(--edge);">Change</a></div>`}
+      </div>
+      <div class="field">
+        <label>KML/KMZ file *</label>
+        <input type="file" id="mapsFile" accept=".kml,.kmz">
+      </div>
+    `;
+  } else if(m.step==='mapping'){
+    body = `
+      <p style="font-size:13px;line-height:1.5;color:var(--ink-soft);margin-top:0;">
+        Found ${m.folders.length} folder${m.folders.length===1?'':'s'} in this map. For each one, choose what it should become in the Portal.
+      </p>
+      ${m.folders.map((f,idx)=>`
+        <div class="field" style="display:flex;align-items:center;gap:10px;justify-content:space-between;">
+          <div style="flex:1;"><b>${escapeHtml(f.name)}</b> <span class="tiny" style="color:var(--ink-soft);">(${f.placemarks.length} site${f.placemarks.length===1?'':'s'})</span></div>
+          <select data-mapsfolderstage="${idx}" style="flex:1.2;">
+            ${MAPS_STAGE_OPTIONS.map(o=>`<option value="${o.id}" ${m.folderStage[idx]===o.id?'selected':''}>${o.label}</option>`).join('')}
+          </select>
+        </div>`).join('')}
+    `;
+  } else if(m.step==='pickSites'){
+    const manualFolders = m.folders.map((f,idx)=>({f,idx})).filter(x=>m.folderStage[x.idx]==='manual');
+    body = `
+      <p style="font-size:13px;line-height:1.5;color:var(--ink-soft);margin-top:0;">
+        Pick exactly which sites should come in from each folder below — everything else in these folders is left out.
+      </p>
+      ${manualFolders.map(({f,idx})=>`
+        <div class="section-label">${escapeHtml(f.name)}</div>
+        <div style="border:1px solid var(--line);border-radius:10px;margin-bottom:14px;max-height:220px;overflow-y:auto;">
+          ${f.placemarks.map((p,pIdx)=>`
+            <label style="display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:1px solid var(--line-soft);font-size:13px;">
+              <input type="checkbox" data-mapspick="${idx}:${pIdx}" ${m.manualPicks[idx] && m.manualPicks[idx][pIdx] ? 'checked':''}>
+              ${escapeHtml(p.name)}
+            </label>`).join('')}
+        </div>`).join('')}
+    `;
+  } else if(m.step==='review'){
+    const results = mapsComputeResultDeals(m);
+    const byFolder = {};
+    results.forEach(r=>{ (byFolder[r.folderName]=byFolder[r.folderName]||[]).push(r); });
+    body = `
+      <p style="font-size:13px;line-height:1.5;color:var(--ink-soft);margin-top:0;">
+        About to create <b>${results.length}</b> deal${results.length===1?'':'s'} under
+        <b>${escapeHtml(m.pickedClient ? m.pickedClient.name : m.newClientName)}</b>${m.pickedClient?'':' (new)'}.
+      </p>
+      ${Object.keys(byFolder).map(fname=>`
+        <div class="section-label">${escapeHtml(fname)} (${byFolder[fname].length})</div>
+        <div style="border:1px solid var(--line);border-radius:10px;margin-bottom:14px;max-height:200px;overflow-y:auto;">
+          ${byFolder[fname].map(r=>`
+            <div style="display:flex;justify-content:space-between;gap:10px;padding:6px 12px;border-bottom:1px solid var(--line-soft);font-size:12.5px;">
+              <span>${escapeHtml(r.name)}</span>
+              <span class="tiny" style="color:var(--ink-soft);">${r.stage?LSR_STAGE_MAP[r.stage].name:'No stage'}</span>
+            </div>`).join('')}
+        </div>`).join('')}
+      ${!results.length ? `<div class="empty-state"><div class="big">Nothing to import.</div><div class="tiny">Every folder is set to "Skip", or no sites were picked.</div></div>` : ''}
+    `;
+  }
+  overlay.innerHTML = `
+  <div class="modal-card">
+    <div class="modal-head"><div class="modal-title">🗺️ Import from MyMaps</div><button class="modal-close" data-action="closeMapsImport">✕</button></div>
+    <div class="modal-body">${body}</div>
+    <div class="modal-foot">
+      <button class="btn secondary" data-action="closeMapsImport">Cancel</button>
+      ${m.step==='mapping' ? `<button class="btn" data-action="mapsToPickOrReview">Continue</button>` : ''}
+      ${m.step==='pickSites' ? `<button class="btn" data-action="mapsToReview">Continue</button>` : ''}
+      ${m.step==='review' ? `<button class="btn" id="mapsConfirmBtn" data-action="confirmMapsImport">Import</button>` : ''}
+    </div>
+  </div>`;
+  document.getElementById('app').appendChild(overlay);
+  overlay.querySelectorAll('[data-action="closeMapsImport"]').forEach(b=>b.onclick=()=>{ state.mapsImport=null; render(); });
+
+  if(m.step==='upload'){
+    const searchEl = document.getElementById('mapsClientSearch');
+    if(searchEl) searchEl.oninput = ()=>{ m.clientQuery = searchEl.value; render(); };
+    overlay.querySelectorAll('[data-mapspickclient]').forEach(el=>el.onclick=()=>{
+      const [id, listId] = el.dataset.mapspickclient.split(':');
+      const c = mapsAllClientsFlat().find(x=>x.id===id);
+      m.pickedClient = c; m.newClientName=''; render();
+    });
+    const clearLink = overlay.querySelector('[data-mapsclearclient]'); if(clearLink) clearLink.onclick=(ev)=>{ ev.preventDefault(); m.pickedClient=null; render(); };
+    const newNameEl = document.getElementById('mapsNewClientName');
+    if(newNameEl) newNameEl.oninput = ()=>{ m.newClientName = newNameEl.value; if(!m.newClientListId) m.newClientListId='clients'; render(); };
+    overlay.querySelectorAll('[data-mapsnewlist]').forEach(b=>b.onclick=()=>{ m.newClientListId = b.dataset.mapsnewlist; render(); });
+    const fileInput = document.getElementById('mapsFile');
+    if(fileInput) fileInput.onchange=async ()=>{
+      const file = fileInput.files[0]; if(!file) return;
+      if(!m.pickedClient && !m.newClientName.trim()){ flashToast('Pick or name a Client/Listing first.'); fileInput.value=''; return; }
+      try{
+        const kmlText = await mapsReadKmlText(file);
+        const folders = mapsParseFolders(kmlText);
+        if(!folders.length){ flashToast("Didn't find any pinned sites in that file."); return; }
+        m.folders = folders;
+        m.folderStage = folders.map(()=> 'skip');
+        m.manualPicks = folders.map(f=>f.placemarks.map(()=>false));
+        m.step = 'mapping';
+        render();
+      } catch(err){
+        flashToast("Couldn't read that file — " + err.message);
+      }
+    };
+  }
+  if(m.step==='mapping'){
+    overlay.querySelectorAll('[data-mapsfolderstage]').forEach(sel=>sel.onchange=()=>{
+      m.folderStage[parseInt(sel.dataset.mapsfolderstage)] = sel.value;
+    });
+  }
+  if(m.step==='pickSites'){
+    overlay.querySelectorAll('[data-mapspick]').forEach(cb=>cb.onchange=()=>{
+      const [fIdx,pIdx] = cb.dataset.mapspick.split(':').map(Number);
+      if(!m.manualPicks[fIdx]) m.manualPicks[fIdx]=[];
+      m.manualPicks[fIdx][pIdx] = cb.checked;
+    });
+  }
+  const continueBtn = overlay.querySelector('[data-action="mapsToPickOrReview"]'); if(continueBtn) continueBtn.onclick=()=>{
+    m.step = m.folderStage.includes('manual') ? 'pickSites' : 'review';
+    render();
+  };
+  const toReviewBtn = overlay.querySelector('[data-action="mapsToReview"]'); if(toReviewBtn) toReviewBtn.onclick=()=>{ m.step='review'; render(); };
+  const confirmBtn = document.getElementById('mapsConfirmBtn');
+  if(confirmBtn) confirmBtn.onclick=async ()=>{
+    const results = mapsComputeResultDeals(m);
+    if(!results.length){ flashToast('Nothing to import.'); return; }
+    confirmBtn.disabled=true; confirmBtn.textContent='Importing…';
+    await commitMapsImport(m, results);
+    state.mapsImport=null;
+    flashToast(`Imported ${results.length} deal${results.length===1?'':'s'}.`);
+    render();
+  };
+}
+async function commitMapsImport(m, results){
+  let list, clientObj;
+  if(m.pickedClient){
+    list = db.lists.find(l=>l.id===m.pickedClient.listId);
+    clientObj = list.clients.find(c=>c.id===m.pickedClient.id);
+  } else {
+    list = db.lists.find(l=>l.id===(m.newClientListId||'clients'));
+    clientObj = {id:crypto.randomUUID(), name:m.newClientName.trim(), primary:null, secondary:[], deals:[], createdBy:state.currentUser.id, authorizedUserIds:[]};
+    if(list.id==='listings'){ clientObj.prospects=[]; clientObj.categoryConfig=newLSRCategoryConfig(); }
+    list.clients.push(clientObj);
+    await supaCreateClient(clientObj, list.id);
+  }
+  for(const r of results){
+    const dealObj = {id:crypto.randomUUID(), name:r.name, complete:false, activeDeal:false, caExecuted:false, dueDate:null, dealType:'lease', stage:r.stage||null};
+    clientObj.deals.push(dealObj);
+    await supaCreateDeal(dealObj, clientObj.id);
+  }
 }
 
 function guessColumn(headers, keywords){
