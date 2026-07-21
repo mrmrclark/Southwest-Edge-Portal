@@ -1,14 +1,11 @@
 // Southwest Edge Portal — service worker
-// Caches just the app shell (this file, the HTML, icons) so the app still opens
-// if there's no connection. Live data calls (weather, news, logo lookups) always
-// try the network first and are never served from this cache.
-//
-// IMPORTANT: this uses a NETWORK-FIRST strategy for the shell files — it always
-// tries to fetch the latest version first, and only falls back to whatever's
-// cached if there's genuinely no connection. An earlier version of this file
-// did the opposite (cache-first), which meant updates could silently fail to
-// show up even after a hard refresh. Fixed now.
-const CACHE_NAME = 'swe-portal-shell-v2';
+// Genuinely network-first: always tries the network first for the app shell,
+// and only falls back to a cached copy if the network request itself fails
+// (i.e., truly offline). The previous version returned a cached copy
+// immediately whenever one existed, only refreshing it quietly in the
+// background — that's cache-first behavior, not network-first, and it's
+// why deploys sometimes appeared not to take effect for a session or two.
+const CACHE_NAME = 'swe-portal-shell-v3';
 const SHELL_FILES = [
   './index.html',
   './manifest.json',
