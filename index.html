@@ -548,6 +548,7 @@ let state = {
   undoToast:null,
   importTodosModal:null,
   lsrCollapsed:{},            // sectionKey -> true if collapsed
+  dealGroupCollapsed:{},      // per-client deal-stage-group key -> true if collapsed (closed by default)
   lsrSearch:'',
   lsrTrackerFilter:'all',
   lsrCategoryManagerOpen:null, // clientId of the listing being managed, or null
@@ -4733,8 +4734,6 @@ function brokerRow(brokerId){
 }
 function renderClientModalBody(l,c,viewMode){
   viewMode = viewMode || 'all';
-  const openDeals = c.deals.filter(d=>!d.complete);
-  const doneDeals = c.deals.filter(d=>d.complete);
   const showDeals = viewMode!=='prospecting';
   const showProspecting = l.id==='listings' && !state.isMobile;
   const canManageAccess = state.currentUser.role==='Admin' || c.createdBy===state.currentUser.id;
@@ -4771,8 +4770,7 @@ function renderClientModalBody(l,c,viewMode){
     <button class="btn secondary sm" style="margin-top:10px;" data-action="pickContact" data-client="${c.id}" data-slot="primary">${c.primary? 'Change contact':'Attach contact'}</button>
   </div>
   <div class="section-label">Sites / Deals</div>
-  ${openDeals.map(d=>renderDealRowInClient(l,c,d)).join('')}
-  ${doneDeals.length? `<div class="section-label">Completed</div>${doneDeals.map(d=>renderDealRowInClient(l,c,d)).join('')}`:''}
+  ${renderDealGroupsInClient(l,c)}
   ` : ''}
   ${showProspecting ? renderLSRInline(c, viewMode) : ''}
   ${showDeals ? `
@@ -4814,6 +4812,46 @@ function renderDealRowInClient(l,c,d){
         CA Executed
       </label>
     </div>
+  </div>`;
+}
+// Groups a client's Sites/Deals list into collapsible sub-sections. "Open for Business"
+// (d.complete) takes priority over stage — a deal lives in exactly one group. Order here
+// is top (most resolved) to bottom (least resolved / no stage).
+const DEAL_GROUPS = [
+  {key:'openForBusiness', title:'Open for Business', color:'#00A65A', match:d=>!!d.complete},
+  {key:'signedLease',     title:'Signed Lease',      color:'#E8951E', match:d=>!d.complete && d.stage==='signedLease'},
+  {key:'negotiating',     title:'Negotiating Lease', color:'#E0469A', match:d=>!d.complete && d.stage==='negotiating'},
+  {key:'signedLOI',       title:'Signed LOI',        color:'#00A65A', match:d=>!d.complete && d.stage==='signedLOI'},
+  {key:'loi',             title:'LOI',               color:'#00A65A', match:d=>!d.complete && d.stage==='loi'},
+  {key:'inEscrow',        title:'In Escrow',         color:'#E0469A', match:d=>!d.complete && d.stage==='inEscrow'},
+  {key:'closedEscrow',    title:'Closed Escrow',     color:'#E8951E', match:d=>!d.complete && d.stage==='closedEscrow'},
+  {key:'prospects',       title:'Prospects',         color:'#8A8378', match:d=>!d.complete && !d.stage},
+];
+function renderDealGroupsInClient(l,c){
+  return DEAL_GROUPS.map(g=>{
+    const rows = c.deals.filter(g.match);
+    return renderDealGroupSection(l, c, g, rows);
+  }).join('');
+}
+function renderDealGroupSection(l, c, g, rows){
+  const key = 'dealgroup_'+c.id+'_'+g.key;
+  const collapsed = state.dealGroupCollapsed[key] !== false; // closed by default — has to be explicitly opened once
+  let body = '';
+  if(!collapsed){
+    body = rows.length
+      ? rows.map(d=>renderDealRowInClient(l,c,d)).join('')
+      : `<div class="empty-state" style="padding:14px;text-align:left;"><div class="tiny" style="color:var(--ink-soft);">Nothing here yet.</div></div>`;
+  }
+  return `
+  <div style="margin-bottom:12px;">
+    <button class="row-card" data-dealgrouptoggle="${key}" style="cursor:pointer;border-left:4px solid ${g.color};width:100%;text-align:left;background:#fff;">
+      <div class="row-body">
+        <div class="row-title" style="color:${g.color};">${collapsed?'▸':'▾'} ${escapeHtml(g.title)}
+          <span style="color:var(--ink-soft);font-weight:400;font-size:12px;">(${rows.length})</span>
+        </div>
+      </div>
+    </button>
+    ${body}
   </div>`;
 }
 function renderMyNotesModal(){
@@ -5776,6 +5814,10 @@ function attachModalHandlers(root){
   };
   root.querySelectorAll('[data-opendeal]').forEach(el=>el.onclick=()=>{
     openDealModal(el.dataset.listid, el.dataset.client, el.dataset.opendeal); render();
+  });
+  root.querySelectorAll('[data-dealgrouptoggle]').forEach(el=>el.onclick=()=>{
+    const k=el.dataset.dealgrouptoggle; const currentlyCollapsed = state.dealGroupCollapsed[k] !== false;
+    state.dealGroupCollapsed[k]=!currentlyCollapsed; render();
   });
   root.querySelectorAll('[data-toggledeal]').forEach(el=>el.onclick=(ev)=>{
     ev.stopPropagation();
