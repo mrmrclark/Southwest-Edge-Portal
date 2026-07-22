@@ -1199,6 +1199,16 @@ function parseNaturalDate(str){
     if(year < 100) year += 2000; // shorthand '26' -> 2026
     return new Date(year, parseInt(m[1])-1, parseInt(m[2]));
   }
+  // yyyy-mm-dd — what this app's own toLocalDateStr() produces, and what a native date
+  // input's value always is. Must be built from local y/m/d components like the branch
+  // above, NOT handed to `new Date(str)` — that treats a bare "2026-07-24" as UTC midnight,
+  // which silently shifts it back a day in any timezone behind UTC (e.g. Arizona). Without
+  // this explicit branch, simply re-saving a to-do without retyping its date at all would
+  // creep the due date backward by one day every time.
+  const mIso = str.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if(mIso){
+    return new Date(parseInt(mIso[1]), parseInt(mIso[2])-1, parseInt(mIso[3]));
+  }
   const d2 = new Date(str);
   if(!isNaN(d2)) return d2;
   return null;
@@ -2036,41 +2046,62 @@ function smartListTodosRaw(key){
     }
   }
 }
+function todoBelongsToClient(td, clientId){
+  if(td.clientId===clientId) return true;
+  // also match to-do's linked to a deal that belongs to this client
+  if(td.dealId){
+    for(const l of db.lists){
+      if(l.type==='deep'){
+        const c = l.clients.find(x=>x.id===clientId);
+        if(c && c.deals.some(d=>d.id===td.dealId)) return true;
+      }
+    }
+  }
+  return false;
+}
 function matchesCustomFilter(td, f){
   if(!f) return false;
-  if(f.status==='open' && td.completed) return false;
-  if(f.status==='completed' && !td.completed) return false;
-  if(f.assignee==='me' && td.assignedTo!==state.currentUser.id) return false;
-  if(f.assignee && f.assignee!=='me' && f.assignee!=='any' && td.assignedTo!==f.assignee) return false;
+  const matchMode = f.matchMode || 'all'; // old saved lists have no matchMode — behave exactly as before (all-AND)
+  const checks = []; // only conditions the person actually specified go in here
+
+  if(f.status && f.status!=='any'){
+    checks.push(f.status==='completed' ? !!td.completed : !td.completed);
+  }
+  if(f.assignee && f.assignee!=='any'){
+    if(f.assignee==='me') checks.push(td.assignedTo===state.currentUser.id);
+    else if(f.assignee==='unassigned') checks.push(!td.assignedTo);
+    else checks.push(td.assignedTo===f.assignee);
+  }
   if(f.dateRule && f.dateRule!=='any'){
     const s = dueStatus(td.dueDate);
-    if(f.dateRule==='nodate'){ if(td.dueDate) return false; }
-    else if(f.dateRule==='exact'){
-      if(!td.dueDate || !f.exactDate) return false;
-      const target = new Date(f.exactDate+'T00:00:00');
-      if(!isSameDay(td.dueDate, target)) return false;
-    }
-    else {
-      if(f.dateRule==='today' && s!=='today') return false;
-      if(f.dateRule==='week' && !['today','overdue','week'].includes(s)) return false;
-      if(f.dateRule==='month' && !['today','overdue','week','month'].includes(s)) return false;
-      if(f.dateRule==='overdue' && s!=='overdue') return false;
-    }
+    if(f.dateRule==='nodate') checks.push(!td.dueDate);
+    else if(f.dateRule==='exact') checks.push(!!(td.dueDate && f.exactDate && isSameDay(td.dueDate, new Date(f.exactDate+'T00:00:00'))));
+    else if(f.dateRule==='today') checks.push(s==='today');
+    else if(f.dateRule==='week') checks.push(['today','overdue','week'].includes(s));
+    else if(f.dateRule==='month') checks.push(['today','overdue','week','month'].includes(s));
+    else if(f.dateRule==='overdue') checks.push(s==='overdue');
   }
-  if(f.clientId){
-    if(td.clientId!==f.clientId){
-      // also match to-do's linked to a deal that belongs to this client
-      let dealMatches=false;
-      if(td.dealId){
-        for(const l of db.lists){ if(l.type==='deep'){ const c=l.clients.find(x=>x.id===f.clientId); if(c && c.deals.some(d=>d.id===td.dealId)){ dealMatches=true; break; } } }
-      }
-      if(!dealMatches) return false;
-    }
+  // Categories: accept either the new multi-select array or an old single-value string,
+  // so lists saved before this change keep working. Matching ANY selected category is
+  // always the right interpretation here regardless of the overall matchMode — picking
+  // several categories means "could be any of these", not "must have all of them at once"
+  // (a to-do can only have one category anyway).
+  const categories = (f.categories && f.categories.length) ? f.categories : (f.category ? [f.category] : []);
+  if(categories.length){
+    const tdCat = (td.category||'').toLowerCase();
+    checks.push(categories.some(c=>c.trim().toLowerCase()===tdCat));
   }
-  if(f.category && f.category.trim()){
-    if((td.category||'').toLowerCase() !== f.category.trim().toLowerCase()) return false;
+  // Clients: same reasoning — multiple selected clients means "any of these accounts".
+  const clientIds = (f.clientIds && f.clientIds.length) ? f.clientIds : (f.clientId ? [f.clientId] : []);
+  if(clientIds.length){
+    checks.push(clientIds.some(cid=>todoBelongsToClient(td, cid)));
   }
-  return true;
+  if(f.personalOnly){
+    checks.push(!td.clientId && !td.dealId && !td.entryId);
+  }
+
+  if(!checks.length) return true; // no criteria specified at all — matches everything, same as before
+  return matchMode==='any' ? checks.some(Boolean) : checks.every(Boolean);
 }
 function visibleTodo(td){
   // privacy: if private and not mine and not... (admins still can't see detail, only count)
@@ -2395,10 +2426,11 @@ function renderNotifSettingsModal(){
     alert("Real Google Calendar sync needs a Google Cloud project registered to your account (or your Google Workspace admin) plus your portal's real, final web address — same idea as Outlook. Once you're on a stable Netlify domain, this is genuinely buildable client-side with no backend server. For now nothing is synced yet.");
   };
 }
-function portalUrl(){
+function portalUrl(todoId){
   // Uses wherever this file is actually running from — works correctly once deployed
   // (Netlify, custom domain, etc.) without hardcoding any address.
-  return window.location.origin + window.location.pathname;
+  const base = window.location.origin + window.location.pathname;
+  return todoId ? `${base}?todo=${todoId}` : base;
 }
 async function doAppRefresh(){
   try{
@@ -3995,7 +4027,7 @@ function handleAdminAction(a){
   render();
 }
 function promptAddSmartList(){
-  state.newSmartListModal = {name:'', dateRule:'any', exactDate:'', assignee:'any', status:'any', category:'', clientId:'', clientQuery:''};
+  state.newSmartListModal = {name:'', matchMode:'all', dateRule:'any', exactDate:'', assignee:'any', status:'any', categories:[], categoryInput:'', clientIds:[], clientQuery:'', personalOnly:false};
   render();
 }
 function allClientsFlat(){
@@ -4007,13 +4039,23 @@ function renderNewSmartListModal(){
   const m = state.newSmartListModal;
   const overlay = document.createElement('div');
   overlay.className='modal-overlay'; overlay.style.zIndex=185;
-  const clientMatches = m.clientQuery ? allClientsFlat().filter(c=>c.name.toLowerCase().includes(m.clientQuery.toLowerCase())) : [];
-  const selectedClient = m.clientId ? allClientsFlat().find(c=>c.id===m.clientId) : null;
+  const selectedClientIds = new Set(m.clientIds||[]);
+  const clientMatches = m.clientQuery ? allClientsFlat().filter(c=>c.name.toLowerCase().includes(m.clientQuery.toLowerCase()) && !selectedClientIds.has(c.id)) : [];
+  const selectedClients = (m.clientIds||[]).map(id=>allClientsFlat().find(c=>c.id===id)).filter(Boolean);
+  const allCats = allCategories();
+  const catMatches = m.categoryInput ? allCats.filter(c=>c.toLowerCase().includes(m.categoryInput.toLowerCase()) && !(m.categories||[]).some(x=>x.toLowerCase()===c.toLowerCase())) : [];
   overlay.innerHTML = `
   <div class="modal-card">
     <div class="modal-head"><div class="modal-title">New Smart List</div><button class="modal-close" data-action="closeSmartListModal">✕</button></div>
     <div class="modal-body">
       <div class="field"><label>Name</label><input id="slName" placeholder="e.g., My Personal Overdue" value="${escapeAttr(m.name)}"></div>
+      <div class="field">
+        <label>Match</label>
+        <div class="type-toggle">
+          <button class="${m.matchMode!=='any'?'active':''}" data-slmatchmode="all">All of these</button>
+          <button class="${m.matchMode==='any'?'active':''}" data-slmatchmode="any">Any of these</button>
+        </div>
+      </div>
       <div class="field">
         <label>Due date</label>
         <select id="slDateRule">
@@ -4032,6 +4074,7 @@ function renderNewSmartListModal(){
         <select id="slAssignee">
           <option value="any" ${m.assignee==='any'?'selected':''}>Anyone</option>
           <option value="me" ${m.assignee==='me'?'selected':''}>Just me</option>
+          <option value="unassigned" ${m.assignee==='unassigned'?'selected':''}>Unassigned</option>
           ${USERS.map(u=>`<option value="${u.id}" ${m.assignee===u.id?'selected':''}>${u.name}</option>`).join('')}
         </select>
       </div>
@@ -4043,21 +4086,30 @@ function renderNewSmartListModal(){
           <option value="completed" ${m.status==='completed'?'selected':''}>Completed</option>
         </select>
       </div>
-      <div class="field"><label>Category (optional)</label><input id="slCategory" placeholder="e.g., Personal" value="${escapeAttr(m.category)}"></div>
       <div class="field autocomplete-box">
-        <label>Client (optional)</label>
-        ${selectedClient ? `
-          <div style="display:flex;align-items:center;gap:8px;">
-            <div class="pill">${escapeHtml(selectedClient.name)}</div>
-            <button class="btn secondary sm" id="slClearClient">Change</button>
-          </div>
-        ` : `
-          <input id="slClientQuery" placeholder="Start typing a client name…" value="${escapeAttr(m.clientQuery)}">
-          ${clientMatches.length? `<div class="suggest-list">${clientMatches.map(c=>`
-            <div class="suggest-item" data-selectslclient="${c.id}"><b>${escapeHtml(c.name)}</b><div class="sub">${escapeHtml(c.listName)}</div></div>
-          `).join('')}</div>` : ''}
-        `}
+        <label>Category (optional — pick any that apply)</label>
+        ${(m.categories||[]).length ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;">
+          ${(m.categories||[]).map(c=>`<div class="pill" style="display:flex;align-items:center;gap:6px;">${escapeHtml(c)}<button data-removeslcat="${escapeAttr(c)}" style="border:none;background:none;cursor:pointer;color:var(--ink-soft);">✕</button></div>`).join('')}
+        </div>` : ''}
+        <input id="slCategoryInput" placeholder="Start typing to add a category…" value="${escapeAttr(m.categoryInput||'')}">
+        ${catMatches.length? `<div class="suggest-list">${catMatches.map(c=>`
+          <div class="suggest-item" data-addslcat="${escapeAttr(c)}">${escapeHtml(c)}</div>
+        `).join('')}</div>` : ''}
       </div>
+      <div class="field autocomplete-box">
+        <label>Client (optional — pick any that apply)</label>
+        ${selectedClients.length ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;">
+          ${selectedClients.map(c=>`<div class="pill" style="display:flex;align-items:center;gap:6px;">${escapeHtml(c.name)}<button data-removeslclient="${c.id}" style="border:none;background:none;cursor:pointer;color:var(--ink-soft);">✕</button></div>`).join('')}
+        </div>` : ''}
+        <input id="slClientQuery" placeholder="Start typing a client name…" value="${escapeAttr(m.clientQuery)}">
+        ${clientMatches.length? `<div class="suggest-list">${clientMatches.map(c=>`
+          <div class="suggest-item" data-selectslclient="${c.id}"><b>${escapeHtml(c.name)}</b><div class="sub">${escapeHtml(c.listName)}</div></div>
+        `).join('')}</div>` : ''}
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-soft);font-weight:600;margin-top:4px;">
+        <input type="checkbox" id="slPersonalOnly" ${m.personalOnly?'checked':''} style="width:auto;accent-color:var(--good);">
+        Personal only (not linked to any client, deal, or listing)
+      </label>
     </div>
     <div class="modal-foot">
       <button class="btn secondary" data-action="closeSmartListModal">Cancel</button>
@@ -4066,30 +4118,63 @@ function renderNewSmartListModal(){
   </div>`;
   document.getElementById('app').appendChild(overlay);
   overlay.querySelectorAll('[data-action="closeSmartListModal"]').forEach(btn=>btn.onclick=()=>{ state.newSmartListModal=null; render(); });
+  overlay.querySelectorAll('[data-slmatchmode]').forEach(btn=>btn.onclick=()=>{ m.matchMode = btn.dataset.slmatchmode; render(); });
   const dateSel = document.getElementById('slDateRule');
   if(dateSel) dateSel.onchange=()=>{ m.dateRule=dateSel.value; render(); };
   const clientQueryInput = document.getElementById('slClientQuery');
   if(clientQueryInput){
-    clientQueryInput.focus();
     clientQueryInput.oninput=()=>{ m.clientQuery=clientQueryInput.value; render(); };
   }
   overlay.querySelectorAll('[data-selectslclient]').forEach(el=>el.onclick=()=>{
-    m.clientId = el.dataset.selectslclient; render();
+    if(!m.clientIds) m.clientIds=[];
+    m.clientIds.push(el.dataset.selectslclient);
+    m.clientQuery='';
+    render();
   });
-  const clearClientBtn = document.getElementById('slClearClient');
-  if(clearClientBtn) clearClientBtn.onclick=()=>{ m.clientId=''; m.clientQuery=''; render(); };
+  overlay.querySelectorAll('[data-removeslclient]').forEach(el=>el.onclick=()=>{
+    m.clientIds = (m.clientIds||[]).filter(id=>id!==el.dataset.removeslclient);
+    render();
+  });
+  const categoryInput = document.getElementById('slCategoryInput');
+  if(categoryInput){
+    categoryInput.oninput=()=>{ m.categoryInput=categoryInput.value; render(); };
+    categoryInput.onkeydown=(e)=>{
+      if(e.key==='Enter' && categoryInput.value.trim()){
+        e.preventDefault();
+        if(!m.categories) m.categories=[];
+        const val = categoryInput.value.trim();
+        if(!m.categories.some(c=>c.toLowerCase()===val.toLowerCase())) m.categories.push(val);
+        m.categoryInput='';
+        render();
+      }
+    };
+  }
+  overlay.querySelectorAll('[data-addslcat]').forEach(el=>el.onclick=()=>{
+    if(!m.categories) m.categories=[];
+    if(!m.categories.some(c=>c.toLowerCase()===el.dataset.addslcat.toLowerCase())) m.categories.push(el.dataset.addslcat);
+    m.categoryInput='';
+    render();
+  });
+  overlay.querySelectorAll('[data-removeslcat]').forEach(el=>el.onclick=()=>{
+    m.categories = (m.categories||[]).filter(c=>c!==el.dataset.removeslcat);
+    render();
+  });
+  const personalCb = document.getElementById('slPersonalOnly');
+  if(personalCb) personalCb.onchange=()=>{ m.personalOnly = personalCb.checked; render(); };
   overlay.querySelector('[data-action="saveSmartList"]').onclick=()=>{
     const name = document.getElementById('slName').value.trim();
     if(!name){ flashToast('Give the smart list a name.'); return; }
     smartListsArr.push({
       id:'custom'+uid(), name, icon:'📌', isDefault:false,
       filter:{
+        matchMode: m.matchMode || 'all',
         dateRule: document.getElementById('slDateRule').value,
         exactDate: document.getElementById('slExactDate') ? document.getElementById('slExactDate').value : '',
         assignee: document.getElementById('slAssignee').value,
         status: document.getElementById('slStatus').value,
-        category: document.getElementById('slCategory').value.trim(),
-        clientId: m.clientId || '',
+        categories: (m.categories||[]).slice(),
+        clientIds: (m.clientIds||[]).slice(),
+        personalOnly: !!m.personalOnly,
       }
     });
     state.newSmartListModal=null;
@@ -4544,7 +4629,7 @@ function renderTodoDetailModal(){
       if(newAssign!==state.currentUser.id){
         td.isNew=true;
         const subject = 'You Have a New To Do on Southwest Edge';
-        const body = `Hi ${u.name.split(' ')[0]},\n\n${state.currentUser.name} assigned you a to-do:\n\n"${td.title}"${td.category?` (${td.category})`:''}${td.dueDate?`\nDue: ${fmtDate(td.dueDate)}`:''}\n\nLog in to Southwest Edge Portal to view it: ${portalUrl()}\n\n— Sent from Southwest Edge Portal`;
+        const body = `Hi ${u.name.split(' ')[0]},\n\n${state.currentUser.name} assigned you a to-do:\n\n"${td.title}"${td.category?` (${td.category})`:''}${td.dueDate?`\nDue: ${fmtDate(td.dueDate)}`:''}\n\nLog in to Southwest Edge Portal to view it: ${portalUrl(td.id)}\n\n— Sent from Southwest Edge Portal`;
         openEmailDraft(u, subject, body);
         flashToast(`Email draft opened for ${u.name}.`);
       }
@@ -5684,7 +5769,7 @@ function notifyNewLSRTracker(newTrackerId, p, listing){
   db.todos.push(newTodo);
   supaCreateTodo(newTodo);
   const subject = 'You Have a New Lead Assigned on Southwest Edge';
-  const body = `Hi ${u.name.split(' ')[0]},\n\n${state.currentUser.name} made you the Edge Tracker for:\n\n"${p.tenantName}" — ${listing.name}\n\nA to-do has been added to your list to follow up — it'll be marked New until you open it.\n\nLog in to view it: ${portalUrl()}\n\n— Sent from Southwest Edge Portal`;
+  const body = `Hi ${u.name.split(' ')[0]},\n\n${state.currentUser.name} made you the Edge Tracker for:\n\n"${p.tenantName}" — ${listing.name}\n\nA to-do has been added to your list to follow up — it'll be marked New until you open it.\n\nLog in to view it: ${portalUrl(newTodo.id)}\n\n— Sent from Southwest Edge Portal`;
   openEmailDraft(u, subject, body);
   flashToast(`Email draft opened for ${u.name} — they'll also see a new to-do waiting for them.`);
 }
@@ -6336,7 +6421,7 @@ function renderNewTodoModal(){
       newTd.isNew = true;
       const u=USERS.find(x=>x.id===assignTo);
       const subject = 'You Have a New To Do on Southwest Edge';
-      const body = `Hi ${u.name.split(' ')[0]},\n\n${state.currentUser.name} assigned you a new to-do:\n\n"${title}"${category?` (${category})`:''}${newTd.dueDate?`\nDue: ${fmtDate(newTd.dueDate)}`:''}\n\nLog in to Southwest Edge Portal to view it: ${portalUrl()}\n\n— Sent from Southwest Edge Portal`;
+      const body = `Hi ${u.name.split(' ')[0]},\n\n${state.currentUser.name} assigned you a new to-do:\n\n"${title}"${category?` (${category})`:''}${newTd.dueDate?`\nDue: ${fmtDate(newTd.dueDate)}`:''}\n\nLog in to Southwest Edge Portal to view it: ${portalUrl(newTd.id)}\n\n— Sent from Southwest Edge Portal`;
       openEmailDraft(u, subject, body);
       flashToast(`Email draft opened for ${u.name}.`);
     } else {
