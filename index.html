@@ -757,6 +757,7 @@ function clientLocalToRow(c, listId){
 function dealRowToLocal(r){
   return {id:r.id, name:r.name, complete:r.complete, activeDeal:r.active_deal, caExecuted:r.ca_executed,
           dueDate: r.due_date? new Date(r.due_date+'T00:00:00'):null, contactId:r.contact_id||null,
+          brokerContactId:r.broker_contact_id||null, secondContactId:r.second_contact_id||null, thirdContactId:r.third_contact_id||null,
           dealType:r.deal_type, building:r.building||'', spaceNum:r.space_num||'', size:r.size||'', stage:r.stage||'', categoryId:r.category_id||null,
           dealTermsEverSaved: !!r.deal_terms_ever_saved,
           rent:r.rent||'', price:r.price||'', term:r.term||'', tiAllowance:r.ti_allowance||'',
@@ -766,6 +767,7 @@ function dealRowToLocal(r){
 function dealLocalToRow(d, clientId){
   return {id:d.id, client_id:clientId, name:d.name, complete:!!d.complete, active_deal:!!d.activeDeal,
           ca_executed:!!d.caExecuted, due_date: d.dueDate? toLocalDateStr(d.dueDate) : null, contact_id:d.contactId||null,
+          broker_contact_id:d.brokerContactId||null, second_contact_id:d.secondContactId||null, third_contact_id:d.thirdContactId||null,
           deal_type: d.dealType||null, building:d.building||null, space_num:d.spaceNum||null, size:d.size||null, stage:d.stage||null, category_id:d.categoryId||null,
           deal_terms_ever_saved: !!d.dealTermsEverSaved,
           rent:d.rent||null, price:d.price||null, term:d.term||null, ti_allowance:d.tiAllowance||null,
@@ -2731,7 +2733,6 @@ function renderTopbar(){
   const teamCapableIds = ['week','month'];
   const showTodoToggle = state.mainView.type==='smart' && teamCapableIds.includes(state.mainView.id);
   const showBack = state.isMobile && state.mobileScreen==='main';
-  const searchResults = state.globalSearchQuery ? computeGlobalSearchResults(state.globalSearchQuery) : [];
   return `
   <div class="topbar">
     ${showBack ? `<button class="icon-btn" data-action="mobileBack" style="color:var(--ink);margin-right:2px;">←</button>` : ''}
@@ -2743,14 +2744,7 @@ function renderTopbar(){
     <div class="autocomplete-box" style="position:relative;width:280px;">
       <input id="globalSearchBox" placeholder="🔍 Search everything…" value="${escapeAttr(state.globalSearchQuery||'')}"
         style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px;">
-      ${searchResults.length ? `
-      <div class="suggest-list" style="max-height:360px;overflow-y:auto;">
-        ${searchResults.map(r=>`
-          <div class="suggest-item" data-searchresult="${r.idx}">
-            <b>${escapeHtml(r.label)}</b>
-            <div class="sub"><span class="pill gray" style="margin-right:6px;">${r.kind}</span>${escapeHtml(r.sublabel||'')}</div>
-          </div>`).join('')}
-      </div>` : (state.globalSearchQuery ? `<div class="suggest-list"><div class="suggest-item" style="cursor:default;">No matches.</div></div>` : '')}
+      <div id="globalSearchResultsBox">${renderGlobalSearchResultsHtml()}</div>
     </div>
     ${showTodoToggle ? `
     <div class="segmented">
@@ -2758,6 +2752,19 @@ function renderTopbar(){
       <button class="${state.todoView==='team'?'active':''}" data-action="todoViewTeam">Team</button>
     </div>` : ''}
   </div>`;
+}
+function renderGlobalSearchResultsHtml(){
+  const searchResults = state.globalSearchQuery ? computeGlobalSearchResults(state.globalSearchQuery) : [];
+  if(searchResults.length){
+    return `<div class="suggest-list" style="max-height:360px;overflow-y:auto;">
+      ${searchResults.map(r=>`
+        <div class="suggest-item" data-searchresult="${r.idx}">
+          <b>${escapeHtml(r.label)}</b>
+          <div class="sub"><span class="pill gray" style="margin-right:6px;">${r.kind}</span>${escapeHtml(r.sublabel||'')}</div>
+        </div>`).join('')}
+    </div>`;
+  }
+  return state.globalSearchQuery ? `<div class="suggest-list"><div class="suggest-item" style="cursor:default;">No matches.</div></div>` : '';
 }
 function computeGlobalSearchResults(query){
   const q = query.toLowerCase().trim();
@@ -3702,6 +3709,15 @@ function renderAdminMenu(){
 }
 
 /* ---------------- SHELL HANDLERS ---------------- */
+function wireGlobalSearchResultHandlers(){
+  document.querySelectorAll('[data-searchresult]').forEach(el=>el.onmousedown=(ev)=>{
+    ev.preventDefault();
+    const idx = parseInt(el.dataset.searchresult);
+    const results = computeGlobalSearchResults(state.globalSearchQuery);
+    const r = results[idx];
+    if(r) goToGlobalSearchResult(r.action);
+  });
+}
 function attachShellHandlers(){
   document.querySelectorAll('[data-nav]').forEach(el=>el.onclick=()=>{
     const [type,id]=el.dataset.nav.split(':');
@@ -3734,18 +3750,19 @@ function attachShellHandlers(){
   });
   const globalSearchBox = document.getElementById('globalSearchBox');
   if(globalSearchBox){
-    globalSearchBox.oninput=()=>{ state.globalSearchQuery = globalSearchBox.value; render(); };
-    if(state.globalSearchFocused){ globalSearchBox.focus(); const len=globalSearchBox.value.length; globalSearchBox.setSelectionRange(len,len); }
+    globalSearchBox.oninput=()=>{
+      state.globalSearchQuery = globalSearchBox.value;
+      // Deliberately NOT calling render() here — a full render tears down and recreates
+      // this very input element (innerHTML replacement), which is what was causing focus/
+      // cursor position to get lost mid-keystroke. Patching just the results box below it
+      // means the input itself is never touched while typing, so it can never lose focus.
+      const box = document.getElementById('globalSearchResultsBox');
+      if(box){ box.innerHTML = renderGlobalSearchResultsHtml(); wireGlobalSearchResultHandlers(); }
+    };
     globalSearchBox.onfocus=()=>{ state.globalSearchFocused=true; };
     globalSearchBox.onblur=()=>{ setTimeout(()=>{ state.globalSearchFocused=false; },150); };
   }
-  document.querySelectorAll('[data-searchresult]').forEach(el=>el.onmousedown=(ev)=>{
-    ev.preventDefault();
-    const idx = parseInt(el.dataset.searchresult);
-    const results = computeGlobalSearchResults(state.globalSearchQuery);
-    const r = results[idx];
-    if(r) goToGlobalSearchResult(r.action);
-  });
+  wireGlobalSearchResultHandlers();
   const toggleListsBtn = document.querySelector('[data-action="toggleListsCollapsed"]'); if(toggleListsBtn) toggleListsBtn.onclick=()=>{
     state.listsCollapsed = !state.listsCollapsed; render();
   };
@@ -5153,10 +5170,28 @@ function renderDealModalBody(l,c,d){
     </div>
   </div>
   <div class="contact-card">
-    <div class="label">Site / Deal Contact</div>
+    <div class="label">Primary Site Contact</div>
     ${contactRow(d.contactId)}
-    <button class="btn secondary sm" style="margin-top:10px;" data-action="pickDealContact" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">${d.contactId? 'Change contact':'Attach contact'}</button>
+    <button class="btn secondary sm" style="margin-top:10px;" data-action="pickDealContact" data-slot="primary" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">${d.contactId? 'Change contact':'Attach contact'}</button>
   </div>
+  ${d.contactId ? `
+  <div class="contact-card">
+    <div class="label">Broker</div>
+    ${brokerRow(d.brokerContactId)}
+    <button class="btn secondary sm" style="margin-top:10px;" data-action="pickDealBroker" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">${d.brokerContactId? 'Change broker':'Attach broker'}</button>
+  </div>` : ''}
+  ${d.brokerContactId ? `
+  <div class="contact-card">
+    <div class="label">Second Site Contact</div>
+    ${contactRow(d.secondContactId)}
+    <button class="btn secondary sm" style="margin-top:10px;" data-action="pickDealContact" data-slot="second" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">${d.secondContactId? 'Change contact':'Attach contact'}</button>
+  </div>` : ''}
+  ${d.secondContactId ? `
+  <div class="contact-card">
+    <div class="label">Third Site Contact</div>
+    ${contactRow(d.thirdContactId)}
+    <button class="btn secondary sm" style="margin-top:10px;" data-action="pickDealContact" data-slot="third" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">${d.thirdContactId? 'Change contact':'Attach contact'}</button>
+  </div>` : ''}
   <div class="section-label">Deal Terms</div>
   <div class="type-toggle" id="dealTypeToggle">
     <button class="${d.dealType==='lease'?'active':''}" data-dealtypebtn="lease">Lease</button>
@@ -5957,8 +5992,11 @@ function attachModalHandlers(root){
   const pick = root.querySelector('[data-action="pickContact"]'); if(pick) pick.onclick=()=>{
     openContactPicker({clientId: pick.dataset.client, slot: pick.dataset.slot}); render();
   };
-  const pickDeal = root.querySelector('[data-action="pickDealContact"]'); if(pickDeal) pickDeal.onclick=()=>{
-    openContactPicker({listId: pickDeal.dataset.listid, clientId: pickDeal.dataset.client, dealId: pickDeal.dataset.deal}); render();
+  root.querySelectorAll('[data-action="pickDealContact"]').forEach(pickDeal=>pickDeal.onclick=()=>{
+    openContactPicker({listId: pickDeal.dataset.listid, clientId: pickDeal.dataset.client, dealId: pickDeal.dataset.deal, slot: pickDeal.dataset.slot}); render();
+  });
+  const pickDealBrokerBtn = root.querySelector('[data-action="pickDealBroker"]'); if(pickDealBrokerBtn) pickDealBrokerBtn.onclick=()=>{
+    openBrokerPicker({listId: pickDealBrokerBtn.dataset.listid, clientId: pickDealBrokerBtn.dataset.client, dealId: pickDealBrokerBtn.dataset.deal}); render();
   };
   const addAuthBtn = root.querySelector('[data-action="addAuthUser"]'); if(addAuthBtn) addAuthBtn.onclick=async ()=>{
     const sel = document.getElementById('addAuthUserSelect');
@@ -5992,6 +6030,7 @@ function attachModalHandlers(root){
     const newDeal = {id:crypto.randomUUID(), name, complete:false, activeDeal:false, dueDate:null, caExecuted: list.id==='listings'};
     c.deals.push(newDeal);
     supaCreateDeal(newDeal, c.id);
+    openDealModal(frame.listId, c.id, newDeal.id);
     render();
   };
   const ntDeal = root.querySelector('[data-action="newTodoInDeal"]'); if(ntDeal) ntDeal.onclick=()=>{
@@ -6142,7 +6181,13 @@ function renderBrokerPickerPanel(){
   </div>`;
 }
 function finishBrokerPick(brokerId){
-  if(state.brokerPickerOpen){
+  if(state.brokerPickerOpen && state.brokerPickerOpen.dealId){
+    const {listId, clientId, dealId} = state.brokerPickerOpen;
+    const l = db.lists.find(x=>x.id===listId);
+    const client = l.clients.find(c=>c.id===clientId);
+    const d = client.deals.find(x=>x.id===dealId);
+    if(d){ d.brokerContactId = brokerId; supaUpdateDeal(d, client.id); }
+  } else if(state.brokerPickerOpen){
     const {lsrClientId, lsrProspectId} = state.brokerPickerOpen;
     const listing = db.lists.find(x=>x.id==='listings').clients.find(c=>c.id===lsrClientId);
     const p = listing.prospects.find(x=>x.id===lsrProspectId);
@@ -6251,13 +6296,16 @@ function finishContactPick(contactId){
     supaUpdateProspect(p, listing.id);
   } else if(state.contactPickerOpen && state.contactPickerOpen.dealId){
     // Must be checked before the generic clientId branch below — a deal-contact
-    // pick carries clientId too (with no slot), so it would otherwise fall through
-    // and silently overwrite the client's own secondary contacts instead of the deal's.
-    const {listId, clientId, dealId} = state.contactPickerOpen;
+    // pick carries clientId too (with no slot for the client-contact case), so it
+    // would otherwise fall through and silently overwrite the client's own secondary
+    // contacts instead of the deal's.
+    const {listId, clientId, dealId, slot} = state.contactPickerOpen;
     const l = db.lists.find(x=>x.id===listId);
     const client = l.clients.find(c=>c.id===clientId);
     const d = client.deals.find(x=>x.id===dealId);
-    d.contactId = contactId;
+    if(slot==='second') d.secondContactId = contactId;
+    else if(slot==='third') d.thirdContactId = contactId;
+    else d.contactId = contactId; // 'primary' or unset — Primary Site Contact
     supaUpdateDeal(d, client.id);
   } else if(state.contactPickerOpen && state.contactPickerOpen.clientId){
     const {clientId, slot} = state.contactPickerOpen;
