@@ -615,7 +615,15 @@ async function supaCreateAdmittedUser(name, email, role, initials){
    ------------------------------------------------------------------------------- */
 const SUPABASE_URL = 'https://ugtlyzwvnhmcphtqkbke.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_SkLAcSbiSghUS6i-kclzdQ_V3G_0xbC';
-const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  auth: {
+    persistSession: true,   // keep the session in localStorage across app launches
+    autoRefreshToken: true, // silently refresh the access token in the background so a
+                            // long-lived refresh token keeps you logged in indefinitely,
+                            // not just until the short-lived access token expires
+    detectSessionInUrl: true,
+  }
+});
 
 async function fetchMyProfile(authUserId){
   const { data, error } = await supabaseClient.from('profiles').select('*').eq('id', authUserId).single();
@@ -1077,6 +1085,7 @@ async function fetchAllAppDataFromSupabase(){
   await fetchDeletionRequestsFromSupabase();
   await fetchPendingUsersFromSupabase();
   await fetchCompanySettingsFromSupabase();
+  await fetchSmartListsFromSupabase();
 }
 async function fetchCompanySettingsFromSupabase(){
   const { data, error } = await supabaseClient.from('company_settings').select('*').eq('id','default').single();
@@ -2003,6 +2012,7 @@ const SMART_LIST_DEFAULTS = [
   {id:'todayAll', name:'Today - All', icon:'🔥'},
   {id:'overdueMe', name:'Overdue Me', icon:'⏰'},
   {id:'overdueAll', name:'Overdue - All', icon:'⏰'},
+  {id:'assignedByOthers', name:'Assigned to Me (by others)', icon:'📥'},
   {id:'week', name:'Due This Week', icon:'📅'},
   {id:'month', name:'Due This Month', icon:'🗓️'},
   {id:'allMe', name:'All - Me', icon:'📋'},
@@ -2016,6 +2026,41 @@ const SMART_LIST_DEFAULTS = [
 // Single mutable, ordered list of every smart list (defaults + user-created). Reordering,
 // hiding, and deleting all operate on this one array so order is consistent everywhere.
 let smartListsArr = SMART_LIST_DEFAULTS.map(s=>({...s, isDefault:true}));
+
+// Custom smart lists are synced through Supabase (per-person, private — RLS scopes each
+// row to its own user_id) so they follow you to any device, including mobile, instead of
+// being stuck in one browser's local storage.
+async function fetchSmartListsFromSupabase(){
+  const authId = state.currentUser && state.currentUser.authId;
+  if(!authId) return;
+  const { data, error } = await supabaseClient.from('smart_lists').select('*').eq('user_id', authId).order('display_order', {ascending:true});
+  if(error){ console.error('fetchSmartListsFromSupabase error:', error); return; }
+  const custom = data.map(r=>({id:r.id, name:r.name, icon:r.icon, isDefault:false, filter:r.filter}));
+  smartListsArr = [...SMART_LIST_DEFAULTS.map(s=>({...s, isDefault:true})), ...custom];
+}
+async function supaCreateSmartList(sl, order){
+  const authId = state.currentUser && state.currentUser.authId;
+  if(!authId) return;
+  const { error } = await supabaseClient.from('smart_lists').insert({id:sl.id, user_id:authId, name:sl.name, icon:sl.icon, filter:sl.filter, display_order:order});
+  if(error){ console.error('supaCreateSmartList error:', error); flashToast('Saved here, but syncing this smart list failed. (' + error.message + ')'); render(); }
+}
+async function supaUpdateSmartList(sl){
+  const { error } = await supabaseClient.from('smart_lists').update({name:sl.name, icon:sl.icon, filter:sl.filter}).eq('id', sl.id);
+  if(error){ console.error('supaUpdateSmartList error:', error); flashToast('Saved here, but syncing this smart list failed. (' + error.message + ')'); render(); }
+}
+async function supaDeleteSmartList(id){
+  const { error } = await supabaseClient.from('smart_lists').delete().eq('id', id);
+  if(error){ console.error('supaDeleteSmartList error:', error); flashToast('Deleted here, but syncing that deletion failed. (' + error.message + ')'); render(); }
+}
+async function supaReorderSmartLists(){
+  const authId = state.currentUser && state.currentUser.authId;
+  if(!authId) return;
+  const customOnly = smartListsArr.filter(s=>!s.isDefault);
+  await Promise.all(customOnly.map((sl, i)=>
+    supabaseClient.from('smart_lists').update({display_order:i}).eq('id', sl.id)
+      .then(({error})=>{ if(error) console.error('supaReorderSmartLists error:', error); })
+  ));
+}
 
 function smartListTodos(key){
   const raw = smartListTodosRaw(key);
@@ -2048,6 +2093,7 @@ function smartListTodosRaw(key){
     case 'todayAll': return t.filter(td=>!td.completed && inMySphere(td) && dueStatus(td.dueDate)==='today');
     case 'overdueMe': return t.filter(td=>!td.completed && td.assignedTo===me && dueStatus(td.dueDate)==='overdue');
     case 'overdueAll': return t.filter(td=>!td.completed && inMySphere(td) && dueStatus(td.dueDate)==='overdue');
+    case 'assignedByOthers': return t.filter(td=>!td.completed && td.assignedTo===me && td.createdBy && td.createdBy!==me);
     case 'week': return t.filter(td=>!td.completed && inMySphere(td) && ['today','overdue','week'].includes(dueStatus(td.dueDate)));
     case 'month': return t.filter(td=>!td.completed && inMySphere(td) && ['today','overdue','week','month'].includes(dueStatus(td.dueDate)));
     case 'allMe': return t.filter(td=>!td.completed && inMySphere(td) && !!td.dueDate);
@@ -2092,6 +2138,7 @@ function matchesCustomFilter(td, f){
   }
   if(f.assignee && f.assignee!=='any'){
     if(f.assignee==='me') checks.push(td.assignedTo===state.currentUser.id);
+    else if(f.assignee==='meByOthers') checks.push(td.assignedTo===state.currentUser.id && !!td.createdBy && td.createdBy!==state.currentUser.id);
     else if(f.assignee==='unassigned') checks.push(!td.assignedTo);
     else checks.push(td.assignedTo===f.assignee);
   }
@@ -2626,11 +2673,13 @@ function countBadge(list, cls){
 }
 const PROTECTED_LIST_IDS = ['clients','listings','hotlist','hitlist'];
 function renderNavContextMenu(kind, id){
+  const isCustomSmart = kind==='smart' && !smartListsArr.find(s=>s.id===id).isDefault;
   const canDelete = kind==='smart' ? !smartListsArr.find(s=>s.id===id).isDefault : !PROTECTED_LIST_IDS.includes(id);
   return `
   <div class="nav-context-menu">
     <button data-navmove="up:${kind}:${id}">↑ Move Up</button>
     <button data-navmove="down:${kind}:${id}">↓ Move Down</button>
+    ${isCustomSmart ? `<button data-editsmartlist="${id}">✏️ Edit</button>` : ''}
     ${canDelete? `<button class="danger" data-navdelete="${kind}:${id}">🗑️ Delete</button>` : `<button disabled style="opacity:.4;cursor:default;">Default — can't delete</button>`}
   </div>`;
 }
@@ -3568,6 +3617,7 @@ function renderTodoRow(td){
   const dueLabel = td.dueDate ? fmtDate(td.dueDate) : 'No date';
   const dueCls = status==='overdue' ? 'overdue' : (status==='today' ? 'today' : '');
   const assignee = USERS.find(u=>u.id===td.assignedTo);
+  const assignedBy = (td.createdBy && td.createdBy!==td.assignedTo) ? USERS.find(u=>u.id===td.createdBy) : null;
   const contact = getTodoContact(td);
   const selected = state.selectedTodoIds.includes(td.id);
   return `
@@ -3582,6 +3632,7 @@ function renderTodoRow(td){
         ${td.private ? `<span class="pill private">Private</span>`:''}
         ${td.type!=='task' ? `<span class="pill gray">${td.type}${td.type==='checklist' && td.checklistItems && td.checklistItems.length? ` ${td.checklistItems.filter(i=>i.done).length}/${td.checklistItems.length}`:''}</span>`:''}
         ${td.isNew && td.assignedTo===state.currentUser.id ? `<span class="pill" style="background:var(--edge);color:#fff;">New</span>`:''}
+        ${assignedBy ? `<span class="pill gray" title="Assigned by ${escapeAttr(assignedBy.name)}">👤 by ${assignedBy.initials}</span>`:''}
         ${td.attachments && td.attachments.length ? `<span class="pill gray">📎 ${td.attachments.length}</span>`:''}
       </div>
     </div>
@@ -3854,10 +3905,15 @@ function attachShellHandlers(){
     state.navContextMenu = (state.navContextMenu && state.navContextMenu.id===id) ? null : {kind,id};
     render();
   });
+  document.querySelectorAll('[data-editsmartlist]').forEach(el=>el.onclick=(ev)=>{
+    ev.stopPropagation();
+    state.navContextMenu=null;
+    promptAddSmartList(el.dataset.editsmartlist);
+  });
   document.querySelectorAll('[data-navmove]').forEach(el=>el.onclick=(ev)=>{
     ev.stopPropagation();
     const [dir,kind,id]=el.dataset.navmove.split(':');
-    if(kind==='smart') moveArrayItem(smartListsArr, id, dir);
+    if(kind==='smart'){ moveArrayItem(smartListsArr, id, dir); supaReorderSmartLists(); }
     else moveArrayItem(db.lists, id, dir);
     state.navContextMenu=null;
     render();
@@ -3867,7 +3923,7 @@ function attachShellHandlers(){
     const [kind,id]=el.dataset.navdelete.split(':');
     const label = kind==='smart' ? smartListsArr.find(s=>s.id===id).name : db.lists.find(l=>l.id===id).name;
     if(confirm(`Delete "${label}"? This can't be undone.`)){
-      if(kind==='smart') smartListsArr = smartListsArr.filter(s=>s.id!==id);
+      if(kind==='smart'){ smartListsArr = smartListsArr.filter(s=>s.id!==id); supaDeleteSmartList(id); }
       else db.lists = db.lists.filter(l=>l.id!==id);
       if(state.mainView.type===kind && state.mainView.id===id) state.mainView={type:'smart', id:'todayMe'};
     }
@@ -4067,7 +4123,22 @@ function handleAdminAction(a){
   if(a==='adminReset'){ flashToast('Password reset flow would open here.'); }
   render();
 }
-function promptAddSmartList(){
+function promptAddSmartList(editingId){
+  if(editingId){
+    const existing = smartListsArr.find(s=>s.id===editingId);
+    if(existing){
+      const f = existing.filter || {};
+      state.newSmartListModal = {
+        editingId, name: existing.name, matchMode: f.matchMode||'all', dateRule: f.dateRule||'any', exactDate: f.exactDate||'',
+        assignee: f.assignee||'any', status: f.status||'any',
+        categories: (f.categories||(f.category?[f.category]:[])).slice(), categoryInput:'',
+        clientIds: (f.clientIds||(f.clientId?[f.clientId]:[])).slice(), clientQuery:'',
+        personalOnly: !!f.personalOnly,
+      };
+      render();
+      return;
+    }
+  }
   state.newSmartListModal = {name:'', matchMode:'all', dateRule:'any', exactDate:'', assignee:'any', status:'any', categories:[], categoryInput:'', clientIds:[], clientQuery:'', personalOnly:false};
   render();
 }
@@ -4087,7 +4158,7 @@ function renderNewSmartListModal(){
   const catMatches = m.categoryInput ? allCats.filter(c=>c.toLowerCase().includes(m.categoryInput.toLowerCase()) && !(m.categories||[]).some(x=>x.toLowerCase()===c.toLowerCase())) : [];
   overlay.innerHTML = `
   <div class="modal-card">
-    <div class="modal-head"><div class="modal-title">New Smart List</div><button class="modal-close" data-action="closeSmartListModal">✕</button></div>
+    <div class="modal-head"><div class="modal-title">${m.editingId?'Edit Smart List':'New Smart List'}</div><button class="modal-close" data-action="closeSmartListModal">✕</button></div>
     <div class="modal-body">
       <div class="field"><label>Name</label><input id="slName" placeholder="e.g., My Personal Overdue" value="${escapeAttr(m.name)}"></div>
       <div class="field">
@@ -4115,6 +4186,7 @@ function renderNewSmartListModal(){
         <select id="slAssignee">
           <option value="any" ${m.assignee==='any'?'selected':''}>Anyone</option>
           <option value="me" ${m.assignee==='me'?'selected':''}>Just me</option>
+          <option value="meByOthers" ${m.assignee==='meByOthers'?'selected':''}>Assigned to me (by someone else)</option>
           <option value="unassigned" ${m.assignee==='unassigned'?'selected':''}>Unassigned</option>
           ${USERS.map(u=>`<option value="${u.id}" ${m.assignee===u.id?'selected':''}>${u.name}</option>`).join('')}
         </select>
@@ -4154,7 +4226,7 @@ function renderNewSmartListModal(){
     </div>
     <div class="modal-foot">
       <button class="btn secondary" data-action="closeSmartListModal">Cancel</button>
-      <button class="btn" data-action="saveSmartList">Create Smart List</button>
+      <button class="btn" data-action="saveSmartList">${m.editingId?'Save Changes':'Create Smart List'}</button>
     </div>
   </div>`;
   document.getElementById('app').appendChild(overlay);
@@ -4205,21 +4277,32 @@ function renderNewSmartListModal(){
   overlay.querySelector('[data-action="saveSmartList"]').onclick=()=>{
     const name = document.getElementById('slName').value.trim();
     if(!name){ flashToast('Give the smart list a name.'); return; }
-    smartListsArr.push({
-      id:'custom'+uid(), name, icon:'📌', isDefault:false,
-      filter:{
-        matchMode: m.matchMode || 'all',
-        dateRule: document.getElementById('slDateRule').value,
-        exactDate: document.getElementById('slExactDate') ? document.getElementById('slExactDate').value : '',
-        assignee: document.getElementById('slAssignee').value,
-        status: document.getElementById('slStatus').value,
-        categories: (m.categories||[]).slice(),
-        clientIds: (m.clientIds||[]).slice(),
-        personalOnly: !!m.personalOnly,
+    const filter = {
+      matchMode: m.matchMode || 'all',
+      dateRule: document.getElementById('slDateRule').value,
+      exactDate: document.getElementById('slExactDate') ? document.getElementById('slExactDate').value : '',
+      assignee: document.getElementById('slAssignee').value,
+      status: document.getElementById('slStatus').value,
+      categories: (m.categories||[]).slice(),
+      clientIds: (m.clientIds||[]).slice(),
+      personalOnly: !!m.personalOnly,
+    };
+    if(m.editingId){
+      const existing = smartListsArr.find(s=>s.id===m.editingId);
+      if(existing){
+        existing.name = name;
+        existing.filter = filter;
+        supaUpdateSmartList(existing);
       }
-    });
+      flashToast(`"${name}" smart list updated.`);
+    } else {
+      const newList = {id:'custom'+uid(), name, icon:'📌', isDefault:false, filter};
+      smartListsArr.push(newList);
+      const order = smartListsArr.filter(s=>!s.isDefault).length - 1;
+      supaCreateSmartList(newList, order);
+      flashToast(`"${name}" smart list created.`);
+    }
     state.newSmartListModal=null;
-    flashToast(`"${name}" smart list created.`);
     render();
   };
 }
@@ -5910,6 +5993,22 @@ function renderEntryModalBody(l,e){
   `;
 }
 
+function saveDealTermsFromForm(l, c, d){
+  const stageEl = document.getElementById('dtStage');
+  if(stageEl) d.stage = stageEl.value || null; // empty is fine — it just means "Prospects" in the grouped view
+  const categorySelect = document.getElementById('dtCategory');
+  if(categorySelect) d.categoryId = categorySelect.value || null;
+  d.dealTermsEverSaved = true;
+  const buildingEl = document.getElementById('dtBuilding'); if(buildingEl) d.building = buildingEl.value.trim();
+  const spaceNumEl = document.getElementById('dtSpaceNum'); if(spaceNumEl) d.spaceNum = spaceNumEl.value.trim();
+  const sizeEl = document.getElementById('dtSize'); if(sizeEl) d.size = sizeEl.value.trim();
+  const moneyEl = document.getElementById('dtMoney');
+  if(moneyEl){ if(d.dealType==='sale') d.price = moneyEl.value.trim(); else d.rent = moneyEl.value.trim(); }
+  const termEl = document.getElementById('dtTerm'); if(termEl) d.term = termEl.value.trim();
+  const tiEl = document.getElementById('dtTI'); if(tiEl) d.tiAllowance = tiEl.value.trim();
+  const notesEl = document.getElementById('dtNotes'); if(notesEl) d.notes = notesEl.value.trim();
+  supaUpdateDeal(d, c.id);
+}
 function attachModalHandlers(root){
   root.querySelectorAll('[data-crumb]').forEach(el=>el.onclick=()=>{
     const idx=parseInt(el.dataset.crumb);
@@ -5932,23 +6031,18 @@ function attachModalHandlers(root){
     }
     else closeModalStack();
   };
-  const saveCloseBtn = root.querySelector('[data-action="saveAndCloseDeal"]'); if(saveCloseBtn) saveCloseBtn.onclick=()=>{
-    const stageEl = document.getElementById('dtStage');
-    const catEl = document.getElementById('dtCategory');
-    const realSaveBtn = document.querySelector('[data-action="saveDealTerms"]');
-    if(stageEl && !stageEl.value){ realSaveBtn.click(); return; }
-    if(catEl){
-      const frame = state.modalStack[state.modalStack.length-1];
-      const l=db.lists.find(x=>x.id===frame.listId); const c=l.clients.find(x=>x.id===frame.clientId);
-      const d=c.deals.find(x=>x.id===frame.dealId);
-      if(!catEl.value && d.dealTermsEverSaved){ realSaveBtn.click(); return; }
-    }
-    realSaveBtn.click();
+  const saveCloseBtn = root.querySelector('[data-action="saveAndCloseDeal"]'); if(saveCloseBtn) saveCloseBtn.onclick=safeHandler(()=>{
+    const frame = state.modalStack[state.modalStack.length-1];
+    const l=db.lists.find(x=>x.id===frame.listId); const c=l && l.clients.find(x=>x.id===frame.clientId);
+    const d=c && c.deals.find(x=>x.id===frame.dealId);
+    if(!l || !c || !d){ flashToast("Couldn't find this deal to save — it may have been moved or deleted."); render(); return; }
+    saveDealTermsFromForm(l, c, d);
     state.modalStack.pop();
     render();
-  };
-  const archiveClientBtn = root.querySelector('[data-action="archiveClient"]'); if(archiveClientBtn) archiveClientBtn.onclick=()=>{
-    const l=db.lists.find(x=>x.id===archiveClientBtn.dataset.listid); const c=l.clients.find(x=>x.id===archiveClientBtn.dataset.client);
+  });
+  const archiveClientBtn = root.querySelector('[data-action="archiveClient"]'); if(archiveClientBtn) archiveClientBtn.onclick=safeHandler(()=>{
+    const l=db.lists.find(x=>x.id===archiveClientBtn.dataset.listid); const c=l && l.clients.find(x=>x.id===archiveClientBtn.dataset.client);
+    if(!c){ flashToast("Couldn't find this client."); render(); return; }
     const noun = l.id==='listings' ? 'listing' : 'client';
     if(confirm(`Archive "${c.name}"? It'll move to the Archived section and stop showing in the main list — you can restore it later.`)){
       supaArchiveClient(c, l.id, true);
@@ -5959,17 +6053,20 @@ function attachModalHandlers(root){
       flashToast(`${c.name} archived.`);
       render();
     }
-  };
-  const restoreFromModalBtn = root.querySelector('[data-action="restoreClientFromModal"]'); if(restoreFromModalBtn) restoreFromModalBtn.onclick=()=>{
-    const l=db.lists.find(x=>x.id===restoreFromModalBtn.dataset.listid); const c=l.clients.find(x=>x.id===restoreFromModalBtn.dataset.client);
+  });
+  const restoreFromModalBtn = root.querySelector('[data-action="restoreClientFromModal"]'); if(restoreFromModalBtn) restoreFromModalBtn.onclick=safeHandler(()=>{
+    const l=db.lists.find(x=>x.id===restoreFromModalBtn.dataset.listid);
+    const c=(l && l.clients.find(x=>x.id===restoreFromModalBtn.dataset.client)) || (db.archivedClients||[]).find(x=>x.id===restoreFromModalBtn.dataset.client);
+    if(!l || !c){ flashToast("Couldn't find this client to restore."); render(); return; }
     c.archivedAt = null;
     delete c.archivedListId;
     supaArchiveClient(c, l.id, false);
     flashToast(`${c.name} restored.`);
     render();
-  };
-  const deleteClientBtn = root.querySelector('[data-action="deleteClient"]'); if(deleteClientBtn) deleteClientBtn.onclick=()=>{
-    const l=db.lists.find(x=>x.id===deleteClientBtn.dataset.listid); const c=l.clients.find(x=>x.id===deleteClientBtn.dataset.client);
+  });
+  const deleteClientBtn = root.querySelector('[data-action="deleteClient"]'); if(deleteClientBtn) deleteClientBtn.onclick=safeHandler(()=>{
+    const l=db.lists.find(x=>x.id===deleteClientBtn.dataset.listid); const c=l && l.clients.find(x=>x.id===deleteClientBtn.dataset.client);
+    if(!c){ flashToast("Couldn't find this client."); render(); return; }
     const noun = deleteClientBtn.dataset.noun;
     if(confirm(`Permanently delete this ${noun} — "${c.name}"? This cannot be undone.`)){
       // Detach (don't delete) any to-do's pointing at this client, so they aren't silently lost.
@@ -5979,7 +6076,7 @@ function attachModalHandlers(root){
       flashToast(`"${c.name}" deleted.`);
       render();
     }
-  };
+  });
   root.querySelectorAll('[data-opendeal]').forEach(el=>el.onclick=()=>{
     openDealModal(el.dataset.listid, el.dataset.client, el.dataset.opendeal); render();
   });
@@ -5987,32 +6084,35 @@ function attachModalHandlers(root){
     const k=el.dataset.dealgrouptoggle; const currentlyCollapsed = state.dealGroupCollapsed[k] !== false;
     state.dealGroupCollapsed[k]=!currentlyCollapsed; render();
   });
-  root.querySelectorAll('[data-toggledeal]').forEach(el=>el.onclick=(ev)=>{
+  root.querySelectorAll('[data-toggledeal]').forEach(el=>el.onclick=safeHandler((ev)=>{
     ev.stopPropagation();
     const frame = state.modalStack[0];
-    const l=db.lists.find(x=>x.id===frame.listId); const c=l.clients.find(x=>x.id===frame.clientId);
-    const d=c.deals.find(x=>x.id===el.dataset.toggledeal);
+    const l=db.lists.find(x=>x.id===frame.listId); const c=l && l.clients.find(x=>x.id===frame.clientId);
+    const d=c && c.deals.find(x=>x.id===el.dataset.toggledeal);
+    if(!d){ flashToast("Couldn't find this deal."); render(); return; }
     d.complete=!d.complete; supaUpdateDeal(d, c.id); render();
-  });
-  root.querySelectorAll('[data-toggleactive]').forEach(el=>el.onclick=(ev)=>{
+  }));
+  root.querySelectorAll('[data-toggleactive]').forEach(el=>el.onclick=safeHandler((ev)=>{
     ev.stopPropagation();
     const frame = state.modalStack[0];
-    const l=db.lists.find(x=>x.id===frame.listId); const c=l.clients.find(x=>x.id===frame.clientId);
-    const d=c.deals.find(x=>x.id===el.dataset.toggleactive);
+    const l=db.lists.find(x=>x.id===frame.listId); const c=l && l.clients.find(x=>x.id===frame.clientId);
+    const d=c && c.deals.find(x=>x.id===el.dataset.toggleactive);
+    if(!d){ flashToast("Couldn't find this deal."); render(); return; }
     d.activeDeal = el.checked;
     supaUpdateDeal(d, c.id);
     flashToast(d.activeDeal ? `${d.name} marked as an Active Deal.` : `${d.name} removed from Active Deals.`);
     render();
-  });
-  root.querySelectorAll('[data-togglecaexec]').forEach(el=>el.onclick=(ev)=>{
+  }));
+  root.querySelectorAll('[data-togglecaexec]').forEach(el=>el.onclick=safeHandler((ev)=>{
     ev.stopPropagation();
-    const l=db.lists.find(x=>x.id===el.dataset.listid); const c=l.clients.find(x=>x.id===el.dataset.client);
-    const d=c.deals.find(x=>x.id===el.dataset.togglecaexec);
+    const l=db.lists.find(x=>x.id===el.dataset.listid); const c=l && l.clients.find(x=>x.id===el.dataset.client);
+    const d=c && c.deals.find(x=>x.id===el.dataset.togglecaexec);
+    if(!d){ flashToast("Couldn't find this deal."); render(); return; }
     d.caExecuted = el.checked;
     supaUpdateDeal(d, c.id);
     flashToast(d.caExecuted ? `CA marked executed for ${d.name}.` : `CA marked outstanding for ${d.name}.`);
     render();
-  });
+  }));
   const pick = root.querySelector('[data-action="pickContact"]'); if(pick) pick.onclick=()=>{
     openContactPicker({clientId: pick.dataset.client, slot: pick.dataset.slot}); render();
   };
@@ -6022,11 +6122,12 @@ function attachModalHandlers(root){
   const pickDealBrokerBtn = root.querySelector('[data-action="pickDealBroker"]'); if(pickDealBrokerBtn) pickDealBrokerBtn.onclick=()=>{
     openBrokerPicker({listId: pickDealBrokerBtn.dataset.listid, clientId: pickDealBrokerBtn.dataset.client, dealId: pickDealBrokerBtn.dataset.deal}); render();
   };
-  const addAuthBtn = root.querySelector('[data-action="addAuthUser"]'); if(addAuthBtn) addAuthBtn.onclick=async ()=>{
+  const addAuthBtn = root.querySelector('[data-action="addAuthUser"]'); if(addAuthBtn) addAuthBtn.onclick=safeHandler(async ()=>{
     const sel = document.getElementById('addAuthUserSelect');
     const userId = sel.value;
     const frame = state.modalStack[0];
-    const l=db.lists.find(x=>x.id===frame.listId); const c=l.clients.find(x=>x.id===addAuthBtn.dataset.client);
+    const l=db.lists.find(x=>x.id===frame.listId); const c=l && l.clients.find(x=>x.id===addAuthBtn.dataset.client);
+    if(!c){ flashToast("Couldn't find this client."); render(); return; }
     const ok = await supaAddAuthorizedUser(c.id, userId);
     if(ok){
       if(!c.authorizedUserIds) c.authorizedUserIds=[];
@@ -6034,65 +6135,50 @@ function attachModalHandlers(root){
       flashToast(`${USERS.find(u=>u.id===userId).name} can now see this ${l.id==='listings'?'listing':'client'}.`);
     }
     render();
-  };
-  root.querySelectorAll('[data-removeauth]').forEach(el=>el.onclick=()=>{
+  });
+  root.querySelectorAll('[data-removeauth]').forEach(el=>el.onclick=safeHandler(()=>{
     const userId = el.dataset.removeauth;
     const frame = state.modalStack[0];
-    const l=db.lists.find(x=>x.id===frame.listId); const c=l.clients.find(x=>x.id===el.dataset.client);
+    const l=db.lists.find(x=>x.id===frame.listId); const c=l && l.clients.find(x=>x.id===el.dataset.client);
+    if(!c){ flashToast("Couldn't find this client."); render(); return; }
     c.authorizedUserIds = (c.authorizedUserIds||[]).filter(id=>id!==userId);
     supaRemoveAuthorizedUser(c.id, userId);
     render();
-  });
+  }));
   const pickEntry = root.querySelector('[data-action="pickEntryContact"]'); if(pickEntry) pickEntry.onclick=()=>{
     openContactPicker({listId: pickEntry.dataset.listid, entryId: pickEntry.dataset.entry}); render();
   };
-  const addDeal = root.querySelector('[data-action="addDeal"]'); if(addDeal) addDeal.onclick=()=>{
+  const addDeal = root.querySelector('[data-action="addDeal"]'); if(addDeal) addDeal.onclick=safeHandler(()=>{
     const name = prompt('Site / deal name (e.g. an intersection or address):');
     if(!name) return;
     const frame = state.modalStack[state.modalStack.length-1];
-    const list=db.lists.find(x=>x.id===frame.listId); const c=list.clients.find(x=>x.id===addDeal.dataset.client);
+    const list=db.lists.find(x=>x.id===frame.listId); const c=list && list.clients.find(x=>x.id===addDeal.dataset.client);
+    if(!c){ flashToast("Couldn't find this client."); render(); return; }
     const newDeal = {id:crypto.randomUUID(), name, complete:false, activeDeal:false, dueDate:null, caExecuted: list.id==='listings'};
     c.deals.push(newDeal);
     supaCreateDeal(newDeal, c.id);
     openDealModal(frame.listId, c.id, newDeal.id);
     render();
-  };
+  });
   const ntDeal = root.querySelector('[data-action="newTodoInDeal"]'); if(ntDeal) ntDeal.onclick=()=>{
     openNewTodoModal({listId:ntDeal.dataset.listid, clientId:ntDeal.dataset.client, dealId:ntDeal.dataset.deal}); render();
   };
-  root.querySelectorAll('[data-dealtypebtn]').forEach(btn=>btn.onclick=()=>{
+  root.querySelectorAll('[data-dealtypebtn]').forEach(btn=>btn.onclick=safeHandler(()=>{
     const frame = state.modalStack[state.modalStack.length-1];
-    const l=db.lists.find(x=>x.id===frame.listId); const c=l.clients.find(x=>x.id===frame.clientId);
-    const d=c.deals.find(x=>x.id===frame.dealId);
+    const l=db.lists.find(x=>x.id===frame.listId); const c=l && l.clients.find(x=>x.id===frame.clientId);
+    const d=c && c.deals.find(x=>x.id===frame.dealId);
+    if(!d){ flashToast("Couldn't find this deal."); render(); return; }
     d.dealType = btn.dataset.dealtypebtn;
     render();
-  });
-  const saveDealTermsBtn = root.querySelector('[data-action="saveDealTerms"]'); if(saveDealTermsBtn) saveDealTermsBtn.onclick=()=>{
-    const l=db.lists.find(x=>x.id===saveDealTermsBtn.dataset.listid); const c=l.clients.find(x=>x.id===saveDealTermsBtn.dataset.client);
-    const d=c.deals.find(x=>x.id===saveDealTermsBtn.dataset.deal);
-    const stage = document.getElementById('dtStage').value;
-    if(!stage){ flashToast('Pick a Stage before saving — this is required.'); return; }
-    const categorySelect = document.getElementById('dtCategory');
-    const categoryId = categorySelect ? categorySelect.value : '';
-    if(l.id==='listings' && !categoryId && d.dealTermsEverSaved){
-      flashToast('Pick a Category before saving — required once a deal has been saved before.');
-      return;
-    }
-    d.stage = stage;
-    if(categorySelect) d.categoryId = categoryId || null;
-    d.dealTermsEverSaved = true;
-    d.building = document.getElementById('dtBuilding').value.trim();
-    d.spaceNum = document.getElementById('dtSpaceNum').value.trim();
-    d.size = document.getElementById('dtSize').value.trim();
-    const moneyVal = document.getElementById('dtMoney').value.trim();
-    if(d.dealType==='sale') d.price = moneyVal; else d.rent = moneyVal;
-    d.term = document.getElementById('dtTerm').value.trim();
-    d.tiAllowance = document.getElementById('dtTI').value.trim();
-    d.notes = document.getElementById('dtNotes').value.trim();
-    supaUpdateDeal(d, c.id);
+  }));
+  const saveDealTermsBtn = root.querySelector('[data-action="saveDealTerms"]'); if(saveDealTermsBtn) saveDealTermsBtn.onclick=safeHandler(()=>{
+    const l=db.lists.find(x=>x.id===saveDealTermsBtn.dataset.listid); const c=l && l.clients.find(x=>x.id===saveDealTermsBtn.dataset.client);
+    const d=c && c.deals.find(x=>x.id===saveDealTermsBtn.dataset.deal);
+    if(!l || !c || !d){ flashToast("Couldn't find this deal to save — it may have been moved or deleted."); render(); return; }
+    saveDealTermsFromForm(l, c, d);
     flashToast('Deal terms saved.');
     render();
-  };
+  });
   const openCommBtn = root.querySelector('[data-action="openCommission"]'); if(openCommBtn) openCommBtn.onclick=()=>{
     if(openCommBtn.dataset.kind==='deal'){
       state.commissionModal = {kind:'deal', listId:openCommBtn.dataset.listid, clientId:openCommBtn.dataset.client, dealId:openCommBtn.dataset.deal};
@@ -6105,10 +6191,11 @@ function attachModalHandlers(root){
     state.moveDealPicker = {dealId:openMoveDealBtn.dataset.deal, sourceListId:openMoveDealBtn.dataset.listid, sourceClientId:openMoveDealBtn.dataset.client, step:'client', query:''};
     render();
   };
-  const deleteDealBtn = root.querySelector('[data-action="deleteDeal"]'); if(deleteDealBtn) deleteDealBtn.onclick=()=>{
+  const deleteDealBtn = root.querySelector('[data-action="deleteDeal"]'); if(deleteDealBtn) deleteDealBtn.onclick=safeHandler(()=>{
     const l = db.lists.find(x=>x.id===deleteDealBtn.dataset.listid);
-    const c = l.clients.find(x=>x.id===deleteDealBtn.dataset.client);
-    const d = c.deals.find(x=>x.id===deleteDealBtn.dataset.deal);
+    const c = l && l.clients.find(x=>x.id===deleteDealBtn.dataset.client);
+    const d = c && c.deals.find(x=>x.id===deleteDealBtn.dataset.deal);
+    if(!d){ flashToast("Couldn't find this deal — it may already be gone."); render(); return; }
     if(confirm(`Delete "${d.name}"? This can't be undone. Any to-do's under it will be detached, not deleted, so they aren't silently lost.`)){
       db.todos.filter(t=>t.dealId===d.id).forEach(t=>{ t.dealId=null; supaUpdateTodo(t); });
       c.deals = c.deals.filter(x=>x.id!==d.id);
@@ -6117,7 +6204,7 @@ function attachModalHandlers(root){
       flashToast(`${d.name} deleted.`);
       render();
     }
-  };
+  });
   const ntEntry = root.querySelector('[data-action="newTodoInEntry"]'); if(ntEntry) ntEntry.onclick=()=>{
     openNewTodoModal({listId:ntEntry.dataset.listid, entryId:ntEntry.dataset.entry}); render();
   };
@@ -7659,6 +7746,32 @@ function exportVCards(ids){
 
 /* ---------------- TOAST ---------------- */
 function flashToast(msg){ state.toast = msg; }
+// Wraps a click handler so an unexpected error becomes a visible message instead of
+// silently doing nothing. Without this, a thrown error inside an onclick handler
+// (e.g. some expected data not being found) aborts everything after it — the modal
+// doesn't close, nothing saves, and there is no sign anything went wrong at all.
+function safeHandler(fn){
+  return function(...args){
+    try {
+      const result = fn.apply(this, args);
+      if(result && typeof result.catch === 'function'){
+        // handler was async — catch a rejection that happens after an await too,
+        // not just an error thrown synchronously before the first await
+        result.catch(err=>{
+          console.error('Action failed:', err);
+          flashToast("That didn't complete — something unexpected went wrong. Nothing was lost, but please try again or refresh.");
+          render();
+        });
+      }
+      return result;
+    }
+    catch(err){
+      console.error('Action failed:', err);
+      flashToast("That didn't complete — something unexpected went wrong. Nothing was lost, but please try again or refresh.");
+      render();
+    }
+  };
+}
 function showToastNow(){
   const el = document.createElement('div');
   el.className='toast'; el.textContent=state.toast;
@@ -7906,7 +8019,6 @@ function dateAwareReviver(key, value){
 function saveAppState(){
   try{
     const snapshot = {
-      smartLists: smartListsArr,
       otherAccountsOpen: state.otherAccountsOpen,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot, dateAwareReplacer));
@@ -7923,18 +8035,6 @@ function loadAppState(){
     // (Phase 2+). Restoring them from this old local cache was actively harmful:
     // it could overwrite fresh data with a stale snapshot from before this app had
     // a real backend. Only things Supabase doesn't manage yet stay local.
-    if(saved.smartLists){
-      // Reconcile the cached list against the CURRENT code defaults, rather than
-      // trusting the cache blindly — otherwise a default that's since been removed
-      // from the code (like this one) keeps reappearing forever from old browser
-      // storage, and a newly-added default never shows up until the cache clears.
-      // Custom, user-created smart lists are left alone either way.
-      const defaultIds = new Set(SMART_LIST_DEFAULTS.map(d=>d.id));
-      const prunedCached = saved.smartLists.filter(s=>!s.isDefault || defaultIds.has(s.id));
-      const cachedIds = new Set(prunedCached.map(s=>s.id));
-      const missingDefaults = SMART_LIST_DEFAULTS.filter(d=>!cachedIds.has(d.id)).map(s=>({...s, isDefault:true}));
-      smartListsArr = [...prunedCached, ...missingDefaults];
-    }
     if(saved.otherAccountsOpen) state.otherAccountsOpen = saved.otherAccountsOpen;
     appStateWasLoaded = true;
   } catch(e){ /* corrupted/old save shape — just fall back to the seed data */ }
