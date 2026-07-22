@@ -6136,12 +6136,24 @@ function renderDuplicatePrompt(){
 }
 function finishContactPick(contactId){
   state.duplicatePrompt=null;
+  const scroller = document.querySelector('.modal-body');
+  const savedScrollTop = scroller ? scroller.scrollTop : null;
   if(state.contactPickerOpen && state.contactPickerOpen.lsrProspectId){
     const {lsrClientId, lsrProspectId} = state.contactPickerOpen;
     const listing = db.lists.find(x=>x.id==='listings').clients.find(c=>c.id===lsrClientId);
     const p = listing.prospects.find(x=>x.id===lsrProspectId);
     p.contactId = contactId;
     supaUpdateProspect(p, listing.id);
+  } else if(state.contactPickerOpen && state.contactPickerOpen.dealId){
+    // Must be checked before the generic clientId branch below — a deal-contact
+    // pick carries clientId too (with no slot), so it would otherwise fall through
+    // and silently overwrite the client's own secondary contacts instead of the deal's.
+    const {listId, clientId, dealId} = state.contactPickerOpen;
+    const l = db.lists.find(x=>x.id===listId);
+    const client = l.clients.find(c=>c.id===clientId);
+    const d = client.deals.find(x=>x.id===dealId);
+    d.contactId = contactId;
+    supaUpdateDeal(d, client.id);
   } else if(state.contactPickerOpen && state.contactPickerOpen.clientId){
     const {clientId, slot} = state.contactPickerOpen;
     const clientsList = db.lists.find(l=>l.type==='deep' && l.clients.some(c=>c.id===clientId));
@@ -6165,6 +6177,12 @@ function finishContactPick(contactId){
   }
   state.contactPickerOpen=null;
   render();
+  if(savedScrollTop!==null){
+    requestAnimationFrame(()=>{
+      const newScroller = document.querySelector('.modal-body');
+      if(newScroller) newScroller.scrollTop = savedScrollTop;
+    });
+  }
 }
 
 /* ---------------- NEW TODO MODAL ---------------- */
