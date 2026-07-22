@@ -4831,11 +4831,11 @@ function renderDealGroupsInClient(l,c){
   Object.keys(DEAL_GROUPS).forEach(k=>{ rowsByKey[k] = c.deals.filter(DEAL_GROUPS[k].match); });
   // Base order (lease-only clients, or a sale client with nothing currently in escrow):
   // In Escrow sits near the bottom, right before Closed Escrow.
-  let order = ['openForBusiness','signedLease','negotiating','signedLOI','loi','prospects','inEscrow','closedEscrow'];
+  let order = ['signedLease','negotiating','signedLOI','loi','prospects','inEscrow','closedEscrow','openForBusiness'];
   // But if this client actually has a deal sitting in escrow right now, promote In Escrow
   // up next to Signed Lease so an active sale doesn't get buried near the bottom.
   if(rowsByKey.inEscrow.length){
-    order = ['openForBusiness','signedLease','inEscrow','negotiating','signedLOI','loi','prospects','closedEscrow'];
+    order = ['signedLease','inEscrow','negotiating','signedLOI','loi','prospects','closedEscrow','openForBusiness'];
   }
   return order.map(k=>renderDealGroupSection(l, c, {key:k, ...DEAL_GROUPS[k]}, rowsByKey[k])).join('');
 }
