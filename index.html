@@ -878,9 +878,10 @@ async function cancelDeletionRequest(reqId){
 }
 async function supaAddAuthorizedUser(clientId, localUserId){
   const authId = localUserIdToAuthId(localUserId);
-  if(!authId){ flashToast('That person needs to sign in at least once before they can be added.'); render(); return; }
+  if(!authId){ flashToast('That person needs to sign in to the Portal at least once before they can be added.'); render(); return false; }
   const { error } = await supabaseClient.from('client_authorized_users').insert({client_id:clientId, user_id:authId});
-  if(error){ console.error('supaAddAuthorizedUser error:', error); flashToast('Saved here, but syncing to the server failed. (' + error.message + ')'); render(); }
+  if(error){ console.error('supaAddAuthorizedUser error:', error); flashToast('Saved here, but syncing to the server failed. (' + error.message + ')'); render(); return false; }
+  return true;
 }
 async function supaRemoveAuthorizedUser(clientId, localUserId){
   const authId = localUserIdToAuthId(localUserId);
@@ -2206,6 +2207,7 @@ function renderEmailClientPicker(){
     state.pendingLoginUser=null;
     state.currentUser=u; state.screen='app'; if(!appStateWasLoaded) seedAll();
     await fetchAllAppDataFromSupabase();
+    checkTodoDeepLink();
     render();
   });
 }
@@ -2528,6 +2530,7 @@ function attachLoginHandlers(){
     }
     state.currentUser=u; state.screen='app'; if(!appStateWasLoaded) seedAll(); state.loginTarget=null;
     await fetchAllAppDataFromSupabase();
+    checkTodoDeepLink();
     render();
   };
   const showReg = document.getElementById('showRegisterBtn');
@@ -4208,6 +4211,21 @@ function openTodoDetail(id){
   const td = db.todos.find(x=>x.id===id);
   if(td && td.isNew && td.assignedTo===state.currentUser.id) td.isNew=false;
 }
+// Deep-link support: digest emails link to a specific to-do via ?todo=<id>. Call this
+// once, right after app data has actually loaded (db.todos populated), so the to-do
+// exists to be found. Cleans the URL either way so a refresh doesn't repeat this.
+function checkTodoDeepLink(){
+  const params = new URLSearchParams(window.location.search);
+  const todoId = params.get('todo');
+  if(!todoId) return;
+  history.replaceState(null, '', window.location.pathname);
+  const td = db.todos.find(x=>x.id===todoId);
+  if(td){
+    openTodoDetail(todoId);
+  } else {
+    flashToast("That to-do couldn't be found — it may have been completed, moved, or removed since the email was sent.");
+  }
+}
 function getTodoLinkSummary(td){
   if(td.dealId){
     const l = db.lists.find(x=>x.id===td.listId);
@@ -5857,15 +5875,17 @@ function attachModalHandlers(root){
   const pickDeal = root.querySelector('[data-action="pickDealContact"]'); if(pickDeal) pickDeal.onclick=()=>{
     openContactPicker({listId: pickDeal.dataset.listid, clientId: pickDeal.dataset.client, dealId: pickDeal.dataset.deal}); render();
   };
-  const addAuthBtn = root.querySelector('[data-action="addAuthUser"]'); if(addAuthBtn) addAuthBtn.onclick=()=>{
+  const addAuthBtn = root.querySelector('[data-action="addAuthUser"]'); if(addAuthBtn) addAuthBtn.onclick=async ()=>{
     const sel = document.getElementById('addAuthUserSelect');
     const userId = sel.value;
     const frame = state.modalStack[0];
     const l=db.lists.find(x=>x.id===frame.listId); const c=l.clients.find(x=>x.id===addAuthBtn.dataset.client);
-    if(!c.authorizedUserIds) c.authorizedUserIds=[];
-    c.authorizedUserIds.push(userId);
-    supaAddAuthorizedUser(c.id, userId);
-    flashToast(`${USERS.find(u=>u.id===userId).name} can now see this ${l.id==='listings'?'listing':'client'}.`);
+    const ok = await supaAddAuthorizedUser(c.id, userId);
+    if(ok){
+      if(!c.authorizedUserIds) c.authorizedUserIds=[];
+      c.authorizedUserIds.push(userId);
+      flashToast(`${USERS.find(u=>u.id===userId).name} can now see this ${l.id==='listings'?'listing':'client'}.`);
+    }
     render();
   };
   root.querySelectorAll('[data-removeauth]').forEach(el=>el.onclick=()=>{
@@ -6127,10 +6147,10 @@ function renderDuplicatePrompt(){
     supaUpdateContact(dp.match);
     finishContactPick(dp.match.id);
   };
-  document.getElementById('dupCreateNew').onclick=()=>{
+  document.getElementById('dupCreateNew').onclick=async ()=>{
     const c = Object.assign({id:crypto.randomUUID()}, dp.pending);
     db.contacts.push(c);
-    supaCreateContact(c);
+    await supaCreateContact(c); // must finish before we attach it — deals.contact_id has a foreign key to contacts.id
     finishContactPick(c.id);
   };
 }
@@ -7794,6 +7814,7 @@ render();
             state.screen = 'app';
             if(!appStateWasLoaded) seedAll();
             await fetchAllAppDataFromSupabase();
+            checkTodoDeepLink();
             render();
           }
         }
