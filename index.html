@@ -635,6 +635,8 @@ async function fetchAllProfilesIntoUsers(){
     let u = USERS.find(x=>x.email.toLowerCase()===p.email.toLowerCase());
     if(!u){ u = {id:p.id, email:p.email}; USERS.push(u); }
     Object.assign(u, {authId:p.id, name:p.name, role:p.role, initials:p.initials, emailClient:p.email_client});
+    u.notifUseDefault = p.notif_use_default !== false; // default true if column is null/undefined
+    u.notifPref = (!u.notifUseDefault && p.notif_schedule_type) ? {type:p.notif_schedule_type, days:p.notif_schedule_days||[], time:p.notif_schedule_time||'07:00'} : null;
   });
 }
 
@@ -1074,6 +1076,25 @@ async function fetchAllAppDataFromSupabase(){
   await fetchQuickLinksFromSupabase();
   await fetchDeletionRequestsFromSupabase();
   await fetchPendingUsersFromSupabase();
+  await fetchCompanySettingsFromSupabase();
+}
+async function fetchCompanySettingsFromSupabase(){
+  const { data, error } = await supabaseClient.from('company_settings').select('*').eq('id','default').single();
+  if(error){ console.error('fetchCompanySettingsFromSupabase error:', error); return; }
+  if(data) adminDefaultSchedule = {type:data.notif_type, days:data.notif_days||[], time:data.notif_time};
+}
+async function supaSaveCompanyDefault(sched){
+  const { error } = await supabaseClient.from('company_settings').update({notif_type:sched.type, notif_days:sched.days, notif_time:sched.time}).eq('id','default');
+  if(error){ console.error('supaSaveCompanyDefault error:', error); flashToast('Saved here, but syncing the company default failed. (' + error.message + ')'); render(); }
+}
+async function supaSaveMyNotifPref(useDefault, pref){
+  const u = state.currentUser;
+  if(!u.authId) return; // hasn't actually signed in via Supabase auth yet — nothing to save against
+  const payload = useDefault
+    ? {notif_use_default:true, notif_schedule_type:null, notif_schedule_days:null, notif_schedule_time:null}
+    : {notif_use_default:false, notif_schedule_type:pref.type, notif_schedule_days:pref.days, notif_schedule_time:pref.time};
+  const { error } = await supabaseClient.from('profiles').update(payload).eq('id', u.authId);
+  if(error){ console.error('supaSaveMyNotifPref error:', error); flashToast('Saved here, but syncing your reminder schedule failed. (' + error.message + ')'); render(); }
 }
 const DEFAULT_QUICK_LINKS = [
   {name:'Ascendix (Salesforce)', url:'https://edge-re.my.salesforce.com/?ec=302&startURL=%2Fvisualforce%2Fsession%3Furl%3Dhttps%253A%252F%252Fedge-re.lightning.force.com%252Flightning%252Fpage%252Fhome'},
@@ -2313,7 +2334,7 @@ function renderNotifSettingsModal(){
     <div class="modal-head"><div class="modal-title">Notification Settings</div><button class="modal-close" data-action="closeNotifSettings">✕</button></div>
     <div class="modal-body">
       <div style="background:var(--edge-lighter);border:1px solid var(--edge-light);border-radius:10px;padding:11px 14px;margin-bottom:16px;font-size:12.5px;line-height:1.5;color:var(--ink-soft);">
-        <b style="color:var(--edge-darker);">How this works right now:</b> the schedule below is saved and will be honored once a server-side scheduler is connected in a later phase — this prototype has no server, so nothing fires on a timer yet. <b>"Send Now" buttons are real</b> — they open an actual email draft immediately, today.
+        <b style="color:var(--edge-darker);">How this works:</b> the schedule below is honored automatically by a real server-side scheduler — you don't need to do anything else once it's saved. Times are checked in Arizona time, in 15-minute windows. <b>"Send Now" buttons are also real</b> — they open an actual email draft immediately, today.
       </div>
       <div class="section-label" style="margin-top:0;">Email &amp; Calendar</div>
       <div class="field">
@@ -2387,17 +2408,19 @@ function renderNotifSettingsModal(){
   overlay.querySelectorAll('[data-action="closeNotifSettings"]').forEach(b=>b.onclick=()=>{ state.notifSettingsOpen=false; render(); });
   const useDefaultToggle = document.getElementById('useDefaultToggle');
   if(useDefaultToggle) useDefaultToggle.onchange=()=>{
-    if(useDefaultToggle.checked) u.notifPref=null; else u.notifPref={type:adminDefaultSchedule.type,days:[...adminDefaultSchedule.days],time:adminDefaultSchedule.time};
+    if(useDefaultToggle.checked){ u.notifPref=null; supaSaveMyNotifPref(true); }
+    else { u.notifPref={type:adminDefaultSchedule.type,days:[...adminDefaultSchedule.days],time:adminDefaultSchedule.time}; }
     render();
   };
   const saveMy = overlay.querySelector('[data-action="saveMySchedule"]'); if(saveMy) saveMy.onclick=()=>{
-    if(document.getElementById('useDefaultToggle').checked){ u.notifPref=null; flashToast('Using company default schedule.'); render(); return; }
+    if(document.getElementById('useDefaultToggle').checked){ u.notifPref=null; supaSaveMyNotifPref(true); flashToast('Using company default schedule.'); render(); return; }
     const type = u.notifPref && u.notifPref.type || 'weekly';
     let days;
     if(type==='weekly') days=[document.getElementById('myWeeklyDay').value];
     else days = Array.from(overlay.querySelectorAll('.myDayCheck:checked')).map(c=>c.value);
     const time = document.getElementById('myTime').value || '00:00';
     u.notifPref = {type, days, time};
+    supaSaveMyNotifPref(false, u.notifPref);
     flashToast('Your reminder schedule is saved.');
     render();
   };
@@ -2409,6 +2432,7 @@ function renderNotifSettingsModal(){
     else days = Array.from(overlay.querySelectorAll('.adminDayCheck:checked')).map(c=>c.value);
     const time = document.getElementById('adminTime').value || '00:00';
     adminDefaultSchedule = {type, days, time};
+    supaSaveCompanyDefault(adminDefaultSchedule);
     flashToast('Company default schedule saved.');
     render();
   };
@@ -7883,7 +7907,6 @@ function saveAppState(){
   try{
     const snapshot = {
       smartLists: smartListsArr,
-      adminDefaultSchedule,
       otherAccountsOpen: state.otherAccountsOpen,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot, dateAwareReplacer));
@@ -7912,7 +7935,6 @@ function loadAppState(){
       const missingDefaults = SMART_LIST_DEFAULTS.filter(d=>!cachedIds.has(d.id)).map(s=>({...s, isDefault:true}));
       smartListsArr = [...prunedCached, ...missingDefaults];
     }
-    if(saved.adminDefaultSchedule) adminDefaultSchedule = saved.adminDefaultSchedule;
     if(saved.otherAccountsOpen) state.otherAccountsOpen = saved.otherAccountsOpen;
     appStateWasLoaded = true;
   } catch(e){ /* corrupted/old save shape — just fall back to the seed data */ }
