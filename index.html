@@ -901,6 +901,19 @@ async function supaRemoveAuthorizedUser(clientId, localUserId){
   const { error } = await supabaseClient.from('client_authorized_users').delete().eq('client_id', clientId).eq('user_id', authId);
   if(error) console.error('supaRemoveAuthorizedUser error:', error);
 }
+async function supaAddEntryAuthorizedUser(entryId, localUserId){
+  const authId = localUserIdToAuthId(localUserId);
+  if(!authId){ flashToast('That person needs to sign in to the Portal at least once before they can be added.'); render(); return false; }
+  const { error } = await supabaseClient.from('entry_authorized_users').insert({entry_id:entryId, user_id:authId});
+  if(error){ console.error('supaAddEntryAuthorizedUser error:', error); flashToast('Saved here, but syncing to the server failed. (' + error.message + ')'); render(); return false; }
+  return true;
+}
+async function supaRemoveEntryAuthorizedUser(entryId, localUserId){
+  const authId = localUserIdToAuthId(localUserId);
+  if(!authId) return;
+  const { error } = await supabaseClient.from('entry_authorized_users').delete().eq('entry_id', entryId).eq('user_id', authId);
+  if(error) console.error('supaRemoveEntryAuthorizedUser error:', error);
+}
 function renderAddUsersPrompt(){
   const {listId, clientId} = state.addUsersPrompt;
   const l = db.lists.find(x=>x.id===listId);
@@ -1011,9 +1024,15 @@ function entryLocalToRow(e, listId){
 async function fetchEntriesFromSupabase(){
   const { data, error } = await supabaseClient.from('entries').select('*');
   if(error){ console.error('fetchEntriesFromSupabase error:', error); return; }
+  const { data:authUsers, error:e2 } = await supabaseClient.from('entry_authorized_users').select('*');
+  if(e2) console.error('fetchEntriesFromSupabase (authorized users) error:', e2);
   db.lists.filter(l=>l.type==='flat').forEach(l=>{
     const rows = data.filter(r=>r.list_id===l.id);
-    if(rows.length) l.entries = rows.map(entryRowToLocal);
+    if(rows.length) l.entries = rows.map(r=>{
+      const e = entryRowToLocal(r);
+      if(authUsers) e.authorizedUserIds = authUsers.filter(a=>a.entry_id===r.id).map(a=>authIdToLocalUserId(a.user_id)).filter(Boolean);
+      return e;
+    });
   });
 }
 async function supaCreateEntry(e, listId){
@@ -2754,7 +2773,7 @@ function renderSidebar(){
       ${db.lists.map(l=>{
         const active = state.mainView.type==='list' && state.mainView.id===l.id;
         const isAdmin = state.currentUser.role==='Admin';
-        let count = l.type==='deep' ? l.clients.length : (isAdmin ? l.entries.length : l.entries.filter(e=>e.ownerId===state.currentUser.id).length);
+        let count = l.type==='deep' ? l.clients.length : (isAdmin ? l.entries.length : l.entries.filter(e=>e.ownerId===state.currentUser.id || (e.authorizedUserIds||[]).includes(state.currentUser.id)).length);
         const menuOpen = menu && menu.kind==='list' && menu.id===l.id;
         return `<div class="nav-row-wrap ${active?'active':''}">
           <button class="nav-row" data-nav="list:${l.id}">
@@ -3721,10 +3740,10 @@ function renderListMain(listId){
     return addBtn + l.clients.slice().sort(byName).map(renderRow).join('');
   } else {
     const isAdmin = state.currentUser.role==='Admin';
-    const visibleEntries = isAdmin ? l.entries : l.entries.filter(e=>e.ownerId===state.currentUser.id);
+    const me = state.currentUser.id;
+    const hasAccess = e => e.ownerId===me || (e.authorizedUserIds||[]).includes(me);
     const addBtn = `<button class="btn sm" data-action="addEntry" data-listid="${l.id}" style="margin-bottom:14px;">+ New Prospect</button>`;
-    if(!visibleEntries.length) return addBtn + `<div class="empty-state"><div class="big">Nothing here yet.</div><div class="tiny">Add a prospect to start tracking outreach.</div></div>`;
-    return addBtn + visibleEntries.map(e=>{
+    const renderEntryRow = (e)=>{
       const owner = USERS.find(u=>u.id===e.ownerId);
       return `
       <div class="row-card" data-openentry="${e.id}" data-listid="${l.id}">
@@ -3738,7 +3757,23 @@ function renderListMain(listId){
           <div class="row-meta" style="color:var(--ink-soft);">${escapeHtml(e.feedback||'')}</div>
         </div>
       </div>`;
-    }).join('');
+    };
+    if(isAdmin){
+      const mine = l.entries.filter(hasAccess);
+      const others = l.entries.filter(e=>!hasAccess(e));
+      const otherOpen = !!(state.otherAccountsOpen && state.otherAccountsOpen[l.id]);
+      if(!l.entries.length) return addBtn + `<div class="empty-state"><div class="big">Nothing here yet.</div><div class="tiny">Add a prospect to start tracking outreach.</div></div>`;
+      return addBtn + mine.map(renderEntryRow).join('') +
+        (others.length ? `
+        <div class="nav-section-label" style="cursor:pointer;margin-top:10px;" data-action="toggleOtherAccounts" data-listid="${l.id}">
+          <span>${otherOpen?'▾':'▸'} Other ${l.name} Targets <span class="tiny" style="color:var(--ink-soft);">(${others.length} — you're not on ${others.length===1?'this one':'these'})</span></span>
+        </div>
+        ${otherOpen ? others.map(renderEntryRow).join('') : ''}
+        ` : '');
+    }
+    const visibleEntries = l.entries.filter(hasAccess);
+    if(!visibleEntries.length) return addBtn + `<div class="empty-state"><div class="big">Nothing here yet.</div><div class="tiny">Add a prospect to start tracking outreach.</div></div>`;
+    return addBtn + visibleEntries.map(renderEntryRow).join('');
   }
 }
 
@@ -5981,6 +6016,28 @@ function wireLSRProspectBodyHandlers(root, l, listing, p){
 function renderEntryModalBody(l,e){
   const todos = db.todos.filter(t=>t.entryId===e.id).filter(visibleTodo);
   const owner = USERS.find(u=>u.id===e.ownerId);
+  const canManageAccess = state.currentUser.role==='Admin' || e.ownerId===state.currentUser.id;
+  const authorizedUsers = (e.authorizedUserIds||[]).map(id=>USERS.find(u=>u.id===id)).filter(Boolean);
+  const notYetAuthorized = USERS.filter(u=>u.id!==e.ownerId && !(e.authorizedUserIds||[]).includes(u.id));
+  const accessHtml = `
+  <div class="contact-card" style="background:#EFF6FA;border-color:#CBE0EE;margin-top:14px;">
+    <div class="label" style="color:#2C6E9E;">🔒 Access${owner? ` — owned by ${escapeHtml(owner.name)}`:''}</div>
+    <div style="font-size:12.5px;color:var(--ink-soft);margin:4px 0 8px;">
+      Admins always see everything. ${owner?escapeHtml(owner.name.split(' ')[0]):'The owner'} plus anyone listed below can see this ${l.name.toLowerCase().endsWith('s')?l.name.toLowerCase().slice(0,-1):l.name.toLowerCase()} target — everyone else can't.
+    </div>
+    ${authorizedUsers.length ? authorizedUsers.map(u=>`
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:5px 0;font-size:13px;">
+        <span>${escapeHtml(u.name)}</span>
+        ${canManageAccess ? `<button class="btn secondary sm" data-removeentryauth="${u.id}" data-entry="${e.id}">Remove</button>`:''}
+      </div>`).join('') : `<div class="tiny" style="color:var(--ink-soft);">No one else has been added yet.</div>`}
+    ${canManageAccess && notYetAuthorized.length ? `
+    <div style="display:flex;gap:8px;margin-top:10px;">
+      <select id="addEntryAuthUserSelect" style="flex:1;">
+        ${notYetAuthorized.map(u=>`<option value="${u.id}">${escapeHtml(u.name)}</option>`).join('')}
+      </select>
+      <button class="btn sm" data-action="addEntryAuthUser" data-entry="${e.id}">+ Add</button>
+    </div>` : ''}
+  </div>`;
   return `
   <div style="margin-bottom:14px;display:flex;gap:8px;">
     <button class="btn sm" data-action="newTodoInEntry" data-listid="${l.id}" data-entry="${e.id}">+ New To-Do</button>
@@ -5997,6 +6054,7 @@ function renderEntryModalBody(l,e){
     <div class="field"><label>Last Call</label><input value="${e.lastCall?toLocalDateStr(e.lastCall):''}" placeholder="e.g. today" data-edit="lastCall" data-entry="${e.id}" data-listid="${l.id}"></div>
     <div class="field"><label>Latest Feedback / Notes</label><textarea rows="2" data-edit="feedback" data-entry="${e.id}" data-listid="${l.id}">${escapeHtml(e.feedback||'')}</textarea></div>
   </div>
+  ${accessHtml}
   <div class="section-label">To-Do's</div>
   ${todos.length? renderTodoList(todos) : `<div class="empty-state" style="padding:26px;"><div class="big">No follow-up set.</div><div class="tiny">Add a to-do to keep this prospect moving.</div></div>`}
   `;
@@ -6153,6 +6211,29 @@ function attachModalHandlers(root){
     if(!c){ flashToast("Couldn't find this client."); render(); return; }
     c.authorizedUserIds = (c.authorizedUserIds||[]).filter(id=>id!==userId);
     supaRemoveAuthorizedUser(c.id, userId);
+    render();
+  }));
+  const addEntryAuthBtn = root.querySelector('[data-action="addEntryAuthUser"]'); if(addEntryAuthBtn) addEntryAuthBtn.onclick=safeHandler(async ()=>{
+    const sel = document.getElementById('addEntryAuthUserSelect');
+    const userId = sel.value;
+    const frame = state.modalStack[0];
+    const l=db.lists.find(x=>x.id===frame.listId); const e=l && l.entries.find(x=>x.id===addEntryAuthBtn.dataset.entry);
+    if(!e){ flashToast("Couldn't find this entry."); render(); return; }
+    const ok = await supaAddEntryAuthorizedUser(e.id, userId);
+    if(ok){
+      if(!e.authorizedUserIds) e.authorizedUserIds=[];
+      e.authorizedUserIds.push(userId);
+      flashToast(`${USERS.find(u=>u.id===userId).name} can now see this target.`);
+    }
+    render();
+  });
+  root.querySelectorAll('[data-removeentryauth]').forEach(el=>el.onclick=safeHandler(()=>{
+    const userId = el.dataset.removeentryauth;
+    const frame = state.modalStack[0];
+    const l=db.lists.find(x=>x.id===frame.listId); const e=l && l.entries.find(x=>x.id===el.dataset.entry);
+    if(!e){ flashToast("Couldn't find this entry."); render(); return; }
+    e.authorizedUserIds = (e.authorizedUserIds||[]).filter(id=>id!==userId);
+    supaRemoveEntryAuthorizedUser(e.id, userId);
     render();
   }));
   const pickEntry = root.querySelector('[data-action="pickEntryContact"]'); if(pickEntry) pickEntry.onclick=()=>{
