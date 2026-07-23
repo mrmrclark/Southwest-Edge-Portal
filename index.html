@@ -2236,6 +2236,7 @@ function render(){
   if(state.newSmartListModal) renderNewSmartListModal();
   if(state.notifSettingsOpen) renderNotifSettingsModal();
   if(state.pendingUsersModalOpen) renderPendingUsersModal();
+  if(state.manageUsersModalOpen) renderManageUsersModal();
   if(state.pendingDeletionsOpen) renderPendingDeletionsModal();
   if(state.contactImportReview) renderContactImportReviewModal();
   if(state.taskfireImport) renderTaskFireImportModal();
@@ -3724,7 +3725,7 @@ function renderListMain(listId){
       </div>`;
     };
     const byName = (a,b)=>a.name.localeCompare(b.name);
-    if(state.currentUser.role==='Admin'){
+    if(state.currentUser.role==='Admin' || state.currentUser.role==='FullAccess'){
       const me = state.currentUser.id;
       const mine = l.clients.filter(c=>c.createdBy===me || (c.authorizedUserIds||[]).includes(me)).sort(byName);
       const others = l.clients.filter(c=>!(c.createdBy===me || (c.authorizedUserIds||[]).includes(me))).sort(byName);
@@ -4109,6 +4110,61 @@ function renderPendingDeletionsModal(){
     cancelDeletionRequest(b.dataset.canceldel);
   });
 }
+function renderManageUsersModal(){
+  const overlay = document.createElement('div');
+  overlay.className='modal-overlay'; overlay.style.zIndex=175;
+  const roleNote = {
+    Admin: 'Full access — can manage users, settings, and everything else.',
+    FullAccess: 'Can view every client & listing (read-only) — cannot edit deal terms/stage or manage users.',
+    User: 'Sees only the clients/listings they created or were personally added to.',
+  };
+  overlay.innerHTML = `
+  <div class="modal-card">
+    <div class="modal-head"><div class="modal-title">Manage Users</div><button class="modal-close" data-action="closeManageUsers">✕</button></div>
+    <div class="modal-body">
+      <div style="font-size:12.5px;color:var(--ink-soft);margin-bottom:14px;">
+        <b>Full Access</b> is meant for people who need visibility into every deal (e.g. invoicing, office admin) without needing to edit anything or manage the team.
+      </div>
+      ${USERS.map(u=>`
+        <div class="row-card" style="cursor:default;">
+          <div class="row-body">
+            <div class="row-title">${escapeHtml(u.name)}</div>
+            <div class="row-meta"><span>${escapeHtml(u.email)}</span></div>
+            <div class="tiny" style="color:var(--ink-soft);margin-top:2px;">${roleNote[u.role]||''}</div>
+          </div>
+          <div class="row-right">
+            <select data-userrole="${u.id}" ${u.id===state.currentUser.id?'disabled title="Not able to change your own role"':''}>
+              <option value="Admin" ${u.role==='Admin'?'selected':''}>Admin</option>
+              <option value="FullAccess" ${u.role==='FullAccess'?'selected':''}>Full Access</option>
+              <option value="User" ${u.role==='User'?'selected':''}>User</option>
+            </select>
+          </div>
+        </div>`).join('')}
+    </div>
+    <div class="modal-foot"><button class="btn secondary" data-action="closeManageUsers">Close</button></div>
+  </div>`;
+  document.getElementById('app').appendChild(overlay);
+  overlay.querySelectorAll('[data-action="closeManageUsers"]').forEach(b=>b.onclick=()=>{ state.manageUsersModalOpen=false; render(); });
+  overlay.querySelectorAll('[data-userrole]').forEach(sel=>sel.onchange=safeHandler(()=>{
+    const u = USERS.find(x=>x.id===sel.dataset.userrole);
+    if(!u) return;
+    const newRole = sel.value;
+    const oldRole = u.role;
+    u.role = newRole;
+    supaUpdateUserRole(u, newRole).then(ok=>{
+      if(!ok) u.role = oldRole; // roll back the on-screen change if the write failed
+      render();
+    });
+    flashToast(`${u.name} is now ${newRole==='FullAccess'?'Full Access':newRole}.`);
+    render();
+  }));
+}
+async function supaUpdateUserRole(u, newRole){
+  if(!u.authId){ flashToast(`${u.name} needs to sign in to the Portal at least once before their role can be changed.`); return false; }
+  const { error } = await supabaseClient.from('profiles').update({role:newRole}).eq('id', u.authId);
+  if(error){ console.error('supaUpdateUserRole error:', error); flashToast(`Saved here, but syncing ${u.name}'s role failed. (${error.message})`); return false; }
+  return true;
+}
 function renderPendingUsersModal(){
   const overlay = document.createElement('div');
   overlay.className='modal-overlay'; overlay.style.zIndex=175;
@@ -4159,7 +4215,7 @@ function handleAdminAction(a){
   if(a==='adminImportTaskFire'){ state.taskfireImport = {step:'upload'}; }
   if(a==='adminImportMaps'){ state.mapsImport = {step:'upload', clientQuery:'', pickedClient:null, newClientName:''}; }
   if(a==='adminDigest'){ state.notifSettingsOpen=true; }
-  if(a==='adminUsers'){ flashToast('User management: ' + USERS.map(u=>u.name).join(', ')); }
+  if(a==='adminUsers'){ state.manageUsersModalOpen=true; }
   if(a==='adminTimes'){ state.notifSettingsOpen=true; }
   if(a==='adminReset'){ flashToast('Password reset flow would open here.'); }
   render();
@@ -4182,6 +4238,28 @@ function promptAddSmartList(editingId){
   }
   state.newSmartListModal = {name:'', matchMode:'all', dateRule:'any', exactDate:'', assignee:'any', status:'any', categories:[], categoryInput:'', clientIds:[], clientQuery:'', personalOnly:false};
   render();
+}
+function userHasClientAccess(userId, clientId){
+  if(!clientId) return true; // not linked to any client — nothing to check
+  const u = USERS.find(x=>x.id===userId);
+  if(u && (u.role==='Admin' || u.role==='FullAccess')) return true;
+  for(const l of db.lists){
+    if(l.type==='deep'){
+      const c = l.clients.find(x=>x.id===clientId);
+      if(c) return c.createdBy===userId || (c.authorizedUserIds||[]).includes(userId);
+    }
+  }
+  return false; // client not even found locally — treat as no access, safest default
+}
+function clientIdForDeal(dealId){
+  for(const l of db.lists){
+    if(l.type==='deep'){
+      for(const c of l.clients){
+        if(c.deals.some(d=>d.id===dealId)) return c.id;
+      }
+    }
+  }
+  return null;
 }
 function allClientsFlat(){
   const out = [];
@@ -4482,16 +4560,19 @@ function getTodoLinkSummary(td){
     const c = l && l.clients.find(x=>x.id===td.clientId);
     const d = c && c.deals.find(x=>x.id===td.dealId);
     if(c && d) return `${c.name} → ${d.name}`;
+    return "Linked to a client/deal you don't have access to";
   }
   if(td.clientId){
     const l = db.lists.find(x=>x.id===td.listId);
     const c = l && l.clients.find(x=>x.id===td.clientId);
     if(c) return `${c.name} (general, no specific site)`;
+    return "Linked to a client you don't have access to";
   }
   if(td.entryId){
     const l = db.lists.find(x=>x.id===td.listId);
     const e = l && l.entries.find(x=>x.id===td.entryId);
     if(e) return `${l.name}: ${e.name}`;
+    return "Linked to a target you don't have access to";
   }
   return 'Not linked to anything — a floating to-do';
 }
@@ -4796,6 +4877,12 @@ function renderTodoDetailModal(){
     td.notes=document.getElementById('detNotes').value.trim();
     const newAssign=document.getElementById('detAssign').value;
     if(newAssign!==td.assignedTo){
+      const targetClientId = td.clientId || (td.dealId ? clientIdForDeal(td.dealId) : null);
+      if(newAssign!==state.currentUser.id && targetClientId && !userHasClientAccess(newAssign, targetClientId)){
+        const nu = USERS.find(x=>x.id===newAssign);
+        const ok = confirm(`${nu.name} doesn't have access to this client yet, so they'll only be able to see this specific to-do — not the rest of the client's deals or info. Assign it to them anyway?`);
+        if(!ok) return;
+      }
       td.assignedTo=newAssign;
       const u=USERS.find(x=>x.id===newAssign);
       if(newAssign!==state.currentUser.id){
@@ -4930,7 +5017,7 @@ function brandLogoImg(name){
 function renderTopModalCard(){
   const frame = state.modalStack[state.modalStack.length-1];
   const crumbs = breadcrumbFor(state.modalStack);
-  let bodyHtml='', titleText='', brandName='', clientAdminActions='';
+  let bodyHtml='', titleText='', brandName='', clientAdminActions='', dealCanEdit=true;
   if(frame.kind==='client'){
     const l=db.lists.find(x=>x.id===frame.listId); const c=l.clients.find(x=>x.id===frame.clientId);
     titleText=c.name; brandName=c.name;
@@ -4958,6 +5045,7 @@ function renderTopModalCard(){
     const d=c.deals.find(x=>x.id===frame.dealId);
     titleText=d.name; brandName=c.name;
     bodyHtml = renderDealModalBody(l,c,d);
+    dealCanEdit = state.currentUser.role==='Admin' || c.createdBy===state.currentUser.id || (c.authorizedUserIds||[]).includes(state.currentUser.id);
   } else if(frame.kind==='entry'){
     const l=db.lists.find(x=>x.id===frame.listId); const e=l.entries.find(x=>x.id===frame.entryId);
     titleText=e.name; brandName=e.name;
@@ -4978,7 +5066,7 @@ function renderTopModalCard(){
         <div class="modal-title-row">${brandLogoImg(brandName)}<div class="modal-title">${escapeHtml(titleText)}</div></div>
       </div>
       ${clientAdminActions}
-      ${frame.kind==='deal' ? `<button class="btn sm" data-action="saveAndCloseDeal" style="background:#fff;color:var(--edge);">Save &amp; Close</button>` : ''}
+      ${frame.kind==='deal' && dealCanEdit ? `<button class="btn sm" data-action="saveAndCloseDeal" style="background:#fff;color:var(--edge);">Save &amp; Close</button>` : ''}
       <button class="modal-close" data-action="closeModal">✕ Done</button>
     </div>
     <div class="modal-body">${bodyHtml}</div>
@@ -5011,6 +5099,7 @@ function renderClientModalBody(l,c,viewMode){
   viewMode = viewMode || 'all';
   const showDeals = viewMode!=='prospecting';
   const showProspecting = l.id==='listings' && !state.isMobile;
+  const canEdit = state.currentUser.role==='Admin' || c.createdBy===state.currentUser.id || (c.authorizedUserIds||[]).includes(state.currentUser.id);
   const canManageAccess = state.currentUser.role==='Admin' || c.createdBy===state.currentUser.id;
   const creator = USERS.find(u=>u.id===c.createdBy);
   const authorizedUsers = (c.authorizedUserIds||[]).map(id=>USERS.find(u=>u.id===id)).filter(Boolean);
@@ -5035,14 +5124,15 @@ function renderClientModalBody(l,c,viewMode){
     </div>` : ''}
   </div>`;
   return `
+  ${!canEdit ? `<div style="background:#F3F1EC;border:1px solid var(--line);border-radius:8px;padding:8px 14px;font-size:12.5px;color:var(--ink-soft);margin-bottom:14px;">👁️ View-only — you have Full Access visibility but aren't personally added to this ${l.id==='listings'?'listing':'client'}, so editing is turned off.</div>` : ''}
   ${showDeals ? `
   <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
-    <button class="btn sm" data-action="addDeal" data-client="${c.id}">+ Add site / deal</button>
+    ${canEdit ? `<button class="btn sm" data-action="addDeal" data-client="${c.id}">+ Add site / deal</button>` : ''}
   </div>
   <div class="contact-card">
     <div class="label">Primary Contact</div>
     ${contactRow(c.primary)}
-    <button class="btn secondary sm" style="margin-top:10px;" data-action="pickContact" data-client="${c.id}" data-slot="primary">${c.primary? 'Change contact':'Attach contact'}</button>
+    ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickContact" data-client="${c.id}" data-slot="primary">${c.primary? 'Change contact':'Attach contact'}</button>` : ''}
   </div>
   <div class="section-label">Sites / Deals</div>
   ${renderDealGroupsInClient(l,c)}
@@ -5050,7 +5140,7 @@ function renderClientModalBody(l,c,viewMode){
   ${showProspecting ? renderLSRInline(c, viewMode) : ''}
   ${showDeals ? `
   <div class="section-label">General To-Do's <span style="font-weight:400;color:var(--ink-soft);">(not tied to a specific site)</span></div>
-  <button class="btn secondary sm" data-action="newAccountTodo" data-listid="${l.id}" data-client="${c.id}" style="margin-bottom:10px;">+ New To-Do</button>
+  ${canEdit ? `<button class="btn secondary sm" data-action="newAccountTodo" data-listid="${l.id}" data-client="${c.id}" style="margin-bottom:10px;">+ New To-Do</button>` : ''}
   ${renderTodoList(db.todos.filter(t=>t.clientId===c.id && !t.dealId).filter(visibleTodo))}
   ` : ''}
   ${showDeals ? accessHtml : ''}
@@ -5312,16 +5402,19 @@ function renderCommissionModal(){
 function renderDealModalBody(l,c,d){
   const todos = db.todos.filter(t=>t.dealId===d.id).filter(visibleTodo);
   const caExecuted = d.caExecuted!==undefined ? d.caExecuted : (l.id==='listings');
+  const canEdit = state.currentUser.role==='Admin' || c.createdBy===state.currentUser.id || (c.authorizedUserIds||[]).includes(state.currentUser.id);
+  const ro = canEdit ? '' : 'disabled';
   return `
+  ${!canEdit ? `<div style="background:#F3F1EC;border:1px solid var(--line);border-radius:8px;padding:8px 14px;font-size:12.5px;color:var(--ink-soft);margin-bottom:14px;">👁️ View-only — you have Full Access visibility but aren't personally added to this ${l.id==='listings'?'listing':'client'}, so editing is turned off.</div>` : ''}
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px;">
-    <button class="btn sm" data-action="newTodoInDeal" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">+ New To-Do</button>
+    ${canEdit ? `<button class="btn sm" data-action="newTodoInDeal" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">+ New To-Do</button>` : '<div></div>'}
     <div style="display:flex;gap:14px;">
       <label style="display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--ink-soft);font-weight:600;">
-        <input type="checkbox" data-toggleactive="${d.id}" ${d.activeDeal?'checked':''} style="width:auto;accent-color:var(--edge);">
+        <input type="checkbox" data-toggleactive="${d.id}" ${d.activeDeal?'checked':''} ${ro} style="width:auto;accent-color:var(--edge);">
         ⭐ Active Deal
       </label>
       <label style="display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--ink-soft);font-weight:600;">
-        <input type="checkbox" data-togglecaexec="${d.id}" data-listid="${l.id}" data-client="${c.id}" ${caExecuted?'checked':''} style="width:auto;accent-color:var(--good);">
+        <input type="checkbox" data-togglecaexec="${d.id}" data-listid="${l.id}" data-client="${c.id}" ${caExecuted?'checked':''} ${ro} style="width:auto;accent-color:var(--good);">
         📄 CA Executed
       </label>
     </div>
@@ -5329,35 +5422,35 @@ function renderDealModalBody(l,c,d){
   <div class="contact-card">
     <div class="label">Primary Site Contact</div>
     ${contactRow(d.contactId)}
-    <button class="btn secondary sm" style="margin-top:10px;" data-action="pickDealContact" data-slot="primary" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">${d.contactId? 'Change contact':'Attach contact'}</button>
+    ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickDealContact" data-slot="primary" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">${d.contactId? 'Change contact':'Attach contact'}</button>` : ''}
   </div>
   ${d.contactId ? `
   <div class="contact-card">
     <div class="label">Broker</div>
     ${brokerRow(d.brokerContactId)}
-    <button class="btn secondary sm" style="margin-top:10px;" data-action="pickDealBroker" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">${d.brokerContactId? 'Change broker':'Attach broker'}</button>
+    ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickDealBroker" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">${d.brokerContactId? 'Change broker':'Attach broker'}</button>` : ''}
   </div>` : ''}
   ${d.brokerContactId ? `
   <div class="contact-card">
     <div class="label">Second Site Contact</div>
     ${contactRow(d.secondContactId)}
-    <button class="btn secondary sm" style="margin-top:10px;" data-action="pickDealContact" data-slot="second" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">${d.secondContactId? 'Change contact':'Attach contact'}</button>
+    ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickDealContact" data-slot="second" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">${d.secondContactId? 'Change contact':'Attach contact'}</button>` : ''}
   </div>` : ''}
   ${d.secondContactId ? `
   <div class="contact-card">
     <div class="label">Third Site Contact</div>
     ${contactRow(d.thirdContactId)}
-    <button class="btn secondary sm" style="margin-top:10px;" data-action="pickDealContact" data-slot="third" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">${d.thirdContactId? 'Change contact':'Attach contact'}</button>
+    ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickDealContact" data-slot="third" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">${d.thirdContactId? 'Change contact':'Attach contact'}</button>` : ''}
   </div>` : ''}
   <div class="section-label">Deal Terms</div>
   <div class="type-toggle" id="dealTypeToggle">
-    <button class="${d.dealType==='lease'?'active':''}" data-dealtypebtn="lease">Lease</button>
-    <button class="${d.dealType==='sale'?'active':''}" data-dealtypebtn="sale">Sale</button>
+    <button class="${d.dealType==='lease'?'active':''}" data-dealtypebtn="lease" ${ro}>Lease</button>
+    <button class="${d.dealType==='sale'?'active':''}" data-dealtypebtn="sale" ${ro}>Sale</button>
   </div>
   <div class="field-row">
     <div class="field">
       <label style="font-size:14px;">Stage *</label>
-      <select id="dtStage" style="font-weight:700;font-size:16px;padding:10px 12px;">
+      <select id="dtStage" style="font-weight:700;font-size:16px;padding:10px 12px;" ${ro}>
         <option value="">— choose —</option>
         ${lsrStagesForTrack(d.dealType||'lease').map(sid=>`<option value="${sid}" ${d.stage===sid?'selected':''}>${LSR_STAGE_MAP[sid].name}</option>`).join('')}
       </select>
@@ -5365,30 +5458,30 @@ function renderDealModalBody(l,c,d){
     ${l.id==='listings' ? `
     <div class="field autocomplete-box">
       <label>Category</label>
-      <select id="dtCategory">
+      <select id="dtCategory" ${ro}>
         <option value="">— none yet —</option>
         ${DEFAULT_PROPERTY_CATEGORIES.concat(c.categoryConfig ? c.categoryConfig.custom : []).map(cat=>`<option value="${cat.id}" ${d.categoryId===cat.id?'selected':''}>${escapeHtml(cat.name)}</option>`).join('')}
       </select>
     </div>` : `<div class="field"></div>`}
   </div>
   <div class="field-row">
-    <div class="field"><label>Building</label><input id="dtBuilding" value="${escapeAttr(d.building||'')}"></div>
-    <div class="field"><label>Space #</label><input id="dtSpaceNum" value="${escapeAttr(d.spaceNum||'')}"></div>
+    <div class="field"><label>Building</label><input id="dtBuilding" value="${escapeAttr(d.building||'')}" ${ro}></div>
+    <div class="field"><label>Space #</label><input id="dtSpaceNum" value="${escapeAttr(d.spaceNum||'')}" ${ro}></div>
   </div>
   <div class="field-row">
-    <div class="field"><label>Size</label><input id="dtSize" value="${escapeAttr(d.size||'')}"></div>
-    <div class="field"><label>${d.dealType==='sale'?'Price':'Rent'}</label><input id="dtMoney" value="${escapeAttr(d.dealType==='sale'? (d.price||'') : (d.rent||''))}"></div>
+    <div class="field"><label>Size</label><input id="dtSize" value="${escapeAttr(d.size||'')}" ${ro}></div>
+    <div class="field"><label>${d.dealType==='sale'?'Price':'Rent'}</label><input id="dtMoney" value="${escapeAttr(d.dealType==='sale'? (d.price||'') : (d.rent||''))}" ${ro}></div>
   </div>
   <div class="field-row">
-    <div class="field"><label>Term</label><input id="dtTerm" value="${escapeAttr(d.term||'')}"></div>
-    <div class="field"><label>TI Allowance</label><input id="dtTI" value="${escapeAttr(d.tiAllowance||'')}"></div>
+    <div class="field"><label>Term</label><input id="dtTerm" value="${escapeAttr(d.term||'')}" ${ro}></div>
+    <div class="field"><label>TI Allowance</label><input id="dtTI" value="${escapeAttr(d.tiAllowance||'')}" ${ro}></div>
   </div>
   <div style="display:flex;gap:8px;margin-bottom:14px;">
     <button class="btn secondary sm" data-action="openCommission" data-kind="deal" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">💰 Commission</button>
-    <button class="btn secondary sm" data-action="openMoveDeal" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">↔️ Move to Another Account</button>
+    ${canEdit ? `<button class="btn secondary sm" data-action="openMoveDeal" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">↔️ Move to Another Account</button>` : ''}
   </div>
-  <div class="field"><label>Notes</label><textarea id="dtNotes" rows="3">${escapeHtml(d.notes||'')}</textarea></div>
-  <button class="btn sm" data-action="saveDealTerms" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}" style="margin-bottom:6px;">Save Deal Terms</button>
+  <div class="field"><label>Notes</label><textarea id="dtNotes" rows="3" ${ro}>${escapeHtml(d.notes||'')}</textarea></div>
+  ${canEdit ? `<button class="btn sm" data-action="saveDealTerms" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}" style="margin-bottom:6px;">Save Deal Terms</button>` : ''}
   <div class="section-label">To-Do's</div>
   ${todos.length? renderTodoList(todos) : `<div class="empty-state" style="padding:26px;"><div class="big">No to-do's yet.</div><div class="tiny">Add the first action item for this site.</div></div>`}
   ${state.currentUser.role==='Admin' ? `
@@ -6672,6 +6765,12 @@ function renderNewTodoModal(){
     const assignTo=document.getElementById('ntAssignSelect').value;
     const priv=document.getElementById('ntPrivate').checked;
     const ctx=m.context||{};
+    const targetClientId = ctx.clientId || (ctx.dealId ? clientIdForDeal(ctx.dealId) : null);
+    if(assignTo!==state.currentUser.id && targetClientId && !userHasClientAccess(assignTo, targetClientId)){
+      const u = USERS.find(x=>x.id===assignTo);
+      const ok = confirm(`${u.name} doesn't have access to this client yet, so they'll only be able to see this specific to-do — not the rest of the client's deals or info. Assign it to them anyway?`);
+      if(!ok) return;
+    }
     const newTd = {
       id:crypto.randomUUID(), title, category, dueDate: parseNaturalDate(dueStr), assignedTo:assignTo, createdBy:state.currentUser.id,
       type:m.type, private:priv, completed:false, notes, isNew:false, attachments: m.attachments,
