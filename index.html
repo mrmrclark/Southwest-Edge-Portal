@@ -4678,7 +4678,7 @@ function renderTodoDetailModal(){
       </div>
       <div class="field">
         <label>Due date</label>
-        <input id="detDue" placeholder="today, tomorrow, 7/20/26…" value="${td.dueDate? toLocalDateStr(td.dueDate):''}">
+        <input type="date" id="detDue" value="${td.dueDate? toLocalDateStr(td.dueDate):''}">
         <div class="quickdate-row">
           <button data-detquickdate="today">Today</button>
           <button data-detquickdate="tomorrow">Tomorrow</button>
@@ -4742,7 +4742,14 @@ function renderTodoDetailModal(){
   </div>`;
   document.getElementById('app').appendChild(overlay);
   overlay.querySelectorAll('[data-dettype]').forEach(b=>b.onclick=()=>{ td.type=b.dataset.dettype; render(); });
-  overlay.querySelectorAll('[data-detquickdate]').forEach(b=>b.onclick=()=>{ document.getElementById('detDue').value=b.dataset.detquickdate; });
+  overlay.querySelectorAll('[data-detquickdate]').forEach(b=>b.onclick=()=>{
+    const val = b.dataset.detquickdate;
+    let d = null;
+    if(val==='today') d = todayDate();
+    else if(val==='tomorrow') d = addDays(todayDate(), 1);
+    else if(val==='next week') d = addDays(todayDate(), 7);
+    document.getElementById('detDue').value = d ? toLocalDateStr(d) : '';
+  });
   overlay.querySelector('[data-action="closeTodoDetail"]').onclick=()=>{ state.todoDetailModal=null; render(); };
   const addItemBtn = overlay.querySelector('[data-action="addChecklistItem"]');
   if(addItemBtn){
@@ -6603,7 +6610,7 @@ function renderNewTodoModal(){
       </div>
       <div class="field">
         <label>Due date</label>
-        <input id="ntDue" placeholder="type: today, tomorrow, 7/20, 7/20/26…" value="${escapeAttr(m.dueInput)}">
+        <input type="date" id="ntDue" value="${escapeAttr(m.dueInput)}">
         <div class="quickdate-row">
           <button data-quickdate="today">Today</button>
           <button data-quickdate="tomorrow">Tomorrow</button>
@@ -6642,7 +6649,12 @@ function renderNewTodoModal(){
   const ntTitleEl = document.getElementById('ntTitle'); if(ntTitleEl) setTimeout(()=>ntTitleEl.focus(), 0);
   overlay.querySelectorAll('[data-settype]').forEach(b=>b.onclick=()=>{ m.type=b.dataset.settype; render(); });
   overlay.querySelectorAll('[data-quickdate]').forEach(b=>b.onclick=()=>{
-    document.getElementById('ntDue').value = b.dataset.quickdate;
+    const val = b.dataset.quickdate;
+    let d = null;
+    if(val==='today') d = todayDate();
+    else if(val==='tomorrow') d = addDays(todayDate(), 1);
+    else if(val==='next week') d = addDays(todayDate(), 7);
+    document.getElementById('ntDue').value = d ? toLocalDateStr(d) : '';
   });
   overlay.querySelectorAll('[data-action="closeNewTodo"]').forEach(btn=>btn.onclick=()=>{ state.newTodoModal=null; render(); });
   const assignSelect = document.getElementById('ntAssignSelect');
