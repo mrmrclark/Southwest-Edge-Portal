@@ -1279,6 +1279,7 @@ const LSR_STAGES = [
   {id:'inEscrow', name:'In Escrow', track:'sale', color:'#E0469A'},
   {id:'signedLOI', name:'Signed LOI', track:'both', color:'#00A65A'},
   {id:'loi', name:'LOI', track:'both', color:'#00A65A'},
+  {id:'dead', name:'Dead', track:'both', color:'#8A7D6E'},
 ];
 const LSR_STAGE_MAP = {}; LSR_STAGES.forEach(s=>LSR_STAGE_MAP[s.id]=s);
 function lsrDealIsActive(p){
@@ -1290,9 +1291,11 @@ function lsrDealIsActive(p){
   return true;
 }
 function lsrStagesForTrack(dealType){
-  // dropdown options once converted, in hierarchy order (lowest to highest for a <select>)
-  if(dealType==='sale') return ['loi','signedLOI','inEscrow','closedEscrow'];
-  return ['loi','signedLOI','negotiating','signedLease'];
+  // dropdown options once converted, in hierarchy order (lowest to highest for a <select>).
+  // Dead sits at the very end on both tracks — it's not part of the natural progression,
+  // it's a terminal "this fell through" state a deal can drop into from anywhere.
+  if(dealType==='sale') return ['loi','signedLOI','inEscrow','closedEscrow','dead'];
+  return ['loi','signedLOI','negotiating','signedLease','dead'];
 }
 // Baked-in Phoenix retail tenant roster — a standing reference list, not re-uploaded per listing.
 const TENANT_ROSTER = [
@@ -3839,16 +3842,18 @@ function attachShellHandlers(){
   }
   wireGlobalSearchResultHandlers();
   const toggleListsBtn = document.querySelector('[data-action="toggleListsCollapsed"]'); if(toggleListsBtn) toggleListsBtn.onclick=()=>{
-    state.listsCollapsed = !state.listsCollapsed; render();
+    state.listsCollapsed = !state.listsCollapsed;
+    renderPreservingScroll('.sidebar');
   };
   document.querySelectorAll('[data-action="toggleOtherAccounts"]').forEach(el=>el.onclick=()=>{
     const id = el.dataset.listid;
     state.otherAccountsOpen[id] = !state.otherAccountsOpen[id];
     saveAppState();
-    render();
+    renderPreservingScroll('.content');
   });
   const toggleArchivedBtn = document.querySelector('[data-action="toggleShowArchivedClients"]'); if(toggleArchivedBtn) toggleArchivedBtn.onclick=()=>{
-    state.showArchivedClients = !state.showArchivedClients; render();
+    state.showArchivedClients = !state.showArchivedClients;
+    renderPreservingScroll('.content');
   };
   document.querySelectorAll('[data-restoreclient]').forEach(el=>el.onclick=()=>{
     const cid = el.dataset.restoreclient, listId = el.dataset.listid;
@@ -3931,7 +3936,8 @@ function attachShellHandlers(){
     render();
   });
   const collapseBtn=document.querySelector('[data-action="toggleSmartCollapse"]'); if(collapseBtn) collapseBtn.onclick=()=>{
-    state.showAllSmartLists=!state.showAllSmartLists; render();
+    state.showAllSmartLists=!state.showAllSmartLists;
+    renderPreservingScroll('.sidebar');
   };
   const notifBtn=document.querySelector('[data-action="openNotifSettings"]'); if(notifBtn) notifBtn.onclick=()=>{
     state.notifSettingsOpen=true; render();
@@ -5052,17 +5058,19 @@ const DEAL_GROUPS = {
   prospects:       {title:'Prospects',         color:'#8A8378', match:d=>!d.complete && !d.stage},
   inEscrow:        {title:'In Escrow',         color:'#E0469A', match:d=>!d.complete && d.stage==='inEscrow'},
   closedEscrow:    {title:'Closed Escrow',     color:'#E8951E', match:d=>!d.complete && d.stage==='closedEscrow'},
+  dead:            {title:'Dead',              color:'#8A7D6E', match:d=>!d.complete && d.stage==='dead'},
 };
 function renderDealGroupsInClient(l,c){
   const rowsByKey = {};
   Object.keys(DEAL_GROUPS).forEach(k=>{ rowsByKey[k] = c.deals.filter(DEAL_GROUPS[k].match); });
   // Base order (lease-only clients, or a sale client with nothing currently in escrow):
-  // In Escrow sits near the bottom, right before Closed Escrow.
-  let order = ['signedLease','negotiating','signedLOI','loi','prospects','inEscrow','closedEscrow','openForBusiness'];
+  // In Escrow sits near the bottom, right before Closed Escrow. Dead is always last —
+  // it's a terminal, out-of-the-running state, not part of the normal progression.
+  let order = ['signedLease','negotiating','signedLOI','loi','prospects','inEscrow','closedEscrow','openForBusiness','dead'];
   // But if this client actually has a deal sitting in escrow right now, promote In Escrow
   // up next to Signed Lease so an active sale doesn't get buried near the bottom.
   if(rowsByKey.inEscrow.length){
-    order = ['signedLease','inEscrow','negotiating','signedLOI','loi','prospects','closedEscrow','openForBusiness'];
+    order = ['signedLease','inEscrow','negotiating','signedLOI','loi','prospects','closedEscrow','openForBusiness','dead'];
   }
   return order.map(k=>renderDealGroupSection(l, c, {key:k, ...DEAL_GROUPS[k]}, rowsByKey[k])).join('');
 }
@@ -5854,7 +5862,8 @@ function wireLSRInlineHandlers(root){
   const trackerSel = root.querySelector('#lsrTrackerSelect');
   if(trackerSel) trackerSel.onchange=()=>{ state.lsrTrackerFilter=trackerSel.value; render(); };
   root.querySelectorAll('[data-lsrtoggle]').forEach(el=>el.onclick=()=>{
-    const k=el.dataset.lsrtoggle; const currentlyCollapsed = state.lsrCollapsed[k] !== false; state.lsrCollapsed[k]=!currentlyCollapsed; render();
+    const k=el.dataset.lsrtoggle; const currentlyCollapsed = state.lsrCollapsed[k] !== false; state.lsrCollapsed[k]=!currentlyCollapsed;
+    renderPreservingScroll('.modal-body');
   });
   root.querySelectorAll('[data-lsropen]').forEach(el=>el.onclick=(ev)=>{
     if(ev.target.closest('[data-stopprop]')) return;
@@ -6082,7 +6091,8 @@ function attachModalHandlers(root){
   });
   root.querySelectorAll('[data-dealgrouptoggle]').forEach(el=>el.onclick=()=>{
     const k=el.dataset.dealgrouptoggle; const currentlyCollapsed = state.dealGroupCollapsed[k] !== false;
-    state.dealGroupCollapsed[k]=!currentlyCollapsed; render();
+    state.dealGroupCollapsed[k]=!currentlyCollapsed;
+    renderPreservingScroll('.modal-body');
   });
   root.querySelectorAll('[data-toggledeal]').forEach(el=>el.onclick=safeHandler((ev)=>{
     ev.stopPropagation();
@@ -7750,6 +7760,21 @@ function flashToast(msg){ state.toast = msg; }
 // silently doing nothing. Without this, a thrown error inside an onclick handler
 // (e.g. some expected data not being found) aborts everything after it — the modal
 // doesn't close, nothing saves, and there is no sign anything went wrong at all.
+// Call this instead of a bare render() after any toggle/expand/collapse-style state change.
+// A full render() replaces the DOM inside a scroll container, which resets its scroll
+// position to the top — this saves it beforehand and restores it right after, so opening
+// or closing a section simply reveals/hides content in place instead of jumping the screen.
+function renderPreservingScroll(containerSelector){
+  const scroller = document.querySelector(containerSelector);
+  const savedScrollTop = scroller ? scroller.scrollTop : null;
+  render();
+  if(savedScrollTop!==null){
+    requestAnimationFrame(()=>{
+      const s = document.querySelector(containerSelector);
+      if(s) s.scrollTop = savedScrollTop;
+    });
+  }
+}
 function safeHandler(fn){
   return function(...args){
     try {
