@@ -758,10 +758,12 @@ function clientRowToLocal(r){
   return {id:r.id, name:r.name, primary:r.primary_contact_id, secondary:[], deals:[],
           propertyType:r.property_type, squareFootage:r.square_footage, askingRate:r.asking_rate,
           createdBy: authIdToLocalUserId(r.created_by) || r.created_by, authorizedUserIds:[],
+          hashtags: r.hashtags || '',
           archivedAt: r.archived_at ? new Date(r.archived_at) : null};
 }
 function clientLocalToRow(c, listId){
   return {id:c.id, list_id:listId, name:c.name, primary_contact_id:c.primary||null, created_by: localUserIdToAuthId(c.createdBy),
+          hashtags: c.hashtags || null,
           archived_at: c.archivedAt ? c.archivedAt.toISOString() : null};
 }
 function dealRowToLocal(r){
@@ -1053,7 +1055,7 @@ function todoRowToLocal(r){
   return {id:r.id, title:r.title, category:r.category||'', dueDate:r.due_date? new Date(r.due_date+'T00:00:00'):null,
     assignedTo: authIdToLocalUserId(r.assigned_to) || r.assigned_to, createdBy: authIdToLocalUserId(r.created_by) || r.created_by,
     type:r.type, private:r.is_private, completed:r.is_completed, isNew:r.is_new, notes:r.notes||'',
-    listId:r.list_id, clientId:r.client_id, dealId:r.deal_id, entryId:r.entry_id, attachments:[],
+    listId:r.list_id, clientId:r.client_id, dealId:r.deal_id, entryId:r.entry_id, projectId:r.project_id, attachments:[],
     checklistItems: r.checklist_items || [],
     archivedAt: r.archived_at ? new Date(r.archived_at) : undefined};
 }
@@ -1061,7 +1063,7 @@ function todoLocalToRow(t){
   return {id:t.id, title:t.title, category:t.category||null, due_date:t.dueDate? toLocalDateStr(t.dueDate):null,
     assigned_to: localUserIdToAuthId(t.assignedTo), created_by: localUserIdToAuthId(t.createdBy),
     type:t.type||'task', is_private:!!t.private, is_completed:!!t.completed, is_new:!!t.isNew, notes:t.notes||null,
-    list_id:t.listId||null, client_id:t.clientId||null, deal_id:t.dealId||null, entry_id:t.entryId||null,
+    list_id:t.listId||null, client_id:t.clientId||null, deal_id:t.dealId||null, entry_id:t.entryId||null, project_id:t.projectId||null,
     checklist_items: t.checklistItems || [],
     archived_at: t.archivedAt ? t.archivedAt.toISOString() : null};
 }
@@ -3653,7 +3655,7 @@ function renderTodoRow(td){
         <span class="due ${dueCls}">${dueLabel}</span>
         <span class="pill">${contextLabel(td)}</span>
         ${td.private ? `<span class="pill private">Private</span>`:''}
-        ${td.type!=='task' ? `<span class="pill gray">${td.type}${td.type==='checklist' && td.checklistItems && td.checklistItems.length? ` ${td.checklistItems.filter(i=>i.done).length}/${td.checklistItems.length}`:''}</span>`:''}
+        ${td.type!=='task' ? `<span class="pill gray">${td.type}${(td.type==='checklist'||td.type==='project') && td.checklistItems && td.checklistItems.length? ` ${td.checklistItems.filter(i=>i.done).length}/${td.checklistItems.length}`:''}${td.type==='project' ? ` · ${db.todos.filter(t=>t.projectId===td.id).length} to-do${db.todos.filter(t=>t.projectId===td.id).length===1?'':'s'}` : ''}</span>`:''}
         ${td.isNew && td.assignedTo===state.currentUser.id ? `<span class="pill" style="background:var(--edge);color:#fff;">New</span>`:''}
         ${assignedBy ? `<span class="pill gray" title="Assigned by ${escapeAttr(assignedBy.name)}">👤 by ${assignedBy.initials}</span>`:''}
         ${td.attachments && td.attachments.length ? `<span class="pill gray">📎 ${td.attachments.length}</span>`:''}
@@ -4145,17 +4147,19 @@ function renderManageUsersModal(){
   </div>`;
   document.getElementById('app').appendChild(overlay);
   overlay.querySelectorAll('[data-action="closeManageUsers"]').forEach(b=>b.onclick=()=>{ state.manageUsersModalOpen=false; render(); });
-  overlay.querySelectorAll('[data-userrole]').forEach(sel=>sel.onchange=safeHandler(()=>{
+  overlay.querySelectorAll('[data-userrole]').forEach(sel=>sel.onchange=safeHandler(async ()=>{
     const u = USERS.find(x=>x.id===sel.dataset.userrole);
     if(!u) return;
     const newRole = sel.value;
     const oldRole = u.role;
     u.role = newRole;
-    supaUpdateUserRole(u, newRole).then(ok=>{
-      if(!ok) u.role = oldRole; // roll back the on-screen change if the write failed
-      render();
-    });
-    flashToast(`${u.name} is now ${newRole==='FullAccess'?'Full Access':newRole}.`);
+    render();
+    const ok = await supaUpdateUserRole(u, newRole);
+    if(ok){
+      flashToast(`${u.name} is now ${newRole==='FullAccess'?'Full Access':newRole}.`);
+    } else {
+      u.role = oldRole; // roll back the on-screen change since the write didn't actually succeed
+    }
     render();
   }));
 }
@@ -4207,7 +4211,7 @@ function renderPendingUsersModal(){
     render();
   });
 }
-function handleAdminAction(a){
+async function handleAdminAction(a){
   if(a==='adminPending'){ state.pendingUsersModalOpen=true; }
   if(a==='adminPendingDeletions'){ state.pendingDeletionsOpen=true; }
   if(a==='adminFullTeam'){ state.mainView = {type:'smart', id:'fullTeam'}; if(state.isMobile) state.mobileScreen='main'; }
@@ -4215,7 +4219,14 @@ function handleAdminAction(a){
   if(a==='adminImportTaskFire'){ state.taskfireImport = {step:'upload'}; }
   if(a==='adminImportMaps'){ state.mapsImport = {step:'upload', clientQuery:'', pickedClient:null, newClientName:''}; }
   if(a==='adminDigest'){ state.notifSettingsOpen=true; }
-  if(a==='adminUsers'){ state.manageUsersModalOpen=true; }
+  if(a==='adminUsers'){
+    // Refresh every profile fresh from the server first — without this, anyone who
+    // logged in for the first time after this browser's own session started would
+    // still show as having no real account yet, silently blocking their role change
+    // (exactly the bug that happened with Colin).
+    await fetchAllProfilesIntoUsers();
+    state.manageUsersModalOpen=true;
+  }
   if(a==='adminTimes'){ state.notifSettingsOpen=true; }
   if(a==='adminReset'){ flashToast('Password reset flow would open here.'); }
   render();
@@ -4258,6 +4269,43 @@ function clientIdForDeal(dealId){
         if(c.deals.some(d=>d.id===dealId)) return c.id;
       }
     }
+  }
+  return null;
+}
+function cleanHashtagsInput(raw){
+  return raw.split(',').map(t=>t.trim()).filter(Boolean).map(t=> t.startsWith('#') ? t : '#'+t).join(', ');
+}
+function levenshteinDistance(a, b){
+  a = a.toLowerCase(); b = b.toLowerCase();
+  const m = a.length, n = b.length;
+  const dp = [];
+  for(let i=0;i<=m;i++){ dp.push([i]); }
+  for(let j=1;j<=n;j++){ dp[0][j]=j; }
+  for(let i=1;i<=m;i++){
+    for(let j=1;j<=n;j++){
+      dp[i][j] = a[i-1]===b[j-1] ? dp[i-1][j-1] : 1 + Math.min(dp[i-1][j-1], dp[i-1][j], dp[i][j-1]);
+    }
+  }
+  return dp[m][n];
+}
+function allHashtagsInUse(excludeClientId){
+  const set = new Set();
+  db.lists.forEach(l=>{
+    if(l.type==='deep') l.clients.forEach(c=>{
+      if(c.id===excludeClientId || !c.hashtags) return;
+      c.hashtags.split(',').map(t=>t.trim()).filter(Boolean).forEach(t=>set.add(t));
+    });
+  });
+  return [...set];
+}
+// Flags likely-duplicate tags (punctuation/capitalization differences AND probable typos —
+// both usually land within a small edit distance of each other, e.g. #freddys -> #freddy's
+// is a 1-character insert, #freddys -> #freddyz is a 1-character substitution).
+function findSimilarHashtag(tag, existingTags){
+  const threshold = tag.length <= 5 ? 1 : 2;
+  for(const existing of existingTags){
+    if(existing.toLowerCase()===tag.toLowerCase()) continue; // exact match — not a typo, a legitimate reuse
+    if(levenshteinDistance(tag, existing) <= threshold) return existing;
   }
   return null;
 }
@@ -4725,17 +4773,52 @@ function renderMoveTodoPicker(){
     render();
   });
 }
+// A Checklist is a series of free-form checkable boxes that live only inside this one
+// to-do — not independently assignable. Items are directly editable in place; a fresh
+// Checklist (or a Project's embedded one) starts with 5 blank rows to fill in, and
+// "+ Add item" grows it one at a time after that.
+function renderChecklistSection(td){
+  const doneCount = td.checklistItems.filter(i=>i.done).length;
+  return `
+  <div class="field">
+    <label>Checklist${td.checklistItems.length? ` <span style="font-weight:400;color:var(--ink-soft);">(${doneCount}/${td.checklistItems.length} done)</span>`:''}</label>
+    <div id="checklistItemsList">
+      ${td.checklistItems.map((item,idx)=>`
+        <div style="display:flex;align-items:center;gap:8px;padding:4px 0;">
+          <input type="checkbox" data-checkitem="${item.id}" ${item.done?'checked':''} style="width:auto;">
+          <input data-checklistitemtext="${item.id}" value="${escapeAttr(item.text)}" placeholder="Item ${idx+1}" style="flex:1;font-size:13.5px;${item.done?'text-decoration:line-through;color:var(--ink-soft);':''}">
+          <button class="row-trash" data-removeitem="${item.id}" style="opacity:.5;">✕</button>
+        </div>`).join('')}
+    </div>
+    <button class="btn secondary sm" data-action="addChecklistItem" style="margin-top:6px;">+ Add item</button>
+  </div>`;
+}
+// A Project holds real, independently-assignable child To-Do's (their own due date,
+// their own assignee — same as any other to-do, just linked back to this Project) PLUS
+// its own embedded Checklist for things that only need tracking, not assigning.
+function renderProjectSection(td){
+  const childTodos = db.todos.filter(t=>t.projectId===td.id).filter(visibleTodo);
+  return `
+  <div class="section-label" style="margin-top:10px;">To-Do's</div>
+  <button class="btn secondary sm" data-action="newProjectChildTodo" data-project="${td.id}" style="margin-bottom:10px;">+ New To-Do</button>
+  ${childTodos.length? renderTodoList(childTodos) : `<div class="empty-state" style="padding:16px;"><div class="tiny">No to-do's yet — add the first action item for this project.</div></div>`}
+  <div class="section-label" style="margin-top:18px;">Checklist</div>
+  ${renderChecklistSection(td)}
+  `;
+}
 function renderTodoDetailModal(){
   const td = db.todos.find(x=>x.id===state.todoDetailModal.id);
   if(!td){ state.todoDetailModal=null; return; }
   if(!td.attachments) td.attachments=[];
   if(!td.checklistItems) td.checklistItems=[];
+  if((td.type==='checklist' || td.type==='project') && td.checklistItems.length===0){
+    for(let i=0;i<5;i++) td.checklistItems.push({id:crypto.randomUUID(), text:'', done:false});
+  }
   const overlay = document.createElement('div');
   overlay.className='modal-overlay'; overlay.style.zIndex=190;
   const cats = allCategories();
   const contact = getTodoContact(td);
   const isForMe = td.assignedTo===state.currentUser.id;
-  const doneCount = td.checklistItems.filter(i=>i.done).length;
   overlay.innerHTML = `
   <div class="modal-card">
     <div class="modal-head">
@@ -4767,22 +4850,8 @@ function renderTodoDetailModal(){
           <button data-detquickdate="">No date</button>
         </div>
       </div>
-      ${td.type==='checklist' ? `
-      <div class="field">
-        <label>Checklist items${td.checklistItems.length? ` <span style="font-weight:400;color:var(--ink-soft);">(${doneCount}/${td.checklistItems.length} done)</span>`:''}</label>
-        <div id="checklistItemsList">
-          ${td.checklistItems.map(item=>`
-            <div style="display:flex;align-items:center;gap:8px;padding:4px 0;">
-              <input type="checkbox" data-checkitem="${item.id}" ${item.done?'checked':''} style="width:auto;">
-              <span style="flex:1;font-size:13.5px;${item.done?'text-decoration:line-through;color:var(--ink-soft);':''}">${escapeHtml(item.text)}</span>
-              <button class="row-trash" data-removeitem="${item.id}" style="opacity:.5;">✕</button>
-            </div>`).join('')}
-        </div>
-        <div style="display:flex;gap:8px;margin-top:6px;">
-          <input id="newChecklistItem" placeholder="e.g., Milk" style="flex:1;">
-          <button class="btn secondary sm" data-action="addChecklistItem">+ Add</button>
-        </div>
-      </div>` : ''}
+      ${td.type==='checklist' ? renderChecklistSection(td) : ''}
+      ${td.type==='project' ? renderProjectSection(td) : ''}
       <div class="field">
         <label>Notes</label>
         <textarea id="detNotes" rows="3" placeholder="Any details worth keeping with this to-do…">${escapeHtml(td.notes||'')}</textarea>
@@ -4822,7 +4891,13 @@ function renderTodoDetailModal(){
     </div>
   </div>`;
   document.getElementById('app').appendChild(overlay);
-  overlay.querySelectorAll('[data-dettype]').forEach(b=>b.onclick=()=>{ td.type=b.dataset.dettype; render(); });
+  overlay.querySelectorAll('[data-dettype]').forEach(b=>b.onclick=()=>{
+    td.type=b.dataset.dettype;
+    if((td.type==='checklist' || td.type==='project') && td.checklistItems.length===0){
+      for(let i=0;i<5;i++) td.checklistItems.push({id:crypto.randomUUID(), text:'', done:false});
+    }
+    render();
+  });
   overlay.querySelectorAll('[data-detquickdate]').forEach(b=>b.onclick=()=>{
     const val = b.dataset.detquickdate;
     let d = null;
@@ -4832,20 +4907,15 @@ function renderTodoDetailModal(){
     document.getElementById('detDue').value = d ? toLocalDateStr(d) : '';
   });
   overlay.querySelector('[data-action="closeTodoDetail"]').onclick=()=>{ state.todoDetailModal=null; render(); };
-  const addItemBtn = overlay.querySelector('[data-action="addChecklistItem"]');
-  if(addItemBtn){
-    const doAdd = ()=>{
-      const input = document.getElementById('newChecklistItem');
-      const text = input.value.trim();
-      if(!text) return;
-      td.checklistItems.push({id:crypto.randomUUID(), text, done:false});
-      supaUpdateTodo(td);
-      render();
-      state.todoDetailModal = {id: td.id}; // keep the modal open through re-render
-    };
-    addItemBtn.onclick = doAdd;
-    document.getElementById('newChecklistItem').onkeydown = (ev)=>{ if(ev.key==='Enter'){ ev.preventDefault(); doAdd(); } };
-  }
+  overlay.querySelectorAll('[data-action="addChecklistItem"]').forEach(btn=>btn.onclick=()=>{
+    td.checklistItems.push({id:crypto.randomUUID(), text:'', done:false});
+    supaUpdateTodo(td);
+    render();
+  });
+  overlay.querySelectorAll('[data-checklistitemtext]').forEach(el=>el.onchange=()=>{
+    const item = td.checklistItems.find(i=>i.id===el.dataset.checklistitemtext);
+    if(item){ item.text = el.value.trim(); supaUpdateTodo(td); render(); }
+  });
   overlay.querySelectorAll('[data-checkitem]').forEach(el=>el.onchange=()=>{
     const item = td.checklistItems.find(i=>i.id===el.dataset.checkitem);
     if(item){ item.done = el.checked; supaUpdateTodo(td); render(); }
@@ -4853,6 +4923,10 @@ function renderTodoDetailModal(){
   overlay.querySelectorAll('[data-removeitem]').forEach(el=>el.onclick=()=>{
     td.checklistItems = td.checklistItems.filter(i=>i.id!==el.dataset.removeitem);
     supaUpdateTodo(td);
+    render();
+  });
+  overlay.querySelectorAll('[data-action="newProjectChildTodo"]').forEach(btn=>btn.onclick=()=>{
+    openNewTodoModal({listId: td.listId, clientId: td.clientId, dealId: td.dealId, entryId: td.entryId, projectId: td.id});
     render();
   });
   const moveBtn = overlay.querySelector('[data-action="openMoveTodo"]'); if(moveBtn) moveBtn.onclick=()=>{
@@ -5144,6 +5218,12 @@ function renderClientModalBody(l,c,viewMode){
   ${renderTodoList(db.todos.filter(t=>t.clientId===c.id && !t.dealId).filter(visibleTodo))}
   ` : ''}
   ${showDeals ? accessHtml : ''}
+  <div class="contact-card" style="margin-top:20px;">
+    <div class="label">Tags</div>
+    <div style="font-size:12.5px;color:var(--ink-soft);margin:4px 0 8px;">Comma-separated, e.g. #Freddys, #SouthwestEdgeRocks, #PortalPower</div>
+    <input id="clientHashtags" value="${escapeAttr(c.hashtags||'')}" placeholder="#Freddys, #SouthwestEdgeRocks" ${canEdit?'':'disabled'}>
+    ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="saveHashtags" data-client="${c.id}">Save Tags</button>` : ''}
+  </div>
   `;
 }
 function renderDealRowInClient(l,c,d){
@@ -6362,6 +6442,27 @@ function attachModalHandlers(root){
     d.dealType = btn.dataset.dealtypebtn;
     render();
   }));
+  const saveHashtagsBtn = root.querySelector('[data-action="saveHashtags"]'); if(saveHashtagsBtn) saveHashtagsBtn.onclick=safeHandler(()=>{
+    const frame = state.modalStack[state.modalStack.length-1];
+    const l=db.lists.find(x=>x.id===frame.listId); const c=l && l.clients.find(x=>x.id===saveHashtagsBtn.dataset.client);
+    if(!c){ flashToast("Couldn't find this client."); render(); return; }
+    const raw = document.getElementById('clientHashtags').value;
+    const cleaned = cleanHashtagsInput(raw);
+    const tags = cleaned ? cleaned.split(',').map(t=>t.trim()) : [];
+    const existingElsewhere = allHashtagsInUse(c.id);
+    const finalTags = tags.map(tag=>{
+      const similar = findSimilarHashtag(tag, existingElsewhere);
+      if(similar){
+        const useExisting = confirm(`You typed "${tag}" — did you mean "${similar}"? It's already used elsewhere.\n\nOK = use "${similar}" instead\nCancel = keep "${tag}" as typed`);
+        return useExisting ? similar : tag;
+      }
+      return tag;
+    });
+    c.hashtags = finalTags.join(', ');
+    supaUpdateClientContact(c, l.id);
+    flashToast('Tags saved.');
+    render();
+  });
   const saveDealTermsBtn = root.querySelector('[data-action="saveDealTerms"]'); if(saveDealTermsBtn) saveDealTermsBtn.onclick=safeHandler(()=>{
     const l=db.lists.find(x=>x.id===saveDealTermsBtn.dataset.listid); const c=l && l.clients.find(x=>x.id===saveDealTermsBtn.dataset.client);
     const d=c && c.deals.find(x=>x.id===saveDealTermsBtn.dataset.deal);
@@ -6774,7 +6875,7 @@ function renderNewTodoModal(){
     const newTd = {
       id:crypto.randomUUID(), title, category, dueDate: parseNaturalDate(dueStr), assignedTo:assignTo, createdBy:state.currentUser.id,
       type:m.type, private:priv, completed:false, notes, isNew:false, attachments: m.attachments,
-      listId: ctx.listId||null, clientId: ctx.clientId||null, dealId: ctx.dealId||null, entryId: ctx.entryId||null
+      listId: ctx.listId||null, clientId: ctx.clientId||null, dealId: ctx.dealId||null, entryId: ctx.entryId||null, projectId: ctx.projectId||null
     };
     db.todos.push(newTd);
     state.newTodoModal=null;
