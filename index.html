@@ -760,11 +760,15 @@ function clientRowToLocal(r){
           propertyType:r.property_type, squareFootage:r.square_footage, askingRate:r.asking_rate,
           createdBy: authIdToLocalUserId(r.created_by) || r.created_by, authorizedUserIds:[],
           hashtags: r.hashtags || '',
+          elaStartDate: r.ela_start_date ? new Date(r.ela_start_date+'T00:00:00') : null,
+          elaEndDate: r.ela_end_date ? new Date(r.ela_end_date+'T00:00:00') : null,
           archivedAt: r.archived_at ? new Date(r.archived_at) : null};
 }
 function clientLocalToRow(c, listId){
   return {id:c.id, list_id:listId, name:c.name, primary_contact_id:c.primary||null, created_by: localUserIdToAuthId(c.createdBy),
           hashtags: c.hashtags || null,
+          ela_start_date: c.elaStartDate ? toLocalDateStr(c.elaStartDate) : null,
+          ela_end_date: c.elaEndDate ? toLocalDateStr(c.elaEndDate) : null,
           archived_at: c.archivedAt ? c.archivedAt.toISOString() : null};
 }
 function dealRowToLocal(r){
@@ -1058,6 +1062,9 @@ function todoRowToLocal(r){
     type:r.type, private:r.is_private, completed:r.is_completed, isNew:r.is_new, notes:r.notes||'',
     listId:r.list_id, clientId:r.client_id, dealId:r.deal_id, entryId:r.entry_id, projectId:r.project_id, attachments:[],
     checklistItems: r.checklist_items || [],
+    status: r.status || '',
+    createdAt: r.created_at ? new Date(r.created_at) : null,
+    completedAt: r.completed_at ? new Date(r.completed_at) : null,
     archivedAt: r.archived_at ? new Date(r.archived_at) : undefined};
 }
 function todoLocalToRow(t){
@@ -1066,6 +1073,8 @@ function todoLocalToRow(t){
     type:t.type||'task', is_private:!!t.private, is_completed:!!t.completed, is_new:!!t.isNew, notes:t.notes||null,
     list_id:t.listId||null, client_id:t.clientId||null, deal_id:t.dealId||null, entry_id:t.entryId||null, project_id:t.projectId||null,
     checklist_items: t.checklistItems || [],
+    status: t.status || null,
+    completed_at: t.completedAt ? t.completedAt.toISOString() : null,
     archived_at: t.archivedAt ? t.archivedAt.toISOString() : null};
 }
 async function fetchTodosFromSupabase(){
@@ -1190,6 +1199,11 @@ async function supaSaveWidgetOrder(){
   if(!state.currentUser || !state.currentUser.authId) return;
   const { error } = await supabaseClient.from('profiles').update({widget_order: state.widgetOrder}).eq('id', state.currentUser.authId);
   if(error) console.error('supaSaveWidgetOrder error:', error);
+}
+async function supaSaveSidebarListsOrder(){
+  if(!state.currentUser || !state.currentUser.authId) return;
+  const { error } = await supabaseClient.from('profiles').update({sidebar_lists_order: sidebarListsOrder}).eq('id', state.currentUser.authId);
+  if(error) console.error('supaSaveSidebarListsOrder error:', error);
 }
 async function supaSavePersonalNotes(notesList){
   if(!state.currentUser || !state.currentUser.authId) return;
@@ -2051,6 +2065,7 @@ function seedAll(){
 }
 
 /* ---------------- SMART LISTS ---------------- */
+const STATUS_PRESETS = ['In Progress', 'Not Started', 'Awaiting Others', 'Need Feedback'];
 const SMART_LIST_DEFAULTS = [
   {id:'todayMe', name:'Today Me', icon:'🔥'},
   {id:'todayAll', name:'Today - All', icon:'🔥'},
@@ -2070,6 +2085,16 @@ const SMART_LIST_DEFAULTS = [
 // Single mutable, ordered list of every smart list (defaults + user-created). Reordering,
 // hiding, and deleting all operate on this one array so order is consistent everywhere.
 let smartListsArr = SMART_LIST_DEFAULTS.map(s=>({...s, isDefault:true}));
+// One combined order for everything shown under the "Lists" sidebar section — real
+// Lists (by their id) and the three special rows (by these fixed keys) mixed together,
+// so all of them can be dragged/reordered relative to each other, not just among
+// themselves. Reconciled against current db.lists on load (see loadAppState).
+let sidebarListsOrder = ['clients','listings','hotlist','hitlist','contacts','projects','archived-clients'];
+const SPECIAL_NAV_ITEMS = {
+  contacts: {icon:'👤', label:'Contacts', navTarget:'contacts', getCount:()=>db.contacts.length + PHOENIX_BROKER_LIST.length},
+  projects: {icon:'🗂️', label:'Projects', navTarget:'projects', getCount:()=>visibleProjectsList().length},
+  'archived-clients': {icon:'🗄️', label:'Archived', navTarget:'archived-clients', getCount:()=>(db.archivedClients||[]).length, adminOnly:true},
+};
 
 // Custom smart lists are synced through Supabase (per-person, private — RLS scopes each
 // row to its own user_id) so they follow you to any device, including mobile, instead of
@@ -2493,13 +2518,13 @@ function renderNotifSettingsModal(){
     overlay.querySelectorAll(`[data-schedtype^="${prefix}:"]`).forEach(b=>b.onclick=()=>{
       const type=b.dataset.schedtype.split(':')[1];
       if(isAdmin) adminDefaultSchedule.type=type; else { if(!u.notifPref) u.notifPref={type:adminDefaultSchedule.type,days:[...adminDefaultSchedule.days],time:adminDefaultSchedule.time}; u.notifPref.type=type; }
-      render();
+      renderPreservingScroll('.modal-body');
     });
     overlay.querySelectorAll(`[data-daypreset^="${prefix}:"]`).forEach(b=>b.onclick=()=>{
       const which=b.dataset.daypreset.split(':')[1];
       const days = which==='weekdays' ? ['monday','tuesday','wednesday','thursday','friday'] : DAYS_OF_WEEK.map(d=>d.id);
       if(isAdmin) adminDefaultSchedule.days=days; else { if(!u.notifPref) u.notifPref={type:'daily',days:[],time:pref.time}; u.notifPref.days=days; }
-      render();
+      renderPreservingScroll('.modal-body');
     });
   }
   wireScheduleControls('my', false);
@@ -2510,10 +2535,10 @@ function renderNotifSettingsModal(){
   if(useDefaultToggle) useDefaultToggle.onchange=()=>{
     if(useDefaultToggle.checked){ u.notifPref=null; supaSaveMyNotifPref(true); }
     else { u.notifPref={type:adminDefaultSchedule.type,days:[...adminDefaultSchedule.days],time:adminDefaultSchedule.time}; }
-    render();
+    renderPreservingScroll('.modal-body');
   };
   const saveMy = overlay.querySelector('[data-action="saveMySchedule"]'); if(saveMy) saveMy.onclick=()=>{
-    if(document.getElementById('useDefaultToggle').checked){ u.notifPref=null; supaSaveMyNotifPref(true); flashToast('Using company default schedule.'); render(); return; }
+    if(document.getElementById('useDefaultToggle').checked){ u.notifPref=null; supaSaveMyNotifPref(true); flashToast('Using company default schedule.'); renderPreservingScroll('.modal-body'); return; }
     const type = u.notifPref && u.notifPref.type || 'weekly';
     let days, time;
     if(type==='off'){ days=[]; time=''; }
@@ -2525,7 +2550,7 @@ function renderNotifSettingsModal(){
     u.notifPref = {type, days, time};
     supaSaveMyNotifPref(false, u.notifPref);
     flashToast(type==='off' ? 'Reminder emails turned off.' : 'Your reminder schedule is saved.');
-    render();
+    renderPreservingScroll('.modal-body');
   };
   const sendMyNow = overlay.querySelector('[data-action="sendMyDigestNow"]'); if(sendMyNow) sendMyNow.onclick=()=>sendDigestNow(u);
   const saveAdmin = overlay.querySelector('[data-action="saveAdminSchedule"]'); if(saveAdmin) saveAdmin.onclick=()=>{
@@ -2540,7 +2565,7 @@ function renderNotifSettingsModal(){
     adminDefaultSchedule = {type, days, time};
     supaSaveCompanyDefault(adminDefaultSchedule);
     flashToast(type==='off' ? 'Company default turned off.' : 'Company default schedule saved.');
-    render();
+    renderPreservingScroll('.modal-body');
   };
   const sendPicked = overlay.querySelector('[data-action="sendDigestToPicked"]'); if(sendPicked) sendPicked.onclick=()=>{
     const targetId = document.getElementById('digestTargetUser').value;
@@ -2693,6 +2718,7 @@ function attachLoginHandlers(){
     u.authId = profile.id;
     if(!u.emailClient) u.emailClient = profile.email_client;
     if(profile.widget_order) state.widgetOrder = profile.widget_order;
+    if(profile.sidebar_lists_order && profile.sidebar_lists_order.length) sidebarListsOrder = profile.sidebar_lists_order;
     u.notesList = await fetchPersonalNotes(profile.id);
     await fetchAllProfilesIntoUsers();
     if(!u.emailClient){
@@ -2742,7 +2768,10 @@ function countBadge(list, cls){
 const PROTECTED_LIST_IDS = ['clients','listings','hotlist','hitlist'];
 function renderNavContextMenu(kind, id){
   const isCustomSmart = kind==='smart' && !smartListsArr.find(s=>s.id===id).isDefault;
-  const canDelete = kind==='smart' ? !smartListsArr.find(s=>s.id===id).isDefault : !PROTECTED_LIST_IDS.includes(id);
+  let canDelete;
+  if(kind==='smart') canDelete = !smartListsArr.find(s=>s.id===id).isDefault;
+  else if(kind==='navitem') canDelete = db.lists.some(l=>l.id===id) && !PROTECTED_LIST_IDS.includes(id);
+  else canDelete = !PROTECTED_LIST_IDS.includes(id);
   return `
   <div class="nav-context-menu">
     <button data-navmove="up:${kind}:${id}">↑ Move Up</button>
@@ -2750,6 +2779,13 @@ function renderNavContextMenu(kind, id){
     ${isCustomSmart ? `<button data-editsmartlist="${id}">✏️ Edit</button>` : ''}
     ${canDelete? `<button class="danger" data-navdelete="${kind}:${id}">🗑️ Delete</button>` : `<button disabled style="opacity:.4;cursor:default;">Default — can't delete</button>`}
   </div>`;
+}
+function moveKeyInArray(arr, key, dir){
+  const idx = arr.indexOf(key);
+  if(idx<0) return;
+  const swapIdx = dir==='up'? idx-1 : idx+1;
+  if(swapIdx<0 || swapIdx>=arr.length) return;
+  const tmp = arr[idx]; arr[idx]=arr[swapIdx]; arr[swapIdx]=tmp;
 }
 function moveArrayItem(arr, id, dir){
   const idx = arr.findIndex(x=>x.id===id);
@@ -2816,40 +2852,40 @@ function renderSidebar(){
     </div>
     ${!state.listsCollapsed ? `
     <div class="nav-list">
-      ${db.lists.map(l=>{
-        const active = state.mainView.type==='list' && state.mainView.id===l.id;
-        const isAdmin = state.currentUser.role==='Admin';
+      ${(()=>{
+        // Reconcile: any real list or special row not yet in the saved order gets
+        // appended at the end (new custom lists, or someone's order saved before
+        // Projects existed) — never silently dropped, never duplicated.
+        const knownKeys = new Set(sidebarListsOrder);
+        db.lists.forEach(l=>{ if(!knownKeys.has(l.id)){ sidebarListsOrder.push(l.id); knownKeys.add(l.id); } });
+        Object.keys(SPECIAL_NAV_ITEMS).forEach(k=>{ if(!knownKeys.has(k)){ sidebarListsOrder.push(k); knownKeys.add(k); } });
         const me = state.currentUser.id;
-        let count = l.type==='deep' ? l.clients.filter(c=>c.createdBy===me || (c.authorizedUserIds||[]).includes(me)).length : l.entries.filter(e=>e.ownerId===me || (e.authorizedUserIds||[]).includes(me)).length;
-        const menuOpen = menu && menu.kind==='list' && menu.id===l.id;
-        return `<div class="nav-row-wrap ${active?'active':''}">
-          <button class="nav-row" data-nav="list:${l.id}">
-            <span class="nav-icon">${l.icon}</span><span class="nav-label">${escapeHtml(l.name)}</span>
-            <span class="nav-count gray" style="background:var(--line-soft);color:var(--ink-soft);">${count}</span>
-          </button>
-          <button class="nav-ellipsis" data-ellipsis="list:${l.id}">⋯</button>
-          ${menuOpen ? renderNavContextMenu('list', l.id) : ''}
-        </div>`;
-      }).join('')}
-      <div class="nav-row-wrap">
-        <button class="nav-row" data-nav="contacts">
-          <span class="nav-icon">👤</span><span class="nav-label">Contacts</span>
-          <span class="nav-count gray" style="background:var(--line-soft);color:var(--ink-soft);">${db.contacts.length + PHOENIX_BROKER_LIST.length}</span>
-        </button>
-      </div>
-      <div class="nav-row-wrap ${state.mainView.type==='projects'?'active':''}">
-        <button class="nav-row" data-nav="projects">
-          <span class="nav-icon">🗂️</span><span class="nav-label">Projects</span>
-          <span class="nav-count gray" style="background:var(--line-soft);color:var(--ink-soft);">${visibleProjectsList().length}</span>
-        </button>
-      </div>
-      ${state.currentUser.role==='Admin' ? `
-      <div class="nav-row-wrap ${state.mainView.type==='archived-clients'?'active':''}">
-        <button class="nav-row" data-nav="archived-clients">
-          <span class="nav-icon">🗄️</span><span class="nav-label">Archived</span>
-          <span class="nav-count gray" style="background:var(--line-soft);color:var(--ink-soft);">${(db.archivedClients||[]).length}</span>
-        </button>
-      </div>` : ''}
+        const rows = sidebarListsOrder.map(key=>{
+          const l = db.lists.find(x=>x.id===key);
+          if(l){
+            const count = l.type==='deep' ? l.clients.filter(c=>c.createdBy===me || (c.authorizedUserIds||[]).includes(me)).length : l.entries.filter(e=>e.ownerId===me || (e.authorizedUserIds||[]).includes(me)).length;
+            return {key, icon:l.icon, label:l.name, count, navTarget:`list:${l.id}`, isList:true, canDelete:!PROTECTED_LIST_IDS.includes(l.id)};
+          }
+          const special = SPECIAL_NAV_ITEMS[key];
+          if(!special) return null;
+          if(special.adminOnly && state.currentUser.role!=='Admin') return null;
+          return {key, icon:special.icon, label:special.label, count:special.getCount(), navTarget:special.navTarget, isList:false, canDelete:false};
+        }).filter(Boolean);
+        return rows.map(row=>{
+          const active = row.isList
+            ? (state.mainView.type==='list' && state.mainView.id===row.key)
+            : (state.mainView.type===row.navTarget);
+          const menuOpen = menu && menu.kind==='navitem' && menu.id===row.key;
+          return `<div class="nav-row-wrap ${active?'active':''}" draggable="true" data-navitemdrag="${row.key}">
+            <button class="nav-row" data-nav="${row.navTarget}">
+              <span class="nav-icon">${row.icon}</span><span class="nav-label">${escapeHtml(row.label)}</span>
+              <span class="nav-count gray" style="background:var(--line-soft);color:var(--ink-soft);">${row.count}</span>
+            </button>
+            <button class="nav-ellipsis" data-ellipsis="navitem:${row.key}">⋯</button>
+            ${menuOpen ? renderNavContextMenu('navitem', row.key) : ''}
+          </div>`;
+        }).join('');
+      })()}
     </div>` : ''}
     <div class="sidebar-footer">
       <div style="font-size:11px;color:var(--ink-soft);line-height:1.5;">Southwest Edge Portal · prototype build</div>
@@ -4019,7 +4055,15 @@ function attachShellHandlers(){
     if(fromIdx<0 || toIdx<0) return;
     const [moved] = smartListsArr.splice(fromIdx, 1);
     smartListsArr.splice(toIdx, 0, moved);
-    saveAppState();
+    supaReorderSmartLists(); // persists the real order — saveAppState() alone no longer does, since Supabase is the source of truth for custom smart lists
+    render();
+  });
+  wireDragReorder('[data-navitemdrag]', 'navitemdrag', (fromKey, toKey)=>{
+    const fromIdx = sidebarListsOrder.indexOf(fromKey), toIdx = sidebarListsOrder.indexOf(toKey);
+    if(fromIdx<0 || toIdx<0) return;
+    const [moved] = sidebarListsOrder.splice(fromIdx, 1);
+    sidebarListsOrder.splice(toIdx, 0, moved);
+    supaSaveSidebarListsOrder();
     render();
   });
   document.querySelectorAll('[data-action="addList"]').forEach(el=>el.onclick=()=>promptAddList());
@@ -4038,7 +4082,7 @@ function attachShellHandlers(){
     ev.stopPropagation();
     const [dir,kind,id]=el.dataset.navmove.split(':');
     if(kind==='smart'){ moveArrayItem(smartListsArr, id, dir); supaReorderSmartLists(); }
-    else moveArrayItem(db.lists, id, dir);
+    else if(kind==='navitem'){ moveKeyInArray(sidebarListsOrder, id, dir); supaSaveSidebarListsOrder(); }
     state.navContextMenu=null;
     render();
   });
@@ -4048,8 +4092,9 @@ function attachShellHandlers(){
     const label = kind==='smart' ? smartListsArr.find(s=>s.id===id).name : db.lists.find(l=>l.id===id).name;
     if(confirm(`Delete "${label}"? This can't be undone.`)){
       if(kind==='smart'){ smartListsArr = smartListsArr.filter(s=>s.id!==id); supaDeleteSmartList(id); }
-      else db.lists = db.lists.filter(l=>l.id!==id);
-      if(state.mainView.type===kind && state.mainView.id===id) state.mainView={type:'smart', id:'todayMe'};
+      else { db.lists = db.lists.filter(l=>l.id!==id); sidebarListsOrder = sidebarListsOrder.filter(k=>k!==id); }
+      if(state.mainView.type==='list' && state.mainView.id===id) state.mainView={type:'smart', id:'todayMe'};
+      if(state.mainView.type==='smart' && state.mainView.id===id) state.mainView={type:'smart', id:'todayMe'};
     }
     state.navContextMenu=null;
     render();
@@ -4083,7 +4128,7 @@ function attachShellHandlers(){
   document.querySelectorAll('[data-widgettoggle]').forEach(el=>el.onclick=(ev)=>{
     ev.stopPropagation();
     state.sidePanelWidgets[el.dataset.widgettoggle] = el.checked;
-    render();
+    renderPreservingScroll('.content');
   });
   const addQuickLinkBtn = document.querySelector('[data-action="addQuickLink"]'); if(addQuickLinkBtn) addQuickLinkBtn.onclick=()=>{
     const name = prompt('Name this link (e.g., "CoStar"):');
@@ -4095,13 +4140,13 @@ function attachShellHandlers(){
     const newLink = {id:crypto.randomUUID(), name, url};
     state.quickLinks.push(newLink);
     supaCreateQuickLink(newLink);
-    render();
+    renderPreservingScroll('.content');
   };
   document.querySelectorAll('[data-removequicklink]').forEach(el=>el.onclick=()=>{
     const id = el.dataset.removequicklink;
     state.quickLinks = (state.quickLinks||[]).filter(l=>l.id!==id);
     supaDeleteQuickLink(id);
-    render();
+    renderPreservingScroll('.content');
   });
   wireDragReorder('[data-quicklinkdrag]', 'quicklinkdrag', (fromId, toId)=>{
     const links = state.quickLinks || [];
@@ -4110,7 +4155,7 @@ function attachShellHandlers(){
     const [moved] = links.splice(fromIdx, 1);
     links.splice(toIdx, 0, moved);
     supaReorderQuickLinks();
-    render();
+    renderPreservingScroll('.content');
   });
   wireDragReorder('[data-widgetdrag]', 'widgetdrag', (fromKey, toKey)=>{
     if(!state.widgetOrder) state.widgetOrder = ['calendar','weather','news','quicklinks'];
@@ -4234,14 +4279,14 @@ function renderManageUsersModal(){
     const newRole = sel.value;
     const oldRole = u.role;
     u.role = newRole;
-    render();
+    renderPreservingScroll('.modal-body');
     const ok = await supaUpdateUserRole(u, newRole);
     if(ok){
       flashToast(`${u.name} is now ${newRole==='FullAccess'?'Full Access':newRole}.`);
     } else {
       u.role = oldRole; // roll back the on-screen change since the write didn't actually succeed
     }
-    render();
+    renderPreservingScroll('.modal-body');
   }));
 }
 async function supaUpdateUserRole(u, newRole){
@@ -4479,9 +4524,9 @@ function renderNewSmartListModal(){
   </div>`;
   document.getElementById('app').appendChild(overlay);
   overlay.querySelectorAll('[data-action="closeSmartListModal"]').forEach(btn=>btn.onclick=()=>{ state.newSmartListModal=null; render(); });
-  overlay.querySelectorAll('[data-slmatchmode]').forEach(btn=>btn.onclick=()=>{ m.matchMode = btn.dataset.slmatchmode; render(); });
+  overlay.querySelectorAll('[data-slmatchmode]').forEach(btn=>btn.onclick=()=>{ m.matchMode = btn.dataset.slmatchmode; renderPreservingScroll('.modal-body'); });
   const dateSel = document.getElementById('slDateRule');
-  if(dateSel) dateSel.onchange=()=>{ m.dateRule=dateSel.value; render(); };
+  if(dateSel) dateSel.onchange=()=>{ m.dateRule=dateSel.value; renderPreservingScroll('.modal-body'); };
   const clientQueryInput = document.getElementById('slClientQuery');
   if(clientQueryInput){
     clientQueryInput.oninput=()=>{ m.clientQuery=clientQueryInput.value; render(); };
@@ -4490,11 +4535,11 @@ function renderNewSmartListModal(){
     if(!m.clientIds) m.clientIds=[];
     m.clientIds.push(el.dataset.selectslclient);
     m.clientQuery='';
-    render();
+    renderPreservingScroll('.modal-body');
   });
   overlay.querySelectorAll('[data-removeslclient]').forEach(el=>el.onclick=()=>{
     m.clientIds = (m.clientIds||[]).filter(id=>id!==el.dataset.removeslclient);
-    render();
+    renderPreservingScroll('.modal-body');
   });
   const categoryInput = document.getElementById('slCategoryInput');
   if(categoryInput){
@@ -4506,7 +4551,7 @@ function renderNewSmartListModal(){
         const val = categoryInput.value.trim();
         if(!m.categories.some(c=>c.toLowerCase()===val.toLowerCase())) m.categories.push(val);
         m.categoryInput='';
-        render();
+        renderPreservingScroll('.modal-body');
       }
     };
   }
@@ -4514,14 +4559,14 @@ function renderNewSmartListModal(){
     if(!m.categories) m.categories=[];
     if(!m.categories.some(c=>c.toLowerCase()===el.dataset.addslcat.toLowerCase())) m.categories.push(el.dataset.addslcat);
     m.categoryInput='';
-    render();
+    renderPreservingScroll('.modal-body');
   });
   overlay.querySelectorAll('[data-removeslcat]').forEach(el=>el.onclick=()=>{
     m.categories = (m.categories||[]).filter(c=>c!==el.dataset.removeslcat);
-    render();
+    renderPreservingScroll('.modal-body');
   });
   const personalCb = document.getElementById('slPersonalOnly');
-  if(personalCb) personalCb.onchange=()=>{ m.personalOnly = personalCb.checked; render(); };
+  if(personalCb) personalCb.onchange=()=>{ m.personalOnly = personalCb.checked; renderPreservingScroll('.modal-body'); };
   overlay.querySelector('[data-action="saveSmartList"]').onclick=()=>{
     const name = document.getElementById('slName').value.trim();
     if(!name){ flashToast('Give the smart list a name.'); return; }
@@ -4570,6 +4615,7 @@ function toggleComplete(id){
   if(!td) return;
   const wasComplete = td.completed;
   td.completed = !td.completed;
+  td.completedAt = td.completed ? new Date() : null;
   supaUpdateTodo(td);
   if(!wasComplete && td.completed){
     // Just marked complete: keep it visible in the current view (don't let it vanish
@@ -4944,6 +4990,11 @@ function renderTodoDetailModal(){
         <input id="detCategory" value="${escapeAttr(td.category)}" list="detCategoryList">
         <datalist id="detCategoryList">${cats.map(c=>`<option value="${escapeAttr(c)}">`).join('')}</datalist>
       </div>
+      <div class="field autocomplete-box">
+        <label>Status</label>
+        <input id="detStatus" value="${escapeAttr(td.status||'')}" list="detStatusList" placeholder="e.g., In Progress">
+        <datalist id="detStatusList">${STATUS_PRESETS.map(s=>`<option value="${escapeAttr(s)}">`).join('')}</datalist>
+      </div>
       <div class="field">
         <label>Due date</label>
         <input type="date" id="detDue" value="${td.dueDate? toLocalDateStr(td.dueDate):''}">
@@ -5014,20 +5065,20 @@ function renderTodoDetailModal(){
   overlay.querySelectorAll('[data-action="addChecklistItem"]').forEach(btn=>btn.onclick=()=>{
     td.checklistItems.push({id:crypto.randomUUID(), text:'', done:false});
     supaUpdateTodo(td);
-    render();
+    renderPreservingScroll('.modal-body');
   });
   overlay.querySelectorAll('[data-checklistitemtext]').forEach(el=>el.onchange=()=>{
     const item = td.checklistItems.find(i=>i.id===el.dataset.checklistitemtext);
-    if(item){ item.text = el.value.trim(); supaUpdateTodo(td); render(); }
+    if(item){ item.text = el.value.trim(); supaUpdateTodo(td); renderPreservingScroll('.modal-body'); }
   });
   overlay.querySelectorAll('[data-checkitem]').forEach(el=>el.onchange=()=>{
     const item = td.checklistItems.find(i=>i.id===el.dataset.checkitem);
-    if(item){ item.done = el.checked; supaUpdateTodo(td); render(); }
+    if(item){ item.done = el.checked; supaUpdateTodo(td); renderPreservingScroll('.modal-body'); }
   });
   overlay.querySelectorAll('[data-removeitem]').forEach(el=>el.onclick=()=>{
     td.checklistItems = td.checklistItems.filter(i=>i.id!==el.dataset.removeitem);
     supaUpdateTodo(td);
-    render();
+    renderPreservingScroll('.modal-body');
   });
   overlay.querySelectorAll('[data-action="newProjectChildTodo"]').forEach(btn=>btn.onclick=()=>{
     openNewTodoModal({listId: td.listId, clientId: td.clientId, dealId: td.dealId, entryId: td.entryId, projectId: td.id});
@@ -5042,13 +5093,13 @@ function renderTodoDetailModal(){
       td.authorizedUserIds.push(userId);
       flashToast(`${USERS.find(u=>u.id===userId).name} can now see this Project.`);
     }
-    render();
+    renderPreservingScroll('.modal-body');
   });
   overlay.querySelectorAll('[data-removeprojectauth]').forEach(el=>el.onclick=safeHandler(()=>{
     const userId = el.dataset.removeprojectauth;
     td.authorizedUserIds = (td.authorizedUserIds||[]).filter(id=>id!==userId);
     supaRemoveProjectAuthorizedUser(td.id, userId);
-    render();
+    renderPreservingScroll('.modal-body');
   }));
   const moveBtn = overlay.querySelector('[data-action="openMoveTodo"]'); if(moveBtn) moveBtn.onclick=()=>{
     state.moveTodoPicker = {todoId: td.id, step:'client', query:''};
@@ -5064,10 +5115,11 @@ function renderTodoDetailModal(){
   overlay.querySelector('[data-action="detDelete"]').onclick=()=>{
     if(confirm(`Delete "${td.title}"? This can't be undone.`)){ deleteTodo(td.id); render(); }
   };
-  overlay.querySelector('[data-action="detToggleComplete"]').onclick=()=>{ td.completed=!td.completed; supaUpdateTodo(td); render(); };
+  overlay.querySelector('[data-action="detToggleComplete"]').onclick=()=>{ td.completed=!td.completed; td.completedAt = td.completed ? new Date() : null; supaUpdateTodo(td); render(); };
   overlay.querySelectorAll('[data-action="detSave"]').forEach(btn=>btn.onclick=()=>{
     td.title=document.getElementById('detTitle').value.trim()||td.title;
     td.category=document.getElementById('detCategory').value.trim();
+    td.status=document.getElementById('detStatus').value.trim();
     td.dueDate=parseNaturalDate(document.getElementById('detDue').value.trim());
     td.notes=document.getElementById('detNotes').value.trim();
     const newAssign=document.getElementById('detAssign').value;
@@ -5359,6 +5411,7 @@ function renderClientModalBody(l,c,viewMode){
   ${renderTodoList(db.todos.filter(t=>t.clientId===c.id && !t.dealId).filter(visibleTodo))}
   ` : ''}
   ${showDeals ? accessHtml : ''}
+  ${l.id==='listings' ? renderElaCard(c, canEdit) : ''}
   <div class="contact-card" style="margin-top:20px;">
     <div class="label">Tags</div>
     <div style="font-size:12.5px;color:var(--ink-soft);margin:4px 0 8px;">Comma-separated, e.g. #Freddys, #SouthwestEdgeRocks, #PortalPower</div>
@@ -5366,6 +5419,28 @@ function renderClientModalBody(l,c,viewMode){
     ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="saveHashtags" data-client="${c.id}">Save Tags</button>` : ''}
   </div>
   `;
+}
+function renderElaCard(c, canEdit){
+  let statusLine = '';
+  if(c.elaEndDate){
+    const days = Math.round((c.elaEndDate.getTime() - todayDate().getTime()) / 86400000);
+    if(days < 0) statusLine = `<span style="color:#C0392B;font-weight:600;">Expired ${Math.abs(days)} day${Math.abs(days)===1?'':'s'} ago</span>`;
+    else if(days === 0) statusLine = `<span style="color:#C0392B;font-weight:600;">Expires today</span>`;
+    else statusLine = `<span style="color:${days<=30?'#E8951E':'var(--ink-soft)'};font-weight:${days<=30?'600':'400'};">Expires in ${days} day${days===1?'':'s'} (${fmtDate(c.elaEndDate)})</span>`;
+  }
+  return `
+  <div class="contact-card" style="margin-top:20px;">
+    <div class="label">Exclusive Listing Agreement (ELA)</div>
+    ${statusLine ? `<div style="font-size:13px;margin:4px 0 8px;">${statusLine}</div>` : ''}
+    <div class="field-row">
+      <div class="field"><label>Start Date</label><input type="date" id="elaStartDate" value="${c.elaStartDate? toLocalDateStr(c.elaStartDate):''}" ${canEdit?'':'disabled'}></div>
+      <div class="field"><label>End Date</label><input type="date" id="elaEndDate" value="${c.elaEndDate? toLocalDateStr(c.elaEndDate):''}" ${canEdit?'':'disabled'}></div>
+    </div>
+    <div style="font-size:11.5px;color:var(--ink-soft);margin:4px 0 8px;">
+      Everyone with access to this listing, plus Gina, gets an automatic email and to-do 30 days and 5 days before the end date. Changing the end date (e.g. for an extension) automatically re-arms both reminders.
+    </div>
+    ${canEdit ? `<button class="btn secondary sm" data-action="saveEla" data-client="${c.id}">Save ELA Dates</button>` : ''}
+  </div>`;
 }
 function renderDealRowInClient(l,c,d){
   const status = dueStatus(d.dueDate);
@@ -5589,24 +5664,24 @@ function renderCommissionModal(){
   overlay.querySelector('[data-action="closeCommission"]').onclick=()=>{ state.commissionModal=null; render(); };
   overlay.querySelector('[data-action="addSplitRow"]').onclick=()=>{
     draft.push({userId: USERS[0].id, pct: ''});
-    render();
+    renderPreservingScroll('.modal-body');
   };
   overlay.querySelectorAll('[data-removesplitrow]').forEach(el=>el.onclick=()=>{
     draft.splice(parseInt(el.dataset.removesplitrow), 1);
-    render();
+    renderPreservingScroll('.modal-body');
   });
   overlay.querySelectorAll('[data-splituser]').forEach(el=>el.onchange=()=>{
     draft[parseInt(el.dataset.splituser)].userId = el.value;
   });
   overlay.querySelectorAll('[data-splitpct]').forEach(el=>el.oninput=()=>{
     draft[parseInt(el.dataset.splitpct)].pct = el.value;
-    render();
+    renderPreservingScroll('.modal-body');
   });
   overlay.querySelector('[data-action="saveCommission"]').onclick=()=>{
     const currentTotal = draft.reduce((s,row)=>s + (parseFloat(row.pct)||0), 0);
     if(draft.length && Math.abs(currentTotal-100) >= 0.02){
       flashToast(`Splits add up to ${currentTotal.toFixed(2)}%, not 100% — fix the percentages before saving.`);
-      render();
+      renderPreservingScroll('.modal-body');
       return;
     }
     obj.commissionStructure = document.getElementById('commStructure').value.trim();
@@ -6159,14 +6234,14 @@ function renderLSRCategoryManagerModal(){
     if(swap<0||swap>=cfg.order.length) return;
     const tmp=cfg.order[idx]; cfg.order[idx]=cfg.order[swap]; cfg.order[swap]=tmp;
     supaSaveListingCategorySettings(listing.id, cfg);
-    render();
+    renderPreservingScroll('.modal-body');
   });
   overlay.querySelectorAll('[data-cattogglehide]').forEach(el=>el.onclick=()=>{
     const id = el.dataset.cattogglehide;
     if(cfg.hidden.includes(id)) cfg.hidden = cfg.hidden.filter(x=>x!==id);
     else cfg.hidden.push(id);
     supaSaveListingCategorySettings(listing.id, cfg);
-    render();
+    renderPreservingScroll('.modal-body');
   });
   overlay.querySelector('[data-action="lsrAddCategory"]').onclick=()=>{
     const name = document.getElementById('newCatName').value.trim();
@@ -6177,7 +6252,7 @@ function renderLSRCategoryManagerModal(){
     supaCreateCategory(id, name, listing.id);
     supaSaveListingCategorySettings(listing.id, cfg);
     flashToast(`"${name}" category added.`);
-    render();
+    renderPreservingScroll('.modal-body');
   };
 }
 
@@ -6235,7 +6310,7 @@ function wireLSRInlineHandlers(root){
     const p = listing.prospects.find(x=>x.id===el.dataset.lsrcomm1);
     p.commission1Paid = el.checked;
     supaUpdateProspect(p, listing.id);
-    render();
+    renderPreservingScroll('.modal-body');
   });
   root.querySelectorAll('[data-lsrcomm2]').forEach(el=>el.onclick=(ev)=>{
     ev.stopPropagation();
@@ -6244,7 +6319,7 @@ function wireLSRInlineHandlers(root){
     p.commission2Paid = !p.commission2Paid;
     supaUpdateProspect(p, listing.id);
     if(!lsrDealIsActive(p)) flashToast(`${p.tenantName} — both commission halves paid. No longer an active deal.`);
-    render();
+    renderPreservingScroll('.modal-body');
   });
   root.querySelectorAll('[data-action="lsrAddProspect"]').forEach(el=>el.onclick=()=>{
     openLSRNewProspectModal(el.dataset.client, el.dataset.category); render();
@@ -6527,7 +6602,7 @@ function attachModalHandlers(root){
       c.authorizedUserIds.push(userId);
       flashToast(`${USERS.find(u=>u.id===userId).name} can now see this ${l.id==='listings'?'listing':'client'}.`);
     }
-    render();
+    renderPreservingScroll('.modal-body');
   });
   root.querySelectorAll('[data-removeauth]').forEach(el=>el.onclick=safeHandler(()=>{
     const userId = el.dataset.removeauth;
@@ -6536,7 +6611,7 @@ function attachModalHandlers(root){
     if(!c){ flashToast("Couldn't find this client."); render(); return; }
     c.authorizedUserIds = (c.authorizedUserIds||[]).filter(id=>id!==userId);
     supaRemoveAuthorizedUser(c.id, userId);
-    render();
+    renderPreservingScroll('.modal-body');
   }));
   const addEntryAuthBtn = root.querySelector('[data-action="addEntryAuthUser"]'); if(addEntryAuthBtn) addEntryAuthBtn.onclick=safeHandler(async ()=>{
     const sel = document.getElementById('addEntryAuthUserSelect');
@@ -6550,7 +6625,7 @@ function attachModalHandlers(root){
       e.authorizedUserIds.push(userId);
       flashToast(`${USERS.find(u=>u.id===userId).name} can now see this target.`);
     }
-    render();
+    renderPreservingScroll('.modal-body');
   });
   root.querySelectorAll('[data-removeentryauth]').forEach(el=>el.onclick=safeHandler(()=>{
     const userId = el.dataset.removeentryauth;
@@ -6559,7 +6634,7 @@ function attachModalHandlers(root){
     if(!e){ flashToast("Couldn't find this entry."); render(); return; }
     e.authorizedUserIds = (e.authorizedUserIds||[]).filter(id=>id!==userId);
     supaRemoveEntryAuthorizedUser(e.id, userId);
-    render();
+    renderPreservingScroll('.modal-body');
   }));
   const pickEntry = root.querySelector('[data-action="pickEntryContact"]'); if(pickEntry) pickEntry.onclick=()=>{
     openContactPicker({listId: pickEntry.dataset.listid, entryId: pickEntry.dataset.entry}); render();
@@ -6606,6 +6681,18 @@ function attachModalHandlers(root){
     c.hashtags = finalTags.join(', ');
     supaUpdateClientContact(c, l.id);
     flashToast('Tags saved.');
+    render();
+  });
+  const saveElaBtn = root.querySelector('[data-action="saveEla"]'); if(saveElaBtn) saveElaBtn.onclick=safeHandler(()=>{
+    const frame = state.modalStack[state.modalStack.length-1];
+    const l=db.lists.find(x=>x.id===frame.listId); const c=l && l.clients.find(x=>x.id===saveElaBtn.dataset.client);
+    if(!c){ flashToast("Couldn't find this listing."); render(); return; }
+    const startVal = document.getElementById('elaStartDate').value;
+    const endVal = document.getElementById('elaEndDate').value;
+    c.elaStartDate = startVal ? new Date(startVal+'T00:00:00') : null;
+    c.elaEndDate = endVal ? new Date(endVal+'T00:00:00') : null;
+    supaUpdateClientContact(c, l.id);
+    flashToast('ELA dates saved.');
     render();
   });
   const saveDealTermsBtn = root.querySelector('[data-action="saveDealTerms"]'); if(saveDealTermsBtn) saveDealTermsBtn.onclick=safeHandler(()=>{
@@ -6658,7 +6745,7 @@ function attachModalHandlers(root){
       if(el.dataset.edit==='feedback') e.feedback=el.value;
       if(el.dataset.edit==='lastCall') e.lastCall=parseNaturalDate(el.value);
       supaUpdateEntry(e, l.id);
-      render();
+      renderPreservingScroll('.modal-body');
     };
   });
   if(state.contactPickerOpen) attachContactPickerHandlers(root);
@@ -6888,7 +6975,7 @@ function finishContactPick(contactId){
 
 /* ---------------- NEW TODO MODAL ---------------- */
 function openNewTodoModal(context){
-  state.newTodoModal={ context, title:'', category: context.category||'', dueInput:'', notes:'', type:'task', assignTo:state.currentUser.id, attachments:[], checklistItems:[] };
+  state.newTodoModal={ context, title:'', category: context.category||'', status:'Not Started', dueInput:'', notes:'', type:'task', assignTo:state.currentUser.id, attachments:[], checklistItems:[] };
 }
 // A Project shows up here if the current person created it, is assigned to it directly,
 // or is assigned any child To Do living inside it — matching how "who can see a Project"
@@ -6923,16 +7010,16 @@ function wireAttachmentZone(overlay, zoneId, inputId, getAttachments, target){
   const zone = overlay.querySelector('#'+zoneId);
   const input = overlay.querySelector('#'+inputId);
   if(!zone || !input) return;
-  input.onchange = ()=>{ getAttachments().push(...filesToAttachments(input.files)); render(); };
+  input.onchange = ()=>{ getAttachments().push(...filesToAttachments(input.files)); renderPreservingScroll('.modal-body'); };
   zone.ondragover = (ev)=>{ ev.preventDefault(); zone.style.borderColor='var(--edge)'; };
   zone.ondragleave = ()=>{ zone.style.borderColor='var(--line)'; };
   zone.ondrop = (ev)=>{
     ev.preventDefault(); zone.style.borderColor='var(--line)';
     if(ev.dataTransfer.files.length) getAttachments().push(...filesToAttachments(ev.dataTransfer.files));
-    render();
+    renderPreservingScroll('.modal-body');
   };
   overlay.querySelectorAll(`[data-removeattachfor="${target}"]`).forEach(b=>b.onclick=()=>{
-    getAttachments().splice(parseInt(b.dataset.removeattach),1); render();
+    getAttachments().splice(parseInt(b.dataset.removeattach),1); renderPreservingScroll('.modal-body');
   });
 }
 function renderNewTodoModal(){
@@ -6958,6 +7045,11 @@ function renderNewTodoModal(){
         <label>Category</label>
         <input id="ntCategory" placeholder="e.g., Freddy's, Personal, Dutch Bros" value="${escapeAttr(m.category)}" list="categoryList">
         <datalist id="categoryList">${cats.map(c=>`<option value="${escapeAttr(c)}">`).join('')}</datalist>
+      </div>
+      <div class="field autocomplete-box">
+        <label>Status</label>
+        <input id="ntStatus" value="${escapeAttr(m.status||'Not Started')}" list="ntStatusList">
+        <datalist id="ntStatusList">${STATUS_PRESETS.map(s=>`<option value="${escapeAttr(s)}">`).join('')}</datalist>
       </div>
       <div class="field">
         <label>Due date</label>
@@ -7018,7 +7110,7 @@ function renderNewTodoModal(){
       m.checklistItems = [];
       for(let i=0;i<5;i++) m.checklistItems.push({id:crypto.randomUUID(), text:'', done:false});
     }
-    render();
+    renderPreservingScroll('.modal-body');
   });
   overlay.querySelectorAll('[data-quickdate]').forEach(b=>b.onclick=()=>{
     const val = b.dataset.quickdate;
@@ -7032,7 +7124,7 @@ function renderNewTodoModal(){
   overlay.querySelectorAll('[data-action="addNtChecklistItem"]').forEach(btn=>btn.onclick=()=>{
     if(!m.checklistItems) m.checklistItems=[];
     m.checklistItems.push({id:crypto.randomUUID(), text:'', done:false});
-    render();
+    renderPreservingScroll('.modal-body');
   });
   overlay.querySelectorAll('[data-ntchecklistitemtext]').forEach(el=>el.onchange=()=>{
     const item = (m.checklistItems||[]).find(i=>i.id===el.dataset.ntchecklistitemtext);
@@ -7044,7 +7136,7 @@ function renderNewTodoModal(){
   });
   overlay.querySelectorAll('[data-ntremoveitem]').forEach(el=>el.onclick=()=>{
     m.checklistItems = (m.checklistItems||[]).filter(i=>i.id!==el.dataset.ntremoveitem);
-    render();
+    renderPreservingScroll('.modal-body');
   });
   const assignSelect = document.getElementById('ntAssignSelect');
   assignSelect.onchange = ()=>{
@@ -7056,6 +7148,7 @@ function renderNewTodoModal(){
     const title=document.getElementById('ntTitle').value.trim();
     if(!title){ flashToast('Give the to-do a title first.'); return; }
     const category=document.getElementById('ntCategory').value.trim();
+    const status=document.getElementById('ntStatus').value.trim();
     const dueStr=document.getElementById('ntDue').value.trim();
     const notes=document.getElementById('ntNotes').value.trim();
     const assignTo=document.getElementById('ntAssignSelect').value;
@@ -7068,7 +7161,7 @@ function renderNewTodoModal(){
       if(!ok) return;
     }
     const newTd = {
-      id:crypto.randomUUID(), title, category, dueDate: parseNaturalDate(dueStr), assignedTo:assignTo, createdBy:state.currentUser.id,
+      id:crypto.randomUUID(), title, category, status, dueDate: parseNaturalDate(dueStr), assignedTo:assignTo, createdBy:state.currentUser.id,
       type:m.type, private:priv, completed:false, notes, isNew:false, attachments: m.attachments,
       checklistItems: m.checklistItems || [],
       listId: ctx.listId||null, clientId: ctx.clientId||null, dealId: ctx.dealId||null, entryId: ctx.entryId||null, projectId: ctx.projectId||null
@@ -8581,6 +8674,7 @@ render();
           u.authId = profile.id;
           if(!u.emailClient) u.emailClient = profile.email_client;
           if(profile.widget_order) state.widgetOrder = profile.widget_order;
+    if(profile.sidebar_lists_order && profile.sidebar_lists_order.length) sidebarListsOrder = profile.sidebar_lists_order;
           u.notesList = await fetchPersonalNotes(profile.id);
           if(u.emailClient){
             state.currentUser = u;
