@@ -2819,7 +2819,8 @@ function renderSidebar(){
       ${db.lists.map(l=>{
         const active = state.mainView.type==='list' && state.mainView.id===l.id;
         const isAdmin = state.currentUser.role==='Admin';
-        let count = l.type==='deep' ? l.clients.length : (isAdmin ? l.entries.length : l.entries.filter(e=>e.ownerId===state.currentUser.id || (e.authorizedUserIds||[]).includes(state.currentUser.id)).length);
+        const me = state.currentUser.id;
+        let count = l.type==='deep' ? l.clients.filter(c=>c.createdBy===me || (c.authorizedUserIds||[]).includes(me)).length : (isAdmin ? l.entries.length : l.entries.filter(e=>e.ownerId===state.currentUser.id || (e.authorizedUserIds||[]).includes(state.currentUser.id)).length);
         const menuOpen = menu && menu.kind==='list' && menu.id===l.id;
         return `<div class="nav-row-wrap ${active?'active':''}">
           <button class="nav-row" data-nav="list:${l.id}">
