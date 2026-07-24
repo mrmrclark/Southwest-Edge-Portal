@@ -645,6 +645,7 @@ async function fetchAllProfilesIntoUsers(){
     Object.assign(u, {authId:p.id, name:p.name, role:p.role, initials:p.initials, emailClient:p.email_client});
     u.notifUseDefault = p.notif_use_default !== false; // default true if column is null/undefined
     u.notifPref = (!u.notifUseDefault && p.notif_schedule_type) ? {type:p.notif_schedule_type, days:p.notif_schedule_days||[], time:p.notif_schedule_time||'07:00'} : null;
+    u.wantsAssignmentEmails = p.notif_assignment_emails !== false; // default true if column is null/undefined
   });
 }
 
@@ -1071,8 +1072,27 @@ async function fetchTodosFromSupabase(){
   const { data, error } = await supabaseClient.from('todos').select('*');
   if(error){ console.error('fetchTodosFromSupabase error:', error); return; }
   if(!data.length) return; // nothing on the server yet — keep local demo data as the starting point
-  db.todos = data.filter(r=>!r.archived_at).map(todoRowToLocal);
+  const { data:authUsers, error:e2 } = await supabaseClient.from('project_authorized_users').select('*');
+  if(e2) console.error('fetchTodosFromSupabase (project authorized users) error:', e2);
+  db.todos = data.filter(r=>!r.archived_at).map(r=>{
+    const t = todoRowToLocal(r);
+    if(t.type==='project' && authUsers) t.authorizedUserIds = authUsers.filter(a=>a.project_id===r.id).map(a=>authIdToLocalUserId(a.user_id)).filter(Boolean);
+    return t;
+  });
   db.archivedTodos = data.filter(r=>r.archived_at).map(todoRowToLocal);
+}
+async function supaAddProjectAuthorizedUser(projectId, localUserId){
+  const authId = localUserIdToAuthId(localUserId);
+  if(!authId){ flashToast('That person needs to sign in to the Portal at least once before they can be added.'); render(); return false; }
+  const { error } = await supabaseClient.from('project_authorized_users').insert({project_id:projectId, user_id:authId});
+  if(error){ console.error('supaAddProjectAuthorizedUser error:', error); flashToast('Saved here, but syncing to the server failed. (' + error.message + ')'); render(); return false; }
+  return true;
+}
+async function supaRemoveProjectAuthorizedUser(projectId, localUserId){
+  const authId = localUserIdToAuthId(localUserId);
+  if(!authId) return;
+  const { error } = await supabaseClient.from('project_authorized_users').delete().eq('project_id', projectId).eq('user_id', authId);
+  if(error) console.error('supaRemoveProjectAuthorizedUser error:', error);
 }
 async function supaCreateTodo(t){
   const { error } = await supabaseClient.from('todos').insert(todoLocalToRow(t));
@@ -2343,6 +2363,7 @@ const DAYS_OF_WEEK = [
 ];
 function scheduleSummary(sched){
   if(!sched) return 'Using company default';
+  if(sched.type==='off') return 'Off — no reminder emails';
   const timeLabel = sched.time;
   if(sched.type==='weekly'){
     const day = DAYS_OF_WEEK.find(d=>d.id===(sched.days[0]||'sunday'));
@@ -2380,7 +2401,9 @@ function renderNotifSettingsModal(){
     <div class="type-toggle">
       <button class="${sched.type==='weekly'?'active':''}" data-schedtype="${prefix}:weekly">Weekly digest</button>
       <button class="${sched.type==='daily'?'active':''}" data-schedtype="${prefix}:daily">Daily reminder</button>
+      <button class="${sched.type==='off'?'active':''}" data-schedtype="${prefix}:off">Off</button>
     </div>
+    ${sched.type==='off' ? `<div class="tiny" style="color:var(--ink-soft);margin-top:6px;">No reminder emails will be sent.</div>` : `
     <div id="${prefix}DayPicker">
     ${sched.type==='weekly' ? `
       <div class="field"><label>Which day</label>
@@ -2400,6 +2423,7 @@ function renderNotifSettingsModal(){
       </div>`}
     </div>
     <div class="field"><label>Time</label><input type="time" id="${prefix}Time" value="${sched.time}"></div>
+    `}
   `;
   overlay.innerHTML = `
   <div class="modal-card wide">
@@ -2421,6 +2445,10 @@ function renderNotifSettingsModal(){
           there and Outlook (desktop) below will use it.
         </div>
         <button class="btn sm" data-action="saveEmailClient" style="margin-top:8px;">Save Email Preference</button>
+      </div>
+      <div class="field" style="display:flex;align-items:center;gap:8px;">
+        <input type="checkbox" id="wantsAssignmentEmailsCheck" style="width:auto;" ${u.wantsAssignmentEmails!==false?'checked':''}>
+        <label style="margin:0;" for="wantsAssignmentEmailsCheck">Email me when someone assigns me a to-do</label>
       </div>
       <div class="field">
         <label>Calendar sync</label>
@@ -2487,25 +2515,31 @@ function renderNotifSettingsModal(){
   const saveMy = overlay.querySelector('[data-action="saveMySchedule"]'); if(saveMy) saveMy.onclick=()=>{
     if(document.getElementById('useDefaultToggle').checked){ u.notifPref=null; supaSaveMyNotifPref(true); flashToast('Using company default schedule.'); render(); return; }
     const type = u.notifPref && u.notifPref.type || 'weekly';
-    let days;
-    if(type==='weekly') days=[document.getElementById('myWeeklyDay').value];
-    else days = Array.from(overlay.querySelectorAll('.myDayCheck:checked')).map(c=>c.value);
-    const time = document.getElementById('myTime').value || '00:00';
+    let days, time;
+    if(type==='off'){ days=[]; time=''; }
+    else {
+      if(type==='weekly') days=[document.getElementById('myWeeklyDay').value];
+      else days = Array.from(overlay.querySelectorAll('.myDayCheck:checked')).map(c=>c.value);
+      time = document.getElementById('myTime').value || '00:00';
+    }
     u.notifPref = {type, days, time};
     supaSaveMyNotifPref(false, u.notifPref);
-    flashToast('Your reminder schedule is saved.');
+    flashToast(type==='off' ? 'Reminder emails turned off.' : 'Your reminder schedule is saved.');
     render();
   };
   const sendMyNow = overlay.querySelector('[data-action="sendMyDigestNow"]'); if(sendMyNow) sendMyNow.onclick=()=>sendDigestNow(u);
   const saveAdmin = overlay.querySelector('[data-action="saveAdminSchedule"]'); if(saveAdmin) saveAdmin.onclick=()=>{
     const type = adminDefaultSchedule.type;
-    let days;
-    if(type==='weekly') days=[document.getElementById('adminWeeklyDay').value];
-    else days = Array.from(overlay.querySelectorAll('.adminDayCheck:checked')).map(c=>c.value);
-    const time = document.getElementById('adminTime').value || '00:00';
+    let days, time;
+    if(type==='off'){ days=[]; time=''; }
+    else {
+      if(type==='weekly') days=[document.getElementById('adminWeeklyDay').value];
+      else days = Array.from(overlay.querySelectorAll('.adminDayCheck:checked')).map(c=>c.value);
+      time = document.getElementById('adminTime').value || '00:00';
+    }
     adminDefaultSchedule = {type, days, time};
     supaSaveCompanyDefault(adminDefaultSchedule);
-    flashToast('Company default schedule saved.');
+    flashToast(type==='off' ? 'Company default turned off.' : 'Company default schedule saved.');
     render();
   };
   const sendPicked = overlay.querySelector('[data-action="sendDigestToPicked"]'); if(sendPicked) sendPicked.onclick=()=>{
@@ -2519,6 +2553,15 @@ function renderNotifSettingsModal(){
       if(error){ console.error('Saving email_client failed:', error); flashToast('Saved locally, but syncing to the server failed — try again. (' + error.message + ')'); return; }
     }
     flashToast('Email preference saved.');
+  };
+  const wantsAssignEmailsCheck = document.getElementById('wantsAssignmentEmailsCheck');
+  if(wantsAssignEmailsCheck) wantsAssignEmailsCheck.onchange=async ()=>{
+    u.wantsAssignmentEmails = wantsAssignEmailsCheck.checked;
+    if(u.authId){
+      const { error } = await supabaseClient.from('profiles').update({ notif_assignment_emails: u.wantsAssignmentEmails }).eq('id', u.authId);
+      if(error){ console.error('Saving notif_assignment_emails failed:', error); flashToast('Saved locally, but syncing to the server failed — try again. (' + error.message + ')'); return; }
+    }
+    flashToast(u.wantsAssignmentEmails ? "You'll get an email when someone assigns you a to-do." : "Assignment emails turned off for you.");
   };
   const googleBtn = overlay.querySelector('[data-action="connectGoogle"]'); if(googleBtn) googleBtn.onclick=()=>{
     alert("Real Google Calendar sync needs a Google Cloud project registered to your account (or your Google Workspace admin) plus your portal's real, final web address — same idea as Outlook. Once you're on a stable Netlify domain, this is genuinely buildable client-side with no backend server. For now nothing is synced yet.");
@@ -2793,6 +2836,12 @@ function renderSidebar(){
           <span class="nav-count gray" style="background:var(--line-soft);color:var(--ink-soft);">${db.contacts.length + PHOENIX_BROKER_LIST.length}</span>
         </button>
       </div>
+      <div class="nav-row-wrap ${state.mainView.type==='projects'?'active':''}">
+        <button class="nav-row" data-nav="projects">
+          <span class="nav-icon">🗂️</span><span class="nav-label">Projects</span>
+          <span class="nav-count gray" style="background:var(--line-soft);color:var(--ink-soft);">${visibleProjectsList().length}</span>
+        </button>
+      </div>
       ${state.currentUser.role==='Admin' ? `
       <div class="nav-row-wrap ${state.mainView.type==='archived-clients'?'active':''}">
         <button class="nav-row" data-nav="archived-clients">
@@ -2827,6 +2876,8 @@ function renderTopbar(){
     eyebrow = 'Directory';
   } else if(state.mainView.type==='archived-clients'){
     title='Archived'; eyebrow='Clients & Listings';
+  } else if(state.mainView.type==='projects'){
+    title='Projects'; eyebrow='List';
   }
   const teamCapableIds = ['week','month'];
   const showTodoToggle = state.mainView.type==='smart' && teamCapableIds.includes(state.mainView.id);
@@ -3469,6 +3520,7 @@ function renderContactsScreen(){
 function renderMainContent(){
   if(state.mainView.type==='contacts') return renderContactsScreen();
   if(state.mainView.type==='archived-clients') return renderArchivedClientsMain();
+  if(state.mainView.type==='projects') return renderProjectsListMain();
   if(state.mainView.type==='list') return renderListMain(state.mainView.id);
   // smart list
   const id = state.mainView.id;
@@ -3503,6 +3555,29 @@ function renderArchivedClientsMain(){
     <div class="section-label" style="margin-top:22px;">Archived Listings (${archivedListings.length})</div>
     ${archivedListings.length ? archivedListings.map(renderRow).join('') : `<div class="tiny" style="color:var(--ink-soft);padding:8px 0;">None.</div>`}
   `;
+}
+function renderProjectsListMain(){
+  const projects = visibleProjectsList();
+  if(!projects.length) return `<div class="empty-state"><div class="big">No Projects yet.</div><div class="tiny">Open any to-do and switch it to "Project" to start one — it'll show up here no matter where it lives.</div></div>`;
+  return projects.map(p=>{
+    const childCount = db.todos.filter(t=>t.projectId===p.id).length;
+    const doneCount = (p.checklistItems||[]).filter(i=>i.done).length;
+    const totalChecklist = (p.checklistItems||[]).length;
+    const owner = USERS.find(u=>u.id===p.assignedTo);
+    return `
+    <div class="row-card" data-openproject="${p.id}">
+      <div class="nav-icon" style="font-size:20px;">🗂️</div>
+      <div class="row-body">
+        <div class="row-title">${escapeHtml(p.title)}</div>
+        <div class="row-meta">
+          <span class="tiny">${escapeHtml(getTodoLinkSummary(p))}</span>
+          ${owner ? `<span class="pill gray">${escapeHtml(owner.name)}</span>` : ''}
+          <span class="pill gray">${childCount} to-do${childCount===1?'':'s'}</span>
+          ${totalChecklist ? `<span class="pill gray">${doneCount}/${totalChecklist} checklist</span>` : ''}
+        </div>
+      </div>
+    </div>`;
+  }).join('');
 }
 function renderCAStatusMain(){
   const clientsList = db.lists.find(x=>x.id==='clients');
@@ -3841,6 +3916,7 @@ function attachShellHandlers(){
     else if(type==='list'){ state.mainView={type:'list',id}; }
     else if(el.dataset.nav==='contacts'){ state.mainView={type:'contacts'}; }
     else if(el.dataset.nav==='archived-clients'){ state.mainView={type:'archived-clients'}; }
+    else if(el.dataset.nav==='projects'){ state.mainView={type:'projects'}; }
     state.expandedTeamUser=null;
     state.todoView='mine';
     state.selectedTodoIds=[];
@@ -3907,6 +3983,10 @@ function attachShellHandlers(){
   });
   document.querySelectorAll('[data-viewarchived]').forEach(el=>el.onclick=()=>{
     openArchivedClientModal(el.dataset.listid, el.dataset.viewarchived);
+    render();
+  });
+  document.querySelectorAll('[data-openproject]').forEach(el=>el.onclick=()=>{
+    openTodoDetail(el.dataset.openproject);
     render();
   });
   document.querySelectorAll('[data-opendealdirect]').forEach(el=>el.onclick=()=>{
@@ -4798,12 +4878,35 @@ function renderChecklistSection(td){
 // its own embedded Checklist for things that only need tracking, not assigning.
 function renderProjectSection(td){
   const childTodos = db.todos.filter(t=>t.projectId===td.id).filter(visibleTodo);
+  const creator = USERS.find(u=>u.id===td.createdBy);
+  const authorizedUsers = (td.authorizedUserIds||[]).map(id=>USERS.find(u=>u.id===id)).filter(Boolean);
+  const notYetAuthorized = USERS.filter(u=>u.id!==td.createdBy && u.id!==td.assignedTo && !(td.authorizedUserIds||[]).includes(u.id));
+  const accessHtml = `
+  <div class="contact-card" style="background:#EFF6FA;border-color:#CBE0EE;margin-top:18px;">
+    <div class="label" style="color:#2C6E9E;">🔒 Access${creator? ` — created by ${escapeHtml(creator.name)}`:''}</div>
+    <div style="font-size:12.5px;color:var(--ink-soft);margin:4px 0 8px;">
+      Anyone assigned this Project, assigned a To Do inside it, or listed below can see it — everyone else can't. Anyone who can see it can add someone else.
+    </div>
+    ${authorizedUsers.length ? authorizedUsers.map(u=>`
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:5px 0;font-size:13px;">
+        <span>${escapeHtml(u.name)}</span>
+        <button class="btn secondary sm" data-removeprojectauth="${u.id}" data-project="${td.id}">Remove</button>
+      </div>`).join('') : `<div class="tiny" style="color:var(--ink-soft);">No one else has been added yet.</div>`}
+    ${notYetAuthorized.length ? `
+    <div style="display:flex;gap:8px;margin-top:10px;">
+      <select id="addProjectAuthUserSelect" style="flex:1;">
+        ${notYetAuthorized.map(u=>`<option value="${u.id}">${escapeHtml(u.name)}</option>`).join('')}
+      </select>
+      <button class="btn sm" data-action="addProjectAuthUser" data-project="${td.id}">+ Add</button>
+    </div>` : ''}
+  </div>`;
   return `
   <div class="section-label" style="margin-top:10px;">To-Do's</div>
   <button class="btn secondary sm" data-action="newProjectChildTodo" data-project="${td.id}" style="margin-bottom:10px;">+ New To-Do</button>
   ${childTodos.length? renderTodoList(childTodos) : `<div class="empty-state" style="padding:16px;"><div class="tiny">No to-do's yet — add the first action item for this project.</div></div>`}
   <div class="section-label" style="margin-top:18px;">Checklist</div>
   ${renderChecklistSection(td)}
+  ${accessHtml}
   `;
 }
 function renderTodoDetailModal(){
@@ -4850,6 +4953,14 @@ function renderTodoDetailModal(){
           <button data-detquickdate="">No date</button>
         </div>
       </div>
+      <div class="field">
+        <label>Assigned to</label>
+        <select id="detAssign">${USERS.map(u=>`<option value="${u.id}" ${td.assignedTo===u.id?'selected':''}>${u.name}${u.id===state.currentUser.id?' (me)':''}</option>`).join('')}</select>
+      </div>
+      <div class="field" style="display:flex;align-items:center;gap:8px;">
+        <input type="checkbox" id="detPrivate" style="width:auto;" ${td.private?'checked':''}>
+        <label style="margin:0;" for="detPrivate">Private (only I can see the details)</label>
+      </div>
       ${td.type==='checklist' ? renderChecklistSection(td) : ''}
       ${td.type==='project' ? renderProjectSection(td) : ''}
       <div class="field">
@@ -4869,14 +4980,6 @@ function renderTodoDetailModal(){
         <div class="label">Contact</div>
         ${contactRow(contact.id)}
       </div>` : ''}
-      <div class="field">
-        <label>Assigned to</label>
-        <select id="detAssign">${USERS.map(u=>`<option value="${u.id}" ${td.assignedTo===u.id?'selected':''}>${u.name}${u.id===state.currentUser.id?' (me)':''}</option>`).join('')}</select>
-      </div>
-      <div class="field" style="display:flex;align-items:center;gap:8px;">
-        <input type="checkbox" id="detPrivate" style="width:auto;" ${td.private?'checked':''}>
-        <label style="margin:0;" for="detPrivate">Private (only I can see the details)</label>
-      </div>
       <div style="margin-top:4px;">
         <span class="tiny" style="color:var(--ink-soft);">${escapeHtml(getTodoLinkSummary(td))}</span>
         <button class="toggle-all" data-action="openMoveTodo" style="margin-left:8px;">Move to a different Client/Deal</button>
@@ -4929,6 +5032,23 @@ function renderTodoDetailModal(){
     openNewTodoModal({listId: td.listId, clientId: td.clientId, dealId: td.dealId, entryId: td.entryId, projectId: td.id});
     render();
   });
+  const addProjectAuthBtn = overlay.querySelector('[data-action="addProjectAuthUser"]'); if(addProjectAuthBtn) addProjectAuthBtn.onclick=safeHandler(async ()=>{
+    const sel = document.getElementById('addProjectAuthUserSelect');
+    const userId = sel.value;
+    const ok = await supaAddProjectAuthorizedUser(td.id, userId);
+    if(ok){
+      if(!td.authorizedUserIds) td.authorizedUserIds=[];
+      td.authorizedUserIds.push(userId);
+      flashToast(`${USERS.find(u=>u.id===userId).name} can now see this Project.`);
+    }
+    render();
+  });
+  overlay.querySelectorAll('[data-removeprojectauth]').forEach(el=>el.onclick=safeHandler(()=>{
+    const userId = el.dataset.removeprojectauth;
+    td.authorizedUserIds = (td.authorizedUserIds||[]).filter(id=>id!==userId);
+    supaRemoveProjectAuthorizedUser(td.id, userId);
+    render();
+  }));
   const moveBtn = overlay.querySelector('[data-action="openMoveTodo"]'); if(moveBtn) moveBtn.onclick=()=>{
     state.moveTodoPicker = {todoId: td.id, step:'client', query:''};
     render();
@@ -4959,12 +5079,14 @@ function renderTodoDetailModal(){
       }
       td.assignedTo=newAssign;
       const u=USERS.find(x=>x.id===newAssign);
-      if(newAssign!==state.currentUser.id){
+      if(newAssign!==state.currentUser.id && u.wantsAssignmentEmails!==false){
         td.isNew=true;
         const subject = 'You Have a New To Do on Southwest Edge';
         const body = `Hi ${u.name.split(' ')[0]},\n\n${state.currentUser.name} assigned you a to-do:\n\n"${td.title}"${td.category?` (${td.category})`:''}${td.dueDate?`\nDue: ${fmtDate(td.dueDate)}`:''}\n\nLog in to Southwest Edge Portal to view it: ${portalUrl(td.id)}\n\n— Sent from Southwest Edge Portal`;
         openEmailDraft(u, subject, body);
         flashToast(`Email draft opened for ${u.name}.`);
+      } else if(newAssign!==state.currentUser.id){
+        td.isNew=true;
       }
     }
     td.private=document.getElementById('detPrivate').checked;
@@ -5019,10 +5141,28 @@ function wireTodoRowHandlers(root){
 }
 
 /* ---------------- MODAL STACK: Client / Deal / FlatEntry ---------------- */
+// Central access gate for opening a client/deal — every navigation path (search results,
+// nav links, "move to" pickers, anything now or added later) routes through these two
+// functions, so checking access here covers all of them in one place.
+function canViewClientLocally(listId, clientId){
+  if(state.currentUser.role==='Admin' || state.currentUser.role==='FullAccess') return true;
+  const l = db.lists.find(x=>x.id===listId);
+  const c = l && l.clients.find(x=>x.id===clientId);
+  if(!c) return false; // not even present in this browser's data — definitely no access
+  return c.createdBy===state.currentUser.id || (c.authorizedUserIds||[]).includes(state.currentUser.id);
+}
 function openClientModal(listId, clientId, viewMode){
+  if(!canViewClientLocally(listId, clientId)){
+    alert('You are not listed as a user on the account.');
+    return;
+  }
   state.modalStack=[{kind:'client', listId, clientId, viewMode: viewMode||'all'}];
 }
 function openDealModal(listId, clientId, dealId){
+  if(!canViewClientLocally(listId, clientId)){
+    alert('You are not listed as a user on the account.');
+    return;
+  }
   state.modalStack.push({kind:'deal', listId, clientId, dealId});
 }
 function openEntryModal(listId, entryId){
@@ -6134,10 +6274,14 @@ function notifyNewLSRTracker(newTrackerId, p, listing){
   };
   db.todos.push(newTodo);
   supaCreateTodo(newTodo);
-  const subject = 'You Have a New Lead Assigned on Southwest Edge';
-  const body = `Hi ${u.name.split(' ')[0]},\n\n${state.currentUser.name} made you the Edge Tracker for:\n\n"${p.tenantName}" — ${listing.name}\n\nA to-do has been added to your list to follow up — it'll be marked New until you open it.\n\nLog in to view it: ${portalUrl(newTodo.id)}\n\n— Sent from Southwest Edge Portal`;
-  openEmailDraft(u, subject, body);
-  flashToast(`Email draft opened for ${u.name} — they'll also see a new to-do waiting for them.`);
+  if(u.wantsAssignmentEmails!==false){
+    const subject = 'You Have a New Lead Assigned on Southwest Edge';
+    const body = `Hi ${u.name.split(' ')[0]},\n\n${state.currentUser.name} made you the Edge Tracker for:\n\n"${p.tenantName}" — ${listing.name}\n\nA to-do has been added to your list to follow up — it'll be marked New until you open it.\n\nLog in to view it: ${portalUrl(newTodo.id)}\n\n— Sent from Southwest Edge Portal`;
+    openEmailDraft(u, subject, body);
+    flashToast(`Email draft opened for ${u.name} — they'll also see a new to-do waiting for them.`);
+  } else {
+    flashToast(`${u.name} has a new to-do waiting for them (they've opted out of assignment emails).`);
+  }
 }
 function wireLSRProspectBodyHandlers(root, l, listing, p){
   const isConverted = p.stage!=='contacted' && p.stage!=='interested' && p.stage!=='dead' && p.stage!=='notInterested';
@@ -6745,6 +6889,18 @@ function finishContactPick(contactId){
 function openNewTodoModal(context){
   state.newTodoModal={ context, title:'', category: context.category||'', dueInput:'', notes:'', type:'task', assignTo:state.currentUser.id, attachments:[], checklistItems:[] };
 }
+// A Project shows up here if the current person created it, is assigned to it directly,
+// or is assigned any child To Do living inside it — matching how "who can see a Project"
+// was defined, independent of whatever client/deal it might also be tied to.
+function visibleProjectsList(){
+  const me = state.currentUser.id;
+  return db.todos.filter(t=>{
+    if(t.type!=='project') return false;
+    if(t.createdBy===me || t.assignedTo===me) return true;
+    if((t.authorizedUserIds||[]).includes(me)) return true;
+    return db.todos.some(child=>child.projectId===t.id && child.assignedTo===me);
+  });
+}
 function allCategories(){
   const set = new Set();
   db.todos.forEach(t=>{ if(t.category) set.add(t.category); });
@@ -6793,20 +6949,6 @@ function renderNewTodoModal(){
         <button class="${m.type==='project'?'active':''}" data-settype="project">Project</button>
         <button class="${m.type==='checklist'?'active':''}" data-settype="checklist">Checklist</button>
       </div>
-      ${(m.type==='checklist' || m.type==='project') ? `
-      <div class="field">
-        <label>Checklist</label>
-        <div id="ntChecklistItemsList">
-          ${(m.checklistItems||[]).map((item,idx)=>`
-            <div style="display:flex;align-items:center;gap:8px;padding:4px 0;">
-              <input type="checkbox" data-ntcheckitem="${item.id}" ${item.done?'checked':''} style="width:auto;">
-              <input data-ntchecklistitemtext="${item.id}" value="${escapeAttr(item.text)}" placeholder="Item ${idx+1}" style="flex:1;font-size:13.5px;">
-              <button class="row-trash" data-ntremoveitem="${item.id}" style="opacity:.5;">✕</button>
-            </div>`).join('')}
-        </div>
-        <button class="btn secondary sm" data-action="addNtChecklistItem" style="margin-top:6px;">+ Add item</button>
-        ${m.type==='project' ? `<div class="tiny" style="color:var(--ink-soft);margin-top:8px;">You can add independently-assignable To-Do's to this Project once it's created.</div>` : ''}
-      </div>` : ''}
       <div class="field">
         <label>What needs to happen?</label>
         <input id="ntTitle" placeholder="e.g., Send LOI redline to Dana" value="${escapeAttr(m.title)}">
@@ -6827,6 +6969,29 @@ function renderNewTodoModal(){
         </div>
       </div>
       <div class="field">
+        <label>Assign to</label>
+        <select id="ntAssignSelect">
+          ${USERS.map(u=>`<option value="${u.id}" ${m.assignTo===u.id?'selected':''}>${u.name}${u.id===state.currentUser.id?' (me)':''}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field" style="display:flex;align-items:center;gap:8px;">
+        <input type="checkbox" id="ntPrivate" style="width:auto;"> <label style="margin:0;" for="ntPrivate">Private (only I can see the details)</label>
+      </div>
+      ${(m.type==='checklist' || m.type==='project') ? `
+      <div class="field">
+        <label>Checklist</label>
+        <div id="ntChecklistItemsList">
+          ${(m.checklistItems||[]).map((item,idx)=>`
+            <div style="display:flex;align-items:center;gap:8px;padding:4px 0;">
+              <input type="checkbox" data-ntcheckitem="${item.id}" ${item.done?'checked':''} style="width:auto;">
+              <input data-ntchecklistitemtext="${item.id}" value="${escapeAttr(item.text)}" placeholder="Item ${idx+1}" style="flex:1;font-size:13.5px;">
+              <button class="row-trash" data-ntremoveitem="${item.id}" style="opacity:.5;">✕</button>
+            </div>`).join('')}
+        </div>
+        <button class="btn secondary sm" data-action="addNtChecklistItem" style="margin-top:6px;">+ Add item</button>
+        ${m.type==='project' ? `<div class="tiny" style="color:var(--ink-soft);margin-top:8px;">You can add independently-assignable To-Do's to this Project once it's created.</div>` : ''}
+      </div>` : ''}
+      <div class="field">
         <label>Notes</label>
         <textarea id="ntNotes" rows="3" placeholder="Any details worth keeping with this to-do…">${escapeHtml(m.notes||'')}</textarea>
       </div>
@@ -6837,15 +7002,6 @@ function renderNewTodoModal(){
         </div>
         <input type="file" id="ntFileInput" multiple style="display:none;">
         ${attachmentListHtml(m.attachments, 'new')}
-      </div>
-      <div class="field">
-        <label>Assign to</label>
-        <select id="ntAssignSelect">
-          ${USERS.map(u=>`<option value="${u.id}" ${m.assignTo===u.id?'selected':''}>${u.name}${u.id===state.currentUser.id?' (me)':''}</option>`).join('')}
-        </select>
-      </div>
-      <div class="field" style="display:flex;align-items:center;gap:8px;">
-        <input type="checkbox" id="ntPrivate" style="width:auto;"> <label style="margin:0;" for="ntPrivate">Private (only I can see the details)</label>
       </div>
     </div>
     <div class="modal-foot">
@@ -6921,10 +7077,14 @@ function renderNewTodoModal(){
     if(assignTo!==state.currentUser.id){
       newTd.isNew = true;
       const u=USERS.find(x=>x.id===assignTo);
-      const subject = 'You Have a New To Do on Southwest Edge';
-      const body = `Hi ${u.name.split(' ')[0]},\n\n${state.currentUser.name} assigned you a new to-do:\n\n"${title}"${category?` (${category})`:''}${newTd.dueDate?`\nDue: ${fmtDate(newTd.dueDate)}`:''}\n\nLog in to Southwest Edge Portal to view it: ${portalUrl(newTd.id)}\n\n— Sent from Southwest Edge Portal`;
-      openEmailDraft(u, subject, body);
-      flashToast(`Email draft opened for ${u.name}.`);
+      if(u.wantsAssignmentEmails!==false){
+        const subject = 'You Have a New To Do on Southwest Edge';
+        const body = `Hi ${u.name.split(' ')[0]},\n\n${state.currentUser.name} assigned you a new to-do:\n\n"${title}"${category?` (${category})`:''}${newTd.dueDate?`\nDue: ${fmtDate(newTd.dueDate)}`:''}\n\nLog in to Southwest Edge Portal to view it: ${portalUrl(newTd.id)}\n\n— Sent from Southwest Edge Portal`;
+        openEmailDraft(u, subject, body);
+        flashToast(`Email draft opened for ${u.name}.`);
+      } else {
+        flashToast(`To-do assigned to ${u.name} (they've opted out of assignment emails).`);
+      }
     } else {
       flashToast('To-do saved.');
     }
