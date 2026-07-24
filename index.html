@@ -5284,7 +5284,7 @@ function brandLogoImg(name){
 function renderTopModalCard(){
   const frame = state.modalStack[state.modalStack.length-1];
   const crumbs = breadcrumbFor(state.modalStack);
-  let bodyHtml='', titleText='', brandName='', clientAdminActions='', dealCanEdit=true;
+  let bodyHtml='', titleText='', brandName='', dealCanEdit=true;
   if(frame.kind==='client'){
     const l=db.lists.find(x=>x.id===frame.listId); const c=l.clients.find(x=>x.id===frame.clientId);
     titleText=c.name; brandName=c.name;
@@ -5295,18 +5295,7 @@ function renderTopModalCard(){
       const requester = USERS.find(u=>u.id===pendingDel.requestedBy);
       banner += `<div style="background:#FBE0DA;color:#A5300C;padding:8px 14px;border-radius:8px;font-size:12.5px;font-weight:600;margin-bottom:14px;">🗑️ Deletion requested by ${requester?escapeHtml(requester.name):'an Admin'} — pending approval from the other Admin. Still fully usable until then.</div>`;
     }
-    bodyHtml = banner + renderClientModalBody(l,c,frame.viewMode);
-    if(state.currentUser.role==='Admin'){
-      const noun = l.id==='listings' ? 'listing' : 'client';
-      const deleteBtn = pendingDel
-        ? `<button class="btn secondary sm" disabled title="Awaiting the other Admin's approval">🗑️ Pending Approval</button>`
-        : `<button class="btn danger sm" data-action="deleteClient" data-listid="${l.id}" data-client="${c.id}" data-noun="${noun}">🗑️ Delete</button>`;
-      clientAdminActions = c.archivedAt
-        ? `<button class="btn secondary sm" data-action="restoreClientFromModal" data-listid="${l.id}" data-client="${c.id}">♻️ Restore</button>
-           ${deleteBtn}`
-        : `<button class="btn secondary sm" data-action="archiveClient" data-listid="${l.id}" data-client="${c.id}">🗄️ Archive</button>
-           ${deleteBtn}`;
-    }
+    bodyHtml = banner + renderClientModalBody(l,c,frame.viewMode,pendingDel);
   } else if(frame.kind==='deal'){
     const l=db.lists.find(x=>x.id===frame.listId); const c=l.clients.find(x=>x.id===frame.clientId);
     const d=c.deals.find(x=>x.id===frame.dealId);
@@ -5332,9 +5321,8 @@ function renderTopModalCard(){
         </div>
         <div class="modal-title-row">${brandLogoImg(brandName)}<div class="modal-title">${escapeHtml(titleText)}</div></div>
       </div>
-      ${clientAdminActions}
       ${frame.kind==='deal' && dealCanEdit ? `<button class="btn sm" data-action="saveAndCloseDeal" style="background:#fff;color:var(--edge);">Save &amp; Close</button>` : ''}
-      <button class="modal-close" data-action="closeModal">✕ Done</button>
+      <button class="modal-close" data-action="closeModal">${frame.kind==='client' ? '✓ Save & Close' : '✕ Done'}</button>
     </div>
     <div class="modal-body">${bodyHtml}</div>
   </div>`;
@@ -5362,7 +5350,7 @@ function brokerRow(brokerId){
   <div class="contact-line"><span>Mobile</span><b>${escapeHtml(b.mobile||'—')}</b></div>
   <div class="contact-line"><span>Phone</span><b>${escapeHtml(b.phone||'—')}</b></div>`;
 }
-function renderClientModalBody(l,c,viewMode){
+function renderClientModalBody(l,c,viewMode,pendingDel){
   viewMode = viewMode || 'all';
   const showDeals = viewMode!=='prospecting';
   const showProspecting = l.id==='listings' && !state.isMobile;
@@ -5415,9 +5403,18 @@ function renderClientModalBody(l,c,viewMode){
   <div class="contact-card" style="margin-top:20px;">
     <div class="label">Tags</div>
     <div style="font-size:12.5px;color:var(--ink-soft);margin:4px 0 8px;">Comma-separated, e.g. #Freddys, #SouthwestEdgeRocks, #PortalPower</div>
-    <input id="clientHashtags" value="${escapeAttr(c.hashtags||'')}" placeholder="#Freddys, #SouthwestEdgeRocks" ${canEdit?'':'disabled'}>
+    <input id="clientHashtags" value="${escapeAttr(c.hashtags||'')}" placeholder="#Freddys, #SouthwestEdgeRocks" ${canEdit?'':'disabled'} style="width:100%;font-size:19px;padding:16px 14px;border:1px solid var(--line);border-radius:8px;color:var(--ink);background:#fff;box-sizing:border-box;">
     ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="saveHashtags" data-client="${c.id}">Save Tags</button>` : ''}
   </div>
+  ${state.currentUser.role==='Admin' ? `
+  <div style="margin-top:24px;padding-top:16px;border-top:1px solid var(--line-soft);display:flex;gap:8px;">
+    ${c.archivedAt
+      ? `<button class="btn secondary sm" data-action="restoreClientFromModal" data-listid="${l.id}" data-client="${c.id}">♻️ Restore</button>`
+      : `<button class="btn secondary sm" data-action="archiveClient" data-listid="${l.id}" data-client="${c.id}">🗄️ Archive</button>`}
+    ${pendingDel
+      ? `<button class="btn secondary sm" disabled title="Awaiting the other Admin's approval">🗑️ Pending Approval</button>`
+      : `<button class="btn danger sm" data-action="deleteClient" data-listid="${l.id}" data-client="${c.id}" data-noun="${l.id==='listings'?'listing':'client'}">🗑️ Delete</button>`}
+  </div>` : ''}
   `;
 }
 function renderElaCard(c, canEdit){
