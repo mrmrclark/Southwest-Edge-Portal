@@ -6743,7 +6743,7 @@ function finishContactPick(contactId){
 
 /* ---------------- NEW TODO MODAL ---------------- */
 function openNewTodoModal(context){
-  state.newTodoModal={ context, title:'', category: context.category||'', dueInput:'', notes:'', type:'task', assignTo:state.currentUser.id, attachments:[] };
+  state.newTodoModal={ context, title:'', category: context.category||'', dueInput:'', notes:'', type:'task', assignTo:state.currentUser.id, attachments:[], checklistItems:[] };
 }
 function allCategories(){
   const set = new Set();
@@ -6793,6 +6793,20 @@ function renderNewTodoModal(){
         <button class="${m.type==='project'?'active':''}" data-settype="project">Project</button>
         <button class="${m.type==='checklist'?'active':''}" data-settype="checklist">Checklist</button>
       </div>
+      ${(m.type==='checklist' || m.type==='project') ? `
+      <div class="field">
+        <label>Checklist</label>
+        <div id="ntChecklistItemsList">
+          ${(m.checklistItems||[]).map((item,idx)=>`
+            <div style="display:flex;align-items:center;gap:8px;padding:4px 0;">
+              <input type="checkbox" data-ntcheckitem="${item.id}" ${item.done?'checked':''} style="width:auto;">
+              <input data-ntchecklistitemtext="${item.id}" value="${escapeAttr(item.text)}" placeholder="Item ${idx+1}" style="flex:1;font-size:13.5px;">
+              <button class="row-trash" data-ntremoveitem="${item.id}" style="opacity:.5;">✕</button>
+            </div>`).join('')}
+        </div>
+        <button class="btn secondary sm" data-action="addNtChecklistItem" style="margin-top:6px;">+ Add item</button>
+        ${m.type==='project' ? `<div class="tiny" style="color:var(--ink-soft);margin-top:8px;">You can add independently-assignable To-Do's to this Project once it's created.</div>` : ''}
+      </div>` : ''}
       <div class="field">
         <label>What needs to happen?</label>
         <input id="ntTitle" placeholder="e.g., Send LOI redline to Dana" value="${escapeAttr(m.title)}">
@@ -6841,7 +6855,14 @@ function renderNewTodoModal(){
   </div>`;
   document.getElementById('app').appendChild(overlay);
   const ntTitleEl = document.getElementById('ntTitle'); if(ntTitleEl) setTimeout(()=>ntTitleEl.focus(), 0);
-  overlay.querySelectorAll('[data-settype]').forEach(b=>b.onclick=()=>{ m.type=b.dataset.settype; render(); });
+  overlay.querySelectorAll('[data-settype]').forEach(b=>b.onclick=()=>{
+    m.type=b.dataset.settype;
+    if((m.type==='checklist' || m.type==='project') && !(m.checklistItems && m.checklistItems.length)){
+      m.checklistItems = [];
+      for(let i=0;i<5;i++) m.checklistItems.push({id:crypto.randomUUID(), text:'', done:false});
+    }
+    render();
+  });
   overlay.querySelectorAll('[data-quickdate]').forEach(b=>b.onclick=()=>{
     const val = b.dataset.quickdate;
     let d = null;
@@ -6851,6 +6872,23 @@ function renderNewTodoModal(){
     document.getElementById('ntDue').value = d ? toLocalDateStr(d) : '';
   });
   overlay.querySelectorAll('[data-action="closeNewTodo"]').forEach(btn=>btn.onclick=()=>{ state.newTodoModal=null; render(); });
+  overlay.querySelectorAll('[data-action="addNtChecklistItem"]').forEach(btn=>btn.onclick=()=>{
+    if(!m.checklistItems) m.checklistItems=[];
+    m.checklistItems.push({id:crypto.randomUUID(), text:'', done:false});
+    render();
+  });
+  overlay.querySelectorAll('[data-ntchecklistitemtext]').forEach(el=>el.onchange=()=>{
+    const item = (m.checklistItems||[]).find(i=>i.id===el.dataset.ntchecklistitemtext);
+    if(item) item.text = el.value.trim();
+  });
+  overlay.querySelectorAll('[data-ntcheckitem]').forEach(el=>el.onchange=()=>{
+    const item = (m.checklistItems||[]).find(i=>i.id===el.dataset.ntcheckitem);
+    if(item) item.done = el.checked;
+  });
+  overlay.querySelectorAll('[data-ntremoveitem]').forEach(el=>el.onclick=()=>{
+    m.checklistItems = (m.checklistItems||[]).filter(i=>i.id!==el.dataset.ntremoveitem);
+    render();
+  });
   const assignSelect = document.getElementById('ntAssignSelect');
   assignSelect.onchange = ()=>{
     const forMe = assignSelect.value===state.currentUser.id;
@@ -6875,6 +6913,7 @@ function renderNewTodoModal(){
     const newTd = {
       id:crypto.randomUUID(), title, category, dueDate: parseNaturalDate(dueStr), assignedTo:assignTo, createdBy:state.currentUser.id,
       type:m.type, private:priv, completed:false, notes, isNew:false, attachments: m.attachments,
+      checklistItems: m.checklistItems || [],
       listId: ctx.listId||null, clientId: ctx.clientId||null, dealId: ctx.dealId||null, entryId: ctx.entryId||null, projectId: ctx.projectId||null
     };
     db.todos.push(newTd);
