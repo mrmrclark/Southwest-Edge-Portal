@@ -1257,7 +1257,13 @@ function dueStatus(d){
   const t = todayDate();
   if(d < t) return 'overdue';
   if(isSameDay(d,t)) return 'today';
-  if(d <= addDays(t,7)) return 'week';
+  // "This week" means the actual current Sunday-through-Saturday calendar week, not a
+  // rolling 7 days from today — a rolling window would keep showing "next week" dates
+  // as still due "this week" for several more days whenever today falls later in the
+  // week (worst case: on a Friday, the rolling window would reach all the way through
+  // the following Friday).
+  const endOfWeek = addDays(t, 6 - t.getDay()); // t.getDay(): 0=Sunday...6=Saturday
+  if(d <= endOfWeek) return 'week';
   if(d <= addDays(t,30)) return 'month';
   return 'future';
 }
