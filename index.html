@@ -2832,7 +2832,14 @@ function renderSidebar(){
     <div class="nav-section-label">Smart Lists <button class="nav-add" data-action="addSmartList">+</button></div>
     <div class="nav-list">
       ${visibleSmarts.map(sl=>{
-        const items = sl.id==='activeDeals' ? activeDealsClients() : (sl.id==='caStatus' ? caOutstandingCount() : (smartListTodos(sl.id) ? smartListTodos(sl.id).filter(visibleTodo) : []));
+        let items = sl.id==='activeDeals' ? activeDealsClients() : (sl.id==='caStatus' ? caOutstandingCount() : (smartListTodos(sl.id) ? smartListTodos(sl.id).filter(visibleTodo) : []));
+        if((sl.id==='week' || sl.id==='month') && state.todoView!=='team'){
+          // Match exactly what clicking into this list actually shows: by default that's
+          // narrowed to "assigned to me" only, not everything in my broader sphere — the
+          // badge needs to reflect the same scope or it'll show a count with nothing
+          // behind it whenever something is only there because I created it for someone else.
+          items = items.filter(td=>td.assignedTo===state.currentUser.id);
+        }
         let cls='';
         if(sl.id==='overdueMe'||sl.id==='overdueAll'||sl.id==='caStatus') cls='urgent';
         else if(sl.id==='todayMe'||sl.id==='todayAll') cls='mild';
