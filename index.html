@@ -1264,7 +1264,11 @@ function dueStatus(d){
   // the following Friday).
   const endOfWeek = addDays(t, 6 - t.getDay()); // t.getDay(): 0=Sunday...6=Saturday
   if(d <= endOfWeek) return 'week';
-  if(d <= addDays(t,30)) return 'month';
+  // "This month" means the actual current calendar month (e.g. all of July), not a
+  // rolling 30 days from today — same issue as "this week" had: a rolling window would
+  // keep counting days into next month as still due "this month," and the later in the
+  // month today is, the worse the mismatch gets.
+  if(d.getFullYear()===t.getFullYear() && d.getMonth()===t.getMonth()) return 'month';
   return 'future';
 }
 // Natural language date parser: today, tomorrow, next monday, 7/20, 7/20/26, 7/20/2026
