@@ -658,7 +658,8 @@ async function fetchAllProfilesIntoUsers(){
 function contactRowToLocal(r){
   return {id:r.id, first:r.first_name, last:r.last_name, company:r.company||'', website:r.website||'',
           email:r.email||'', mobile:r.mobile||'', phone:r.phone||'', address:r.address||'',
-          city:r.city||'', state:r.state||'', zip:r.zip||'', categories:r.categories||[]};
+          city:r.city||'', state:r.state||'', zip:r.zip||'', categories:r.categories||[],
+          createdBy: r.created_by||null, isPrivate: r.is_private!==false};
 }
 function contactLocalToRow(c){
   return {id:c.id, first_name:c.first, last_name:c.last, company:c.company||null, website:c.website||null,
@@ -2294,6 +2295,7 @@ function render(){
   if(state.notifSettingsOpen) renderNotifSettingsModal();
   if(state.pendingUsersModalOpen) renderPendingUsersModal();
   if(state.manageUsersModalOpen) renderManageUsersModal();
+  if(state.resetPasswordModalOpen) renderResetPasswordModal();
   if(state.pendingDeletionsOpen) renderPendingDeletionsModal();
   if(state.contactImportReview) renderContactImportReviewModal();
   if(state.taskfireImport) renderTaskFireImportModal();
@@ -4312,6 +4314,41 @@ async function supaUpdateUserRole(u, newRole){
   if(error){ console.error('supaUpdateUserRole error:', error); flashToast(`Saved here, but syncing ${u.name}'s role failed. (${error.message})`); return false; }
   return true;
 }
+function renderResetPasswordModal(){
+  const overlay = document.createElement('div');
+  overlay.className='modal-overlay'; overlay.style.zIndex=175;
+  overlay.innerHTML = `
+  <div class="modal-card">
+    <div class="modal-head"><div class="modal-title">Reset a Password</div><button class="modal-close" data-action="closeResetPassword">✕</button></div>
+    <div class="modal-body">
+      <div class="field">
+        <label>Who needs a password reset?</label>
+        <select id="resetPasswordUserSelect">
+          ${USERS.map(u=>`<option value="${u.id}">${escapeHtml(u.name)} (${escapeHtml(u.email)})</option>`).join('')}
+        </select>
+      </div>
+      <div style="font-size:12px;color:var(--ink-soft);line-height:1.5;">
+        They'll get an email with a link to set a brand-new password themselves — you won't see or set it for them.
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn secondary" data-action="closeResetPassword">Cancel</button>
+      <button class="btn" data-action="sendResetEmail">Send Reset Email</button>
+    </div>
+  </div>`;
+  document.getElementById('app').appendChild(overlay);
+  overlay.querySelectorAll('[data-action="closeResetPassword"]').forEach(b=>b.onclick=()=>{ state.resetPasswordModalOpen=false; render(); });
+  overlay.querySelector('[data-action="sendResetEmail"]').onclick=safeHandler(async ()=>{
+    const sel = document.getElementById('resetPasswordUserSelect');
+    const u = USERS.find(x=>x.id===sel.value);
+    if(!u) return;
+    const { error } = await supabaseClient.auth.resetPasswordForEmail(u.email, { redirectTo: portalUrl() });
+    if(error){ console.error('resetPasswordForEmail error:', error); flashToast(`Couldn't send the reset email. (${error.message})`); return; }
+    flashToast(`Reset email sent to ${u.name} (if they have an account yet — Supabase won't confirm either way, for security).`);
+    state.resetPasswordModalOpen=false;
+    render();
+  });
+}
 function renderPendingUsersModal(){
   const overlay = document.createElement('div');
   overlay.className='modal-overlay'; overlay.style.zIndex=175;
@@ -4371,7 +4408,7 @@ async function handleAdminAction(a){
     state.manageUsersModalOpen=true;
   }
   if(a==='adminTimes'){ state.notifSettingsOpen=true; }
-  if(a==='adminReset'){ flashToast('Password reset flow would open here.'); }
+  if(a==='adminReset'){ state.resetPasswordModalOpen=true; }
   render();
 }
 function promptAddSmartList(editingId){
@@ -5233,7 +5270,8 @@ function openDealModal(listId, clientId, dealId){
     alert('You are not listed as a user on the account.');
     return;
   }
-  state.modalStack.push({kind:'deal', listId, clientId, dealId});
+  const parentScroller = document.querySelector('.modal-body');
+  state.modalStack.push({kind:'deal', listId, clientId, dealId, parentScrollTop: parentScroller ? parentScroller.scrollTop : null});
 }
 function openEntryModal(listId, entryId){
   state.modalStack=[{kind:'entry', listId, entryId}];
@@ -6503,7 +6541,7 @@ function attachModalHandlers(root){
       const closingFrame = state.modalStack[state.modalStack.length-1];
       state.modalStack.pop();
       render();
-      if(closingFrame.kind==='lsrProspect' && typeof closingFrame.parentScrollTop==='number'){
+      if(typeof closingFrame.parentScrollTop==='number'){
         requestAnimationFrame(()=>{
           const scroller = document.querySelector('.modal-body');
           if(scroller) scroller.scrollTop = closingFrame.parentScrollTop;
@@ -6520,6 +6558,12 @@ function attachModalHandlers(root){
     saveDealTermsFromForm(l, c, d);
     state.modalStack.pop();
     render();
+    if(typeof frame.parentScrollTop==='number'){
+      requestAnimationFrame(()=>{
+        const scroller = document.querySelector('.modal-body');
+        if(scroller) scroller.scrollTop = frame.parentScrollTop;
+      });
+    }
   });
   const archiveClientBtn = root.querySelector('[data-action="archiveClient"]'); if(archiveClientBtn) archiveClientBtn.onclick=safeHandler(()=>{
     const l=db.lists.find(x=>x.id===archiveClientBtn.dataset.listid); const c=l && l.clients.find(x=>x.id===archiveClientBtn.dataset.client);
@@ -7296,7 +7340,7 @@ function renderContactsMain(){
       ${filtered.slice().sort((a,b)=>a.last.localeCompare(b.last)||a.first.localeCompare(b.first)).slice(0,300).map(c=>`
         <tr data-contactrow="${c.id}">
           <td class="checkbox-cell"><input type="checkbox" data-contactcheck="${c.id}" ${state.selectedContactIds.includes(c.id)?'checked':''}></td>
-          <td>${escapeHtml(c.last)}</td><td>${escapeHtml(c.first)}</td><td>${escapeHtml(c.company||'')}</td>
+          <td>${c.isPrivate ? `<span title="Private — only visible to you until it's attached to a shared Client, Deal, Entry, or Prospect" style="margin-right:4px;">🔒</span>`:''}${escapeHtml(c.last)}</td><td>${escapeHtml(c.first)}</td><td>${escapeHtml(c.company||'')}</td>
           <td>${escapeHtml(c.email||'')}</td><td>${escapeHtml(c.mobile||'')}</td><td>${escapeHtml(c.phone||'')}</td>
           <td><button class="row-trash" style="opacity:.7;" data-editcontact="${c.id}" title="Edit">✏️</button></td>
         </tr>`).join('')}
