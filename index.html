@@ -4322,18 +4322,25 @@ function renderResetPasswordModal(){
     <div class="modal-head"><div class="modal-title">Reset a Password</div><button class="modal-close" data-action="closeResetPassword">✕</button></div>
     <div class="modal-body">
       <div class="field">
-        <label>Who needs a password reset?</label>
+        <label>Who needs help logging in?</label>
         <select id="resetPasswordUserSelect">
           ${USERS.map(u=>`<option value="${u.id}">${escapeHtml(u.name)} (${escapeHtml(u.email)})</option>`).join('')}
         </select>
       </div>
-      <div style="font-size:12px;color:var(--ink-soft);line-height:1.5;">
-        They'll get an email with a link to set a brand-new password themselves — you won't see or set it for them.
+      <div style="font-size:12px;color:var(--ink-soft);line-height:1.5;margin-bottom:14px;">
+        Emailed link — they set a brand-new password themselves, you never see or set it for them.
+      </div>
+      <button class="btn secondary sm" data-action="sendResetEmail" style="margin-bottom:18px;">Send Reset Email</button>
+      <div style="border-top:1px solid var(--line-soft);padding-top:14px;">
+        <div style="font-size:12px;color:var(--ink-soft);line-height:1.5;margin-bottom:8px;">
+          Or set a temporary password directly, right now — no email involved. Give it to them so they can log in immediately, and let them know to change it once they're in.
+        </div>
+        <button class="btn secondary sm" data-action="setPasswordDirectly">Set a Temporary Password</button>
+        <div id="tempPasswordResult" style="margin-top:10px;"></div>
       </div>
     </div>
     <div class="modal-foot">
-      <button class="btn secondary" data-action="closeResetPassword">Cancel</button>
-      <button class="btn" data-action="sendResetEmail">Send Reset Email</button>
+      <button class="btn secondary" data-action="closeResetPassword">Close</button>
     </div>
   </div>`;
   document.getElementById('app').appendChild(overlay);
@@ -4345,8 +4352,31 @@ function renderResetPasswordModal(){
     const { error } = await supabaseClient.auth.resetPasswordForEmail(u.email, { redirectTo: portalUrl() });
     if(error){ console.error('resetPasswordForEmail error:', error); flashToast(`Couldn't send the reset email. (${error.message})`); return; }
     flashToast(`Reset email sent to ${u.name} (if they have an account yet — Supabase won't confirm either way, for security).`);
-    state.resetPasswordModalOpen=false;
-    render();
+  });
+  overlay.querySelector('[data-action="setPasswordDirectly"]').onclick=safeHandler(async ()=>{
+    const sel = document.getElementById('resetPasswordUserSelect');
+    const u = USERS.find(x=>x.id===sel.value);
+    if(!u) return;
+    if(!u.authId){ flashToast(`${u.name} needs to sign in to the Portal at least once before a password can be set for them.`); return; }
+    // Random, readable temporary password — plenty strong for a one-time handoff.
+    const words = ['Cactus','Sunset','Falcon','Desert','Copper','Canyon','Rocket','Maple','Tiger','Compass'];
+    const tempPassword = words[Math.floor(Math.random()*words.length)] + Math.floor(1000+Math.random()*9000) + '!';
+    const resultBox = document.getElementById('tempPasswordResult');
+    resultBox.innerHTML = `<span class="tiny" style="color:var(--ink-soft);">Setting password…</span>`;
+    const { data, error } = await supabaseClient.functions.invoke('admin-set-password', {
+      body: { targetUserId: u.authId, newPassword: tempPassword }
+    });
+    if(error || (data && data.error)){
+      const msg = (data && data.error) || error.message;
+      resultBox.innerHTML = `<span class="tiny" style="color:var(--bad, #C0392B);">Couldn't set the password: ${escapeHtml(msg)}</span>`;
+      return;
+    }
+    resultBox.innerHTML = `
+      <div style="background:var(--edge-lighter);border:1px solid var(--edge-light);border-radius:8px;padding:10px 12px;">
+        <div class="tiny" style="color:var(--ink-soft);margin-bottom:4px;">Give ${escapeHtml(u.name)} this password:</div>
+        <div style="font-size:16px;font-weight:700;font-family:monospace;">${escapeHtml(tempPassword)}</div>
+      </div>`;
+    flashToast(`Password set for ${u.name}.`);
   });
 }
 function renderPendingUsersModal(){
@@ -7319,6 +7349,7 @@ function renderContactsMain(){
     return hay.includes(q);
   }) : db.contacts;
   return `
+  <div style="font-size:12px;color:var(--ink-soft);margin-bottom:8px;">🔒 New contacts you add or import are private to you until attached to a shared Client, Deal, Entry, or Prospect — then whoever can see that record can see the contact too.</div>
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:12px;flex-wrap:wrap;">
     <input id="contactSearchBox" placeholder="🔍 Search by name, company, or email…" value="${escapeAttr(state.contactSearchQuery||'')}"
       style="flex:1;min-width:220px;padding:9px 12px;border:1px solid var(--line);border-radius:8px;font-size:13.5px;">
