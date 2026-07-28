@@ -382,7 +382,8 @@
     background:var(--edge-lighter);border:1px solid var(--edge-light);border-radius:10px;padding:12px 14px;margin-bottom:14px;
   }
   .contact-card .label{font-size:10px;text-transform:uppercase;color:var(--edge-darker);font-weight:600;letter-spacing:.05em;}
-  .contact-line{display:flex;justify-content:space-between;font-size:13px;margin-top:6px;}
+  .contact-line{display:flex;font-size:13px;margin-top:6px;}
+  .contact-line span{width:80px;flex-shrink:0;color:var(--ink-soft);}
   .contact-line b{font-weight:600;}
 
   .field{margin-bottom:13px;}
@@ -551,6 +552,7 @@ let state = {
   dealGroupCollapsed:{},      // per-client deal-stage-group key -> true if collapsed (closed by default)
   lsrSearch:'',
   lsrTrackerFilter:'all',
+  leasingReportMode:null, // temporary override: 'deals'|'prospecting'|'all' while generating a report, then reset
   lsrCategoryManagerOpen:null, // clientId of the listing being managed, or null
   calendarViewOpen:false,
   calendarCursor:null,        // {year, month} — used in Month mode
@@ -646,6 +648,7 @@ async function fetchAllProfilesIntoUsers(){
     u.notifUseDefault = p.notif_use_default !== false; // default true if column is null/undefined
     u.notifPref = (!u.notifUseDefault && p.notif_schedule_type) ? {type:p.notif_schedule_type, days:p.notif_schedule_days||[], time:p.notif_schedule_time||'07:00'} : null;
     u.wantsAssignmentEmails = p.notif_assignment_emails !== false; // default true if column is null/undefined
+    u.wantsAssignerEmails = p.notif_assigner_emails !== false; // default true if column is null/undefined
   });
 }
 
@@ -757,7 +760,7 @@ async function supaSaveListingCategorySettings(listingId, categoryConfig){
 
 /* ---------------- LISTS / CLIENTS / DEALS ---------------- */
 function clientRowToLocal(r){
-  return {id:r.id, name:r.name, primary:r.primary_contact_id, secondary:[], deals:[],
+  return {id:r.id, name:r.name, primary:r.primary_contact_id, secondContactId:null, thirdContactId:null, deals:[],
           propertyType:r.property_type, squareFootage:r.square_footage, askingRate:r.asking_rate,
           createdBy: authIdToLocalUserId(r.created_by) || r.created_by, authorizedUserIds:[],
           hashtags: r.hashtags || '',
@@ -815,7 +818,8 @@ async function fetchListsClientsDealsFromSupabase(){
     const list = newLists.find(l=>l.id===cr.list_id);
     if(!list) return;
     const c = clientRowToLocal(cr);
-    c.secondary = secConts.filter(sc=>sc.client_id===cr.id).map(sc=>sc.contact_id);
+    c.secondContactId = (secConts.find(sc=>sc.client_id===cr.id && sc.slot==='second')||{}).contact_id || null;
+    c.thirdContactId = (secConts.find(sc=>sc.client_id===cr.id && sc.slot==='third')||{}).contact_id || null;
     c.deals = deals.filter(d=>d.client_id===cr.id).map(dealRowToLocal);
     if(authUsers) c.authorizedUserIds = authUsers.filter(a=>a.client_id===cr.id).map(a=>authIdToLocalUserId(a.user_id)).filter(Boolean);
     if(list.id==='listings'){
@@ -1076,6 +1080,7 @@ function todoLocalToRow(t){
     checklist_items: t.checklistItems || [],
     status: t.status || null,
     completed_at: t.completedAt ? t.completedAt.toISOString() : null,
+    skip_assignment_notification: !!t.skipAssignmentNotification,
     archived_at: t.archivedAt ? t.archivedAt.toISOString() : null};
 }
 async function fetchTodosFromSupabase(){
@@ -1974,7 +1979,7 @@ let db = {
       id:'clients', name:'Clients', icon:'💲', type:'deep',
       clients:[
         {
-          id:'cityvet', name:'City Vet', primary:'c5', secondary:[],
+          id:'cityvet', name:'City Vet', primary:'c5', secondContactId:null, thirdContactId:null,
           deals:[
             {id:'d1', name:'Thunderbird & 7th St SEC', complete:false, activeDeal:true, dueDate: addDays(todayDate(),-2), caExecuted:true},
             {id:'d2', name:'Germann & Gilbert SEC', complete:false, activeDeal:true, dueDate: addDays(todayDate(),1), caExecuted:false},
@@ -1984,7 +1989,7 @@ let db = {
           ]
         },
         {
-          id:'dutchbros', name:'Dutch Bros', primary:'c6', secondary:[],
+          id:'dutchbros', name:'Dutch Bros', primary:'c6', secondContactId:null, thirdContactId:null,
           deals:[
             {id:'d6', name:'Bartaco Pad Site', complete:false, activeDeal:true, dueDate: addDays(todayDate(),3), caExecuted:true},
             {id:'d7', name:"Culver's Outparcel", complete:false, activeDeal:false, dueDate: addDays(todayDate(),7), caExecuted:false},
@@ -1995,7 +2000,7 @@ let db = {
     {
       id:'listings', name:'Listings', icon:'🏢', type:'deep',
       clients:[
-        {id:'redriverctr', name:'Red River Center', primary:null, secondary:[], deals:[
+        {id:'redriverctr', name:'Red River Center', primary:null, secondContactId:null, thirdContactId:null, deals:[
           {id:'d8', name:'Suite 140 — Lease Out', complete:false, activeDeal:true, dueDate: addDays(todayDate(),14), caExecuted:true}
         ],
         categoryConfig: newLSRCategoryConfig(),
@@ -2487,6 +2492,10 @@ function renderNotifSettingsModal(){
         <input type="checkbox" id="wantsAssignmentEmailsCheck" style="width:auto;" ${u.wantsAssignmentEmails!==false?'checked':''}>
         <label style="margin:0;" for="wantsAssignmentEmailsCheck">Email me when someone assigns me a to-do</label>
       </div>
+      <div class="field" style="display:flex;align-items:center;gap:8px;">
+        <input type="checkbox" id="wantsAssignerEmailsCheck" style="width:auto;" ${u.wantsAssignerEmails!==false?'checked':''}>
+        <label style="margin:0;" for="wantsAssignerEmailsCheck">Email me when someone completes or reschedules a to-do I assigned them</label>
+      </div>
       <div class="field">
         <label>Calendar sync</label>
         <div style="font-size:12px;color:var(--ink-soft);margin-bottom:8px;">Not connected yet.</div>
@@ -2599,6 +2608,15 @@ function renderNotifSettingsModal(){
       if(error){ console.error('Saving notif_assignment_emails failed:', error); flashToast('Saved locally, but syncing to the server failed — try again. (' + error.message + ')'); return; }
     }
     flashToast(u.wantsAssignmentEmails ? "You'll get an email when someone assigns you a to-do." : "Assignment emails turned off for you.");
+  };
+  const wantsAssignerEmailsCheck = document.getElementById('wantsAssignerEmailsCheck');
+  if(wantsAssignerEmailsCheck) wantsAssignerEmailsCheck.onchange=async ()=>{
+    u.wantsAssignerEmails = wantsAssignerEmailsCheck.checked;
+    if(u.authId){
+      const { error } = await supabaseClient.from('profiles').update({ notif_assigner_emails: u.wantsAssignerEmails }).eq('id', u.authId);
+      if(error){ console.error('Saving notif_assigner_emails failed:', error); flashToast('Saved locally, but syncing to the server failed — try again. (' + error.message + ')'); return; }
+    }
+    flashToast(u.wantsAssignerEmails ? "You'll get an email when your assignees complete or reschedule a to-do." : "Those emails are turned off for you.");
   };
   const googleBtn = overlay.querySelector('[data-action="connectGoogle"]'); if(googleBtn) googleBtn.onclick=()=>{
     alert("Real Google Calendar sync needs a Google Cloud project registered to your account (or your Google Workspace admin) plus your portal's real, final web address — same idea as Outlook. Once you're on a stable Netlify domain, this is genuinely buildable client-side with no backend server. For now nothing is synced yet.");
@@ -4192,7 +4210,7 @@ function attachShellHandlers(){
     const l = db.lists.find(x=>x.id===addClientBtn.dataset.listid);
     const name = prompt(`Name this ${l.id==='listings'?'listing':'client'}:`);
     if(!name) return;
-    const newClient = {id:crypto.randomUUID(), name, primary:null, secondary:[], deals:[], createdBy:state.currentUser.id, authorizedUserIds:[]};
+    const newClient = {id:crypto.randomUUID(), name, primary:null, secondContactId:null, thirdContactId:null, deals:[], createdBy:state.currentUser.id, authorizedUserIds:[]};
     if(l.id==='listings'){ newClient.prospects=[]; newClient.categoryConfig=newLSRCategoryConfig(); }
     l.clients.push(newClient);
     supaCreateClient(newClient, l.id);
@@ -4908,7 +4926,7 @@ function renderMoveDealPicker(){
     if(!name){ flashToast('Give the new account a name first.'); return; }
     const targetListId = m.newType || 'clients';
     const targetList = db.lists.find(x=>x.id===targetListId);
-    const newClient = {id:crypto.randomUUID(), name, primary:null, secondary:[], deals:[], createdBy:state.currentUser.id, authorizedUserIds:[]};
+    const newClient = {id:crypto.randomUUID(), name, primary:null, secondContactId:null, thirdContactId:null, deals:[], createdBy:state.currentUser.id, authorizedUserIds:[]};
     if(targetListId==='listings'){ newClient.prospects=[]; newClient.categoryConfig=newLSRCategoryConfig(); }
     targetList.clients.push(newClient);
     await supaCreateClient(newClient, targetListId);
@@ -5215,15 +5233,9 @@ function renderTodoDetailModal(){
         if(!ok) return;
       }
       td.assignedTo=newAssign;
-      const u=USERS.find(x=>x.id===newAssign);
-      if(newAssign!==state.currentUser.id && u.wantsAssignmentEmails!==false){
+      if(newAssign!==state.currentUser.id){
         td.isNew=true;
-        const subject = 'You Have a New To Do on Southwest Edge';
-        const body = `Hi ${u.name.split(' ')[0]},\n\n${state.currentUser.name} assigned you a to-do:\n\n"${td.title}"${td.category?` (${td.category})`:''}${td.dueDate?`\nDue: ${fmtDate(td.dueDate)}`:''}\n\nLog in to Southwest Edge Portal to view it: ${portalUrl(td.id)}\n\n— Sent from Southwest Edge Portal`;
-        openEmailDraft(u, subject, body);
-        flashToast(`Email draft opened for ${u.name}.`);
-      } else if(newAssign!==state.currentUser.id){
-        td.isNew=true;
+        flashToast(`Assigned to ${USERS.find(x=>x.id===newAssign).name}.`);
       }
     }
     td.private=document.getElementById('detPrivate').checked;
@@ -5474,10 +5486,22 @@ function renderClientModalBody(l,c,viewMode,pendingDel){
     ${contactRow(c.primary)}
     ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickContact" data-client="${c.id}" data-slot="primary">${c.primary? 'Change contact':'Attach contact'}</button>` : ''}
   </div>
+  ${c.primary ? `
+  <div class="contact-card">
+    <div class="label">Second Contact</div>
+    ${contactRow(c.secondContactId)}
+    ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickContact" data-client="${c.id}" data-slot="second">${c.secondContactId? 'Change contact':'Attach contact'}</button>` : ''}
+  </div>` : ''}
+  ${(c.primary && c.secondContactId) ? `
+  <div class="contact-card">
+    <div class="label">Third Contact</div>
+    ${contactRow(c.thirdContactId)}
+    ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickContact" data-client="${c.id}" data-slot="third">${c.thirdContactId? 'Change contact':'Attach contact'}</button>` : ''}
+  </div>` : ''}
   <div class="section-label">Sites / Deals</div>
   ${renderDealGroupsInClient(l,c)}
   ` : ''}
-  ${showProspecting ? renderLSRInline(c, viewMode) : ''}
+  ${showProspecting ? renderLSRInline(c, state.leasingReportMode || viewMode) : ''}
   ${showDeals ? `
   <div class="section-label">General To-Do's <span style="font-weight:400;color:var(--ink-soft);">(not tied to a specific site)</span></div>
   ${canEdit ? `<button class="btn secondary sm" data-action="newAccountTodo" data-listid="${l.id}" data-client="${c.id}" style="margin-bottom:10px;">+ New To-Do</button>` : ''}
@@ -5925,7 +5949,9 @@ function renderLSRInline(listing, mode){
       <button class="btn secondary sm" data-action="lsrManageCategories" data-client="${listing.id}">⚙️ Categories</button>
       <button class="btn secondary sm" data-action="lsrCreateMarketingList" data-client="${listing.id}">📋 Create Marketing List</button>
       <button class="btn sm" data-action="lsrNewDeal" data-client="${listing.id}">+ New Deal (direct to LOI)</button>
-      <button class="btn" data-action="lsrExportPdf">📄 Create Leasing Report</button>
+      <button class="btn secondary sm" data-action="lsrCreateReport" data-client="${listing.id}" data-reportmode="deals">📄 Report: Deals</button>
+      <button class="btn secondary sm" data-action="lsrCreateReport" data-client="${listing.id}" data-reportmode="prospecting">📄 Report: Prospects</button>
+      <button class="btn" data-action="lsrCreateReport" data-client="${listing.id}" data-reportmode="all">📄 Report: All</button>
     </div>
     <div class="no-print" style="font-size:11px;color:var(--ink-soft);margin-bottom:14px;">Opens your browser's print dialog, pre-set to landscape — choose "Save as PDF" to generate the report. The report itself is clean — no search bars or buttons — ready to hand to a client.</div>`;
   } else if(mode==='deals'){
@@ -6415,7 +6441,13 @@ function wireLSRInlineHandlers(root){
   const mktBtn = root.querySelector('[data-action="lsrCreateMarketingList"]'); if(mktBtn) mktBtn.onclick=()=>{
     openMarketingListWizard(mktBtn.dataset.client); render();
   };
-  const pdfBtn = root.querySelector('[data-action="lsrExportPdf"]'); if(pdfBtn) pdfBtn.onclick=()=>{ window.print(); };
+  root.querySelectorAll('[data-action="lsrCreateReport"]').forEach(pdfBtn=>pdfBtn.onclick=()=>{
+    state.leasingReportMode = pdfBtn.dataset.reportmode;
+    render();
+    window.print();
+    const resetMode = ()=>{ state.leasingReportMode=null; render(); window.removeEventListener('afterprint', resetMode); };
+    window.addEventListener('afterprint', resetMode);
+  });
 }
 function notifyNewLSRTracker(newTrackerId, p, listing){
   if(newTrackerId===state.currentUser.id) return;
@@ -6432,14 +6464,7 @@ function notifyNewLSRTracker(newTrackerId, p, listing){
   };
   db.todos.push(newTodo);
   supaCreateTodo(newTodo);
-  if(u.wantsAssignmentEmails!==false){
-    const subject = 'You Have a New Lead Assigned on Southwest Edge';
-    const body = `Hi ${u.name.split(' ')[0]},\n\n${state.currentUser.name} made you the Edge Tracker for:\n\n"${p.tenantName}" — ${listing.name}\n\nA to-do has been added to your list to follow up — it'll be marked New until you open it.\n\nLog in to view it: ${portalUrl(newTodo.id)}\n\n— Sent from Southwest Edge Portal`;
-    openEmailDraft(u, subject, body);
-    flashToast(`Email draft opened for ${u.name} — they'll also see a new to-do waiting for them.`);
-  } else {
-    flashToast(`${u.name} has a new to-do waiting for them (they've opted out of assignment emails).`);
-  }
+  flashToast(`${u.name} is now the Edge Tracker — a new to-do is waiting for them.`);
 }
 function wireLSRProspectBodyHandlers(root, l, listing, p){
   const isConverted = p.stage!=='contacted' && p.stage!=='interested' && p.stage!=='dead' && p.stage!=='notInterested';
@@ -6669,9 +6694,9 @@ function attachModalHandlers(root){
     flashToast(d.caExecuted ? `CA marked executed for ${d.name}.` : `CA marked outstanding for ${d.name}.`);
     render();
   }));
-  const pick = root.querySelector('[data-action="pickContact"]'); if(pick) pick.onclick=()=>{
+  root.querySelectorAll('[data-action="pickContact"]').forEach(pick=>pick.onclick=()=>{
     openContactPicker({clientId: pick.dataset.client, slot: pick.dataset.slot}); render();
-  };
+  });
   root.querySelectorAll('[data-action="pickDealContact"]').forEach(pickDeal=>pickDeal.onclick=()=>{
     openContactPicker({listId: pickDeal.dataset.listid, clientId: pickDeal.dataset.client, dealId: pickDeal.dataset.deal, slot: pickDeal.dataset.slot}); render();
   });
@@ -6851,7 +6876,7 @@ function convertEntryToDeal(listId, entryId){
   const flatList = db.lists.find(x=>x.id===listId);
   const entry = flatList.entries.find(x=>x.id===entryId);
   let clientsList = db.lists.find(x=>x.id==='clients');
-  const newClient = {id:crypto.randomUUID(), name:entry.name, primary:entry.contactId||null, secondary:[], deals:[], createdBy:state.currentUser.id, authorizedUserIds:[]};
+  const newClient = {id:crypto.randomUUID(), name:entry.name, primary:entry.contactId||null, secondContactId:null, thirdContactId:null, deals:[], createdBy:state.currentUser.id, authorizedUserIds:[]};
   clientsList.clients.push(newClient);
   supaCreateClient(newClient, 'clients');
   // move todos
@@ -6922,6 +6947,14 @@ function finishBrokerPick(brokerId){
 function attachContactPickerHandlers(root){
   // rendered separately as an overlay panel appended after modal renders; handled in renderContactPickerPanel
 }
+function renderContactSearchSuggestions(matches){
+  if(!matches.length) return '';
+  return `<div class="suggest-list">${matches.map(c=>`
+    <div class="suggest-item" data-selectcontact="${c.id}">
+      <b>${c.last}, ${c.first}</b>
+      <div class="sub">${c.company||'No company'} · ${c.mobile||c.phone||'No number'}</div>
+    </div>`).join('')}</div>`;
+}
 function renderContactPickerPanel(){
   if(!state.contactPickerOpen) return '';
   const standalone = !!state.contactPickerOpen.standalone;
@@ -6936,11 +6969,7 @@ function renderContactPickerPanel(){
         <div class="field autocomplete-box">
           <label>Search by name</label>
           <input id="contactSearchInput" placeholder="Start typing a last or first name…" value="${escapeAttr(state.contactPickerQuery)}">
-          ${matches.length? `<div class="suggest-list">${matches.map(c=>`
-            <div class="suggest-item" data-selectcontact="${c.id}">
-              <b>${c.last}, ${c.first}</b>
-              <div class="sub">${c.company||'No company'} · ${c.mobile||c.phone||'No number'}</div>
-            </div>`).join('')}</div>` : ''}
+          <div id="contactSearchSuggestions">${renderContactSearchSuggestions(matches)}</div>
         </div>`}
         <div style="${standalone?'':'margin-top:14px;border-top:1px solid var(--line);padding-top:14px;'}max-height:52vh;overflow-y:auto;">
           ${standalone? '' : `<div style="font-size:12px;font-weight:600;color:var(--ink-soft);margin-bottom:8px;">Or create a new contact</div>`}
@@ -7037,9 +7066,10 @@ function finishContactPick(contactId){
     if(slot==='primary'){
       client.primary=contactId;
       supaUpdateClientContact(client, clientsList.id);
-    } else {
-      client.secondary.push(contactId);
-      supabaseClient.from('client_secondary_contacts').insert({client_id:client.id, contact_id:contactId})
+    } else if(slot==='second' || slot==='third'){
+      if(slot==='second') client.secondContactId=contactId; else client.thirdContactId=contactId;
+      supabaseClient.from('client_secondary_contacts').delete().eq('client_id', client.id).eq('slot', slot)
+        .then(()=>supabaseClient.from('client_secondary_contacts').insert({client_id:client.id, contact_id:contactId, slot}))
         .then(({error})=>{ if(error) console.error('secondary contact sync error:', error); });
     }
   } else if(state.contactPickerOpen && state.contactPickerOpen.entryId){
@@ -7258,15 +7288,7 @@ function renderNewTodoModal(){
     state.newTodoModal=null;
     if(assignTo!==state.currentUser.id){
       newTd.isNew = true;
-      const u=USERS.find(x=>x.id===assignTo);
-      if(u.wantsAssignmentEmails!==false){
-        const subject = 'You Have a New To Do on Southwest Edge';
-        const body = `Hi ${u.name.split(' ')[0]},\n\n${state.currentUser.name} assigned you a new to-do:\n\n"${title}"${category?` (${category})`:''}${newTd.dueDate?`\nDue: ${fmtDate(newTd.dueDate)}`:''}\n\nLog in to Southwest Edge Portal to view it: ${portalUrl(newTd.id)}\n\n— Sent from Southwest Edge Portal`;
-        openEmailDraft(u, subject, body);
-        flashToast(`Email draft opened for ${u.name}.`);
-      } else {
-        flashToast(`To-do assigned to ${u.name} (they've opted out of assignment emails).`);
-      }
+      flashToast(`Assigned to ${USERS.find(x=>x.id===assignTo).name}.`);
     } else {
       flashToast('To-do saved.');
     }
@@ -7980,7 +8002,7 @@ async function runTaskFireImport(parsed, ownerUserId){
     if(existingId){
       clientObj = targetList.clients.find(x=>x.id===existingId);
     } else {
-      clientObj = {id:crypto.randomUUID(), name:c.name, primary:null, secondary:[], deals:[], createdBy:ownerUserId, authorizedUserIds:[]};
+      clientObj = {id:crypto.randomUUID(), name:c.name, primary:null, secondContactId:null, thirdContactId:null, deals:[], createdBy:ownerUserId, authorizedUserIds:[]};
       if(destListId==='listings'){ clientObj.prospects=[]; clientObj.categoryConfig=newLSRCategoryConfig(); }
       targetList.clients.push(clientObj);
       await supaCreateClient(clientObj, destListId);
@@ -8260,7 +8282,7 @@ async function commitMapsImport(m, results){
     clientObj = list.clients.find(c=>c.id===m.pickedClient.id);
   } else {
     list = db.lists.find(l=>l.id===(m.newClientListId||'clients'));
-    clientObj = {id:crypto.randomUUID(), name:m.newClientName.trim(), primary:null, secondary:[], deals:[], createdBy:state.currentUser.id, authorizedUserIds:[]};
+    clientObj = {id:crypto.randomUUID(), name:m.newClientName.trim(), primary:null, secondContactId:null, thirdContactId:null, deals:[], createdBy:state.currentUser.id, authorizedUserIds:[]};
     if(list.id==='listings'){ clientObj.prospects=[]; clientObj.categoryConfig=newLSRCategoryConfig(); }
     list.clients.push(clientObj);
     await supaCreateClient(clientObj, list.id);
@@ -8368,7 +8390,8 @@ function renderImportTodosModal(){
       newTodos.push({
         id:crypto.randomUUID(), title, category: iCat>=0?(row[iCat]||'').trim():'', dueDate: iDue>=0?parseNaturalDate((row[iDue]||'').trim()):null,
         assignedTo, createdBy:state.currentUser.id, type:'task', private:false, completed, isNew:false,
-        notes: iNotes>=0?(row[iNotes]||'').trim():'', listId:null, clientId:null, dealId:null, entryId:null
+        notes: iNotes>=0?(row[iNotes]||'').trim():'', listId:null, clientId:null, dealId:null, entryId:null,
+        skipAssignmentNotification:true
       });
     });
     db.todos.push(...newTodos);
@@ -8506,7 +8529,18 @@ render = function(){
     const input = document.getElementById('contactSearchInput');
     if(input){
       input.focus();
-      input.oninput=()=>{ state.contactPickerQuery=input.value; render(); };
+      input.oninput=()=>{
+        state.contactPickerQuery=input.value;
+        const q = state.contactPickerQuery.toLowerCase();
+        const matches = q ? db.contacts.filter(c=>(`${c.last} ${c.first}`).toLowerCase().includes(q) || (`${c.first} ${c.last}`).toLowerCase().includes(q)) : [];
+        const box = document.getElementById('contactSearchSuggestions');
+        if(box){
+          box.innerHTML = renderContactSearchSuggestions(matches);
+          box.querySelectorAll('[data-selectcontact]').forEach(el=>el.onclick=()=>{
+            finishContactPick(el.dataset.selectcontact);
+          });
+        }
+      };
     }
     document.querySelectorAll('[data-selectcontact]').forEach(el=>el.onclick=()=>{
       finishContactPick(el.dataset.selectcontact);
