@@ -1358,7 +1358,7 @@ const DEFAULT_PROPERTY_CATEGORIES = [
 const LSR_STAGES = [
   {id:'signedLease', name:'Signed Lease', track:'lease', color:'#E8951E'},
   {id:'closedEscrow', name:'Closed Escrow', track:'sale', color:'#E8951E'},
-  {id:'negotiating', name:'Negotiating Lease', track:'lease', color:'#E0469A'},
+  {id:'negotiating', name:'Negotiating Lease / PSA', track:'lease', color:'#E0469A'},
   {id:'inEscrow', name:'In Escrow', track:'sale', color:'#E0469A'},
   {id:'signedLOI', name:'Signed LOI', track:'both', color:'#00A65A'},
   {id:'loi', name:'LOI', track:'both', color:'#00A65A'},
@@ -2109,6 +2109,7 @@ const SMART_LIST_DEFAULTS = [
   {id:'archived', name:'Archived', icon:'🗄️'},
   {id:'everything', name:'Everything', icon:'📚'},
   {id:'activeDeals', name:'Active Deals', icon:'⭐'},
+  {id:'allDeals', name:'All Deals', icon:'📋'},
   {id:'caStatus', name:'CA Status', icon:'📄'},
 ];
 // Single mutable, ordered list of every smart list (defaults + user-created). Reordering,
@@ -2869,7 +2870,7 @@ function renderSidebar(){
     <div class="nav-section-label">Smart Lists <button class="nav-add" data-action="addSmartList">+</button></div>
     <div class="nav-list">
       ${visibleSmarts.map(sl=>{
-        let items = sl.id==='activeDeals' ? activeDealsClients() : (sl.id==='caStatus' ? caOutstandingCount() : (smartListTodos(sl.id) ? smartListTodos(sl.id).filter(visibleTodo) : []));
+        let items = sl.id==='activeDeals' ? activeDealsClients() : (sl.id==='allDeals' ? allDealsList() : (sl.id==='caStatus' ? caOutstandingCount() : (smartListTodos(sl.id) ? smartListTodos(sl.id).filter(visibleTodo) : [])));
         if((sl.id==='week' || sl.id==='month') && state.todoView!=='team'){
           // Match exactly what clicking into this list actually shows: by default that's
           // narrowed to "assigned to me" only, not everything in my broader sphere — the
@@ -2969,6 +2970,7 @@ function renderTopbar(){
   const teamCapableIds = ['week','month'];
   const showTodoToggle = state.mainView.type==='smart' && teamCapableIds.includes(state.mainView.id);
   const showBack = state.isMobile && state.mobileScreen==='main';
+  const showListSearch = state.mainView.type!=='contacts';
   return `
   <div class="topbar">
     ${showBack ? `<button class="icon-btn" data-action="mobileBack" style="color:var(--ink);margin-right:2px;">←</button>` : ''}
@@ -2976,6 +2978,11 @@ function renderTopbar(){
       <div class="topbar-eyebrow">${eyebrow}</div>
       <div class="topbar-title">${title}</div>
     </div>
+    ${showListSearch ? `
+    <div class="autocomplete-box" style="position:relative;width:220px;margin-left:18px;">
+      <input id="listSearchBox" placeholder="🔍 Search this list…" value="${escapeAttr(state.listSearchQuery||'')}"
+        style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px;">
+    </div>` : ''}
     <div class="topbar-spacer"></div>
     <div class="autocomplete-box" style="position:relative;width:280px;">
       <input id="globalSearchBox" placeholder="🔍 Search everything…" value="${escapeAttr(state.globalSearchQuery||'')}"
@@ -3583,6 +3590,54 @@ function activeDealsClients(){
   });
   return out;
 }
+function allDealsList(){
+  const out = [];
+  db.lists.filter(l=>l.type==='deep').forEach(l=>{
+    l.clients.forEach(c=>{
+      c.deals.forEach(d=>{
+        if(d.complete) return; // Open for Business — done, excluded
+        if(d.stage==='closedEscrow') return; // Closed Escrow — done, excluded
+        out.push({deal:d, client:c, listId:l.id});
+      });
+    });
+  });
+  return out;
+}
+function renderAllDealsMain(){
+  let rows = allDealsList();
+  const searchQ = (state.listSearchQuery||'').trim();
+  if(searchQ) rows = rows.filter(r=>matchesSearchTokens(`${r.deal.name} ${r.client.name}`, searchQ));
+  if(!rows.length) return searchQ
+    ? `<div class="empty-state"><div class="big">No matches for "${escapeHtml(searchQ)}".</div><div class="tiny">Try a different search, or clear it to see everything.</div></div>`
+    : `<div class="empty-state"><div class="big">No open deals right now.</div><div class="tiny">Closed Escrow and Open for Business deals are left out of this list on purpose.</div></div>`;
+
+  const renderSection = (listId, sectionTitle)=>{
+    const sectionRows = rows.filter(r=>r.listId===listId);
+    if(!sectionRows.length) return '';
+    // Group by account, alphabetically, each with its deals listed underneath.
+    const byClient = {};
+    sectionRows.forEach(r=>{ (byClient[r.client.id] = byClient[r.client.id] || {client:r.client, deals:[]}).deals.push(r.deal); });
+    const groups = Object.values(byClient).sort((a,b)=>a.client.name.localeCompare(b.client.name));
+    return `
+    <div class="section-label" style="margin-top:18px;">${sectionTitle} <span style="font-weight:400;color:var(--ink-soft);">(${sectionRows.length})</span></div>
+    ${groups.map(g=>`
+      <div style="margin:10px 0;">
+        <div style="font-weight:600;font-size:13.5px;color:var(--ink);margin-bottom:4px;">${escapeHtml(g.client.name)}</div>
+        ${g.deals.map(d=>{
+          const stageInfo = LSR_STAGE_MAP[d.stage];
+          return `
+          <div class="row-card" data-opendealdirect="${d.id}" data-client="${g.client.id}" data-listid="${listId}" style="margin-bottom:6px;">
+            <div class="row-body">
+              <div class="row-title">${escapeHtml(d.name)}</div>
+              <div class="row-meta">${stageInfo ? `<span class="pill" style="background:${stageInfo.color}22;color:${stageInfo.color};">${stageInfo.name}</span>` : `<span class="pill gray">No stage</span>`}</div>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>`).join('')}
+    `;
+  };
+  return renderSection('clients', 'Clients') + renderSection('listings', 'Listings');
+}
 function renderActiveDealsMain(){
   const rows = activeDealsClients();
   if(!rows.length) return `<div class="empty-state"><div class="big">No active deals right now.</div><div class="tiny">Check "Active Deal" on a site/deal inside a client to have it show up here.</div></div>`;
@@ -3612,6 +3667,7 @@ function renderMainContent(){
   // smart list
   const id = state.mainView.id;
   if(id==='activeDeals') return renderActiveDealsMain();
+  if(id==='allDeals') return renderAllDealsMain();
   if(id==='archived') return renderArchivedMain();
   if(id==='caStatus') return renderCAStatusMain();
   const teamCapable = (id==='week' || id==='month');
@@ -3621,13 +3677,18 @@ function renderMainContent(){
     // "Mine" for Due This Week / Due This Month means only to-do's assigned to me.
     list = list.filter(td=>td.assignedTo===state.currentUser.id);
   }
+  const searchQ = (state.listSearchQuery||'').trim();
+  if(searchQ) list = list.filter(td=>matchesSearchTokens(`${td.title} ${td.category||''} ${td.notes||''} ${td.status||''}`, searchQ));
   const archiveBar = id==='completed' && list.length ?
     `<button class="btn secondary sm" data-action="archiveAllCompleted" style="margin-bottom:12px;">🗄️ Archive All Completed (${list.length})</button>` : '';
+  if(!list.length && searchQ) return `<div class="empty-state"><div class="big">No matches for "${escapeHtml(searchQ)}".</div><div class="tiny">Try a different search, or clear it to see everything.</div></div>`;
   return archiveBar + renderBulkBar() + renderTodoList(list);
 }
 function renderArchivedClientsMain(){
-  const archived = db.archivedClients||[];
-  if(!archived.length) return `<div class="empty-state"><div class="big">Nothing archived.</div><div class="tiny">Archived Clients and Listings will show up here.</div></div>`;
+  let archived = db.archivedClients||[];
+  const searchQ = (state.listSearchQuery||'').trim();
+  if(searchQ) archived = archived.filter(c=>matchesSearchTokens(c.name, searchQ));
+  if(!archived.length) return searchQ ? `<div class="empty-state"><div class="big">No matches for "${escapeHtml(searchQ)}".</div><div class="tiny">Try a different search, or clear it to see everything.</div></div>` : `<div class="empty-state"><div class="big">Nothing archived.</div><div class="tiny">Archived Clients and Listings will show up here.</div></div>`;
   const renderRow = (c)=>`
     <div class="row-card" style="opacity:.8;" data-viewarchived="${c.id}" data-listid="${c.archivedListId}">
       <div class="nav-icon" style="font-size:20px;">🗄️</div>
@@ -3644,8 +3705,10 @@ function renderArchivedClientsMain(){
   `;
 }
 function renderProjectsListMain(){
-  const projects = visibleProjectsList();
-  if(!projects.length) return `<div class="empty-state"><div class="big">No Projects yet.</div><div class="tiny">Open any to-do and switch it to "Project" to start one — it'll show up here no matter where it lives.</div></div>`;
+  let projects = visibleProjectsList();
+  const searchQ = (state.listSearchQuery||'').trim();
+  if(searchQ) projects = projects.filter(p=>matchesSearchTokens(p.title, searchQ));
+  if(!projects.length) return searchQ ? `<div class="empty-state"><div class="big">No matches for "${escapeHtml(searchQ)}".</div><div class="tiny">Try a different search, or clear it to see everything.</div></div>` : `<div class="empty-state"><div class="big">No Projects yet.</div><div class="tiny">Open any to-do and switch it to "Project" to start one — it'll show up here no matter where it lives.</div></div>`;
   return projects.map(p=>{
     const childCount = db.todos.filter(t=>t.projectId===p.id).length;
     const doneCount = (p.checklistItems||[]).filter(i=>i.done).length;
@@ -3863,12 +3926,17 @@ function renderTeamTodos(smartId){
 }
 
 function renderListMain(listId){
-  const l = db.lists.find(x=>x.id===listId);
+  let l = db.lists.find(x=>x.id===listId);
   if(!l) return '';
+  const searchQ = (state.listSearchQuery||'').trim();
+  if(searchQ){
+    if(l.type==='deep') l = {...l, clients: l.clients.filter(c=>matchesSearchTokens(c.name, searchQ))};
+    else l = {...l, entries: l.entries.filter(e=>matchesSearchTokens(e.name, searchQ))};
+  }
   const singular = l.name.endsWith('s') ? l.name.slice(0,-1) : l.name;
   if(l.type==='deep'){
     const addBtn = `<button class="btn sm" data-action="addClient" data-listid="${l.id}" style="margin-bottom:14px;">+ New ${singular}</button>`;
-    if(!l.clients.length) return addBtn + `<div class="empty-state"><div class="big">No ${l.name.toLowerCase()} yet.</div><div class="tiny">Add your first one to get moving.</div></div>`;
+    if(!l.clients.length) return addBtn + (searchQ ? `<div class="empty-state"><div class="big">No matches for "${escapeHtml(searchQ)}".</div><div class="tiny">Try a different search, or clear it to see everything.</div></div>` : `<div class="empty-state"><div class="big">No ${l.name.toLowerCase()} yet.</div><div class="tiny">Add your first one to get moving.</div></div>`);
     const renderRow = (c)=>{
       const dealCount = c.deals.length;
       const openDeals = c.deals.filter(d=>!d.complete).length;
@@ -3927,7 +3995,7 @@ function renderListMain(listId){
       const mine = l.entries.filter(hasAccess);
       const others = l.entries.filter(e=>!hasAccess(e));
       const otherOpen = !!(state.otherAccountsOpen && state.otherAccountsOpen[l.id]);
-      if(!l.entries.length) return addBtn + `<div class="empty-state"><div class="big">Nothing here yet.</div><div class="tiny">Add a prospect to start tracking outreach.</div></div>`;
+      if(!l.entries.length) return addBtn + (searchQ ? `<div class="empty-state"><div class="big">No matches for "${escapeHtml(searchQ)}".</div><div class="tiny">Try a different search, or clear it to see everything.</div></div>` : `<div class="empty-state"><div class="big">Nothing here yet.</div><div class="tiny">Add a prospect to start tracking outreach.</div></div>`);
       return addBtn + mine.map(renderEntryRow).join('') +
         (others.length ? `
         <div class="nav-section-label" style="cursor:pointer;margin-top:10px;" data-action="toggleOtherAccounts" data-listid="${l.id}">
@@ -3937,7 +4005,7 @@ function renderListMain(listId){
         ` : '');
     }
     const visibleEntries = l.entries.filter(hasAccess);
-    if(!visibleEntries.length) return addBtn + `<div class="empty-state"><div class="big">Nothing here yet.</div><div class="tiny">Add a prospect to start tracking outreach.</div></div>`;
+    if(!visibleEntries.length) return addBtn + (searchQ ? `<div class="empty-state"><div class="big">No matches for "${escapeHtml(searchQ)}".</div><div class="tiny">Try a different search, or clear it to see everything.</div></div>` : `<div class="empty-state"><div class="big">Nothing here yet.</div><div class="tiny">Add a prospect to start tracking outreach.</div></div>`);
     return addBtn + visibleEntries.map(renderEntryRow).join('');
   }
 }
@@ -3953,7 +4021,7 @@ function renderShell(){
     <div style="${hideSidebar?'display:none;':''}">${renderSidebar()}</div>
     <div class="main" style="${hideMain?'display:none;':''}position:relative;">
       ${renderTopbar()}
-      <div class="content"><div class="content-flex"><div class="content-inner">${renderMainContent()}</div>${renderSidePanel()}</div></div>
+      <div class="content"><div class="content-flex"><div class="content-inner" id="mainContentInner">${renderMainContent()}</div>${renderSidePanel()}</div></div>
     </div>
   </div>
   <button class="fab" data-action="newTodo" title="New To-Do">+</button>
@@ -3998,6 +4066,7 @@ function wireGlobalSearchResultHandlers(){
 }
 function attachShellHandlers(){
   document.querySelectorAll('[data-nav]').forEach(el=>el.onclick=()=>{
+    state.listSearchQuery = '';
     const [type,id]=el.dataset.nav.split(':');
     if(type==='smart'){ state.mainView={type:'smart',id}; }
     else if(type==='list'){ state.mainView={type:'list',id}; }
@@ -4042,6 +4111,28 @@ function attachShellHandlers(){
     globalSearchBox.onblur=()=>{ setTimeout(()=>{ state.globalSearchFocused=false; },150); };
   }
   wireGlobalSearchResultHandlers();
+  const listSearchBox = document.getElementById('listSearchBox');
+  if(listSearchBox){
+    listSearchBox.oninput=()=>{
+      state.listSearchQuery = listSearchBox.value;
+      // Same fix as the global search box: never call render() here, or this very
+      // input gets torn down and rebuilt mid-keystroke and loses focus. Only the
+      // main content region refreshes; the search field itself is never touched.
+      const mainContentInner = document.getElementById('mainContentInner');
+      if(mainContentInner){
+        mainContentInner.innerHTML = renderMainContent();
+        attachShellHandlers();
+        wireTodoRowHandlers(document.getElementById('app'));
+      }
+    };
+    listSearchBox.onfocus=()=>{ state.listSearchFocused=true; };
+    listSearchBox.onblur=()=>{ setTimeout(()=>{ state.listSearchFocused=false; },150); };
+    if(state.listSearchFocused){
+      listSearchBox.focus();
+      const len = listSearchBox.value.length;
+      listSearchBox.setSelectionRange(len,len);
+    }
+  }
   const toggleListsBtn = document.querySelector('[data-action="toggleListsCollapsed"]'); if(toggleListsBtn) toggleListsBtn.onclick=()=>{
     state.listsCollapsed = !state.listsCollapsed;
     renderPreservingScroll('.sidebar');
@@ -4077,9 +4168,10 @@ function attachShellHandlers(){
     render();
   });
   document.querySelectorAll('[data-opendealdirect]').forEach(el=>el.onclick=()=>{
+    const listId = el.dataset.listid || 'clients';
     state.modalStack = [
-      {kind:'client', listId:'clients', clientId:el.dataset.client, viewMode:'all'},
-      {kind:'deal', listId:'clients', clientId:el.dataset.client, dealId:el.dataset.opendealdirect}
+      {kind:'client', listId, clientId:el.dataset.client, viewMode:'all'},
+      {kind:'deal', listId, clientId:el.dataset.client, dealId:el.dataset.opendealdirect}
     ];
     render();
   });
@@ -4613,9 +4705,9 @@ function renderNewSmartListModal(){
           ${(m.categories||[]).map(c=>`<div class="pill" style="display:flex;align-items:center;gap:6px;">${escapeHtml(c)}<button data-removeslcat="${escapeAttr(c)}" style="border:none;background:none;cursor:pointer;color:var(--ink-soft);">✕</button></div>`).join('')}
         </div>` : ''}
         <input id="slCategoryInput" placeholder="Start typing to add a category…" value="${escapeAttr(m.categoryInput||'')}">
-        ${catMatches.length? `<div class="suggest-list">${catMatches.map(c=>`
+        <div id="slCategorySuggestions">${catMatches.length? `<div class="suggest-list">${catMatches.map(c=>`
           <div class="suggest-item" data-addslcat="${escapeAttr(c)}">${escapeHtml(c)}</div>
-        `).join('')}</div>` : ''}
+        `).join('')}</div>` : ''}</div>
       </div>
       <div class="field autocomplete-box">
         <label>Client (optional — pick any that apply)</label>
@@ -4623,9 +4715,9 @@ function renderNewSmartListModal(){
           ${selectedClients.map(c=>`<div class="pill" style="display:flex;align-items:center;gap:6px;">${escapeHtml(c.name)}<button data-removeslclient="${c.id}" style="border:none;background:none;cursor:pointer;color:var(--ink-soft);">✕</button></div>`).join('')}
         </div>` : ''}
         <input id="slClientQuery" placeholder="Start typing a client name…" value="${escapeAttr(m.clientQuery)}">
-        ${clientMatches.length? `<div class="suggest-list">${clientMatches.map(c=>`
+        <div id="slClientSuggestions">${clientMatches.length? `<div class="suggest-list">${clientMatches.map(c=>`
           <div class="suggest-item" data-selectslclient="${c.id}"><b>${escapeHtml(c.name)}</b><div class="sub">${escapeHtml(c.listName)}</div></div>
-        `).join('')}</div>` : ''}
+        `).join('')}</div>` : ''}</div>
       </div>
       <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-soft);font-weight:600;margin-top:4px;">
         <input type="checkbox" id="slPersonalOnly" ${m.personalOnly?'checked':''} style="width:auto;accent-color:var(--good);">
@@ -4644,7 +4736,23 @@ function renderNewSmartListModal(){
   if(dateSel) dateSel.onchange=()=>{ m.dateRule=dateSel.value; renderPreservingScroll('.modal-body'); };
   const clientQueryInput = document.getElementById('slClientQuery');
   if(clientQueryInput){
-    clientQueryInput.oninput=()=>{ m.clientQuery=clientQueryInput.value; render(); };
+    clientQueryInput.oninput=()=>{
+      m.clientQuery=clientQueryInput.value;
+      const selectedIds = new Set(m.clientIds||[]);
+      const matches = m.clientQuery ? allClientsFlat().filter(c=>c.name.toLowerCase().includes(m.clientQuery.toLowerCase()) && !selectedIds.has(c.id)) : [];
+      const box = document.getElementById('slClientSuggestions');
+      if(box){
+        box.innerHTML = matches.length? `<div class="suggest-list">${matches.map(c=>`
+          <div class="suggest-item" data-selectslclient="${c.id}"><b>${escapeHtml(c.name)}</b><div class="sub">${escapeHtml(c.listName)}</div></div>
+        `).join('')}</div>` : '';
+        box.querySelectorAll('[data-selectslclient]').forEach(el=>el.onclick=()=>{
+          if(!m.clientIds) m.clientIds=[];
+          m.clientIds.push(el.dataset.selectslclient);
+          m.clientQuery='';
+          renderPreservingScroll('.modal-body');
+        });
+      }
+    };
   }
   overlay.querySelectorAll('[data-selectslclient]').forEach(el=>el.onclick=()=>{
     if(!m.clientIds) m.clientIds=[];
@@ -4658,7 +4766,23 @@ function renderNewSmartListModal(){
   });
   const categoryInput = document.getElementById('slCategoryInput');
   if(categoryInput){
-    categoryInput.oninput=()=>{ m.categoryInput=categoryInput.value; render(); };
+    categoryInput.oninput=()=>{
+      m.categoryInput=categoryInput.value;
+      const allCatsNow = allCategories();
+      const matches = m.categoryInput ? allCatsNow.filter(c=>c.toLowerCase().includes(m.categoryInput.toLowerCase()) && !(m.categories||[]).some(x=>x.toLowerCase()===c.toLowerCase())) : [];
+      const box = document.getElementById('slCategorySuggestions');
+      if(box){
+        box.innerHTML = matches.length? `<div class="suggest-list">${matches.map(c=>`
+          <div class="suggest-item" data-addslcat="${escapeAttr(c)}">${escapeHtml(c)}</div>
+        `).join('')}</div>` : '';
+        box.querySelectorAll('[data-addslcat]').forEach(el=>el.onclick=()=>{
+          if(!m.categories) m.categories=[];
+          if(!m.categories.some(c=>c.toLowerCase()===el.dataset.addslcat.toLowerCase())) m.categories.push(el.dataset.addslcat);
+          m.categoryInput='';
+          renderPreservingScroll('.modal-body');
+        });
+      }
+    };
     categoryInput.onkeydown=(e)=>{
       if(e.key==='Enter' && categoryInput.value.trim()){
         e.preventDefault();
@@ -5615,7 +5739,7 @@ function renderDealRowInClient(l,c,d){
 const DEAL_GROUPS = {
   openForBusiness: {title:'Open for Business', color:'#00A65A', match:d=>!!d.complete},
   signedLease:     {title:'Signed Lease',      color:'#E8951E', match:d=>!d.complete && d.stage==='signedLease'},
-  negotiating:     {title:'Negotiating Lease', color:'#E0469A', match:d=>!d.complete && d.stage==='negotiating'},
+  negotiating:     {title:'Negotiating Lease / PSA', color:'#E0469A', match:d=>!d.complete && d.stage==='negotiating'},
   signedLOI:       {title:'Signed LOI',        color:'#00A65A', match:d=>!d.complete && d.stage==='signedLOI'},
   loi:             {title:'LOI',               color:'#00A65A', match:d=>!d.complete && d.stage==='loi'},
   prospects:       {title:'Prospects',         color:'#8A8378', match:d=>!d.complete && (!d.stage || d.stage==='prospect')},
@@ -5626,15 +5750,11 @@ const DEAL_GROUPS = {
 function renderDealGroupsInClient(l,c){
   const rowsByKey = {};
   Object.keys(DEAL_GROUPS).forEach(k=>{ rowsByKey[k] = c.deals.filter(DEAL_GROUPS[k].match); });
-  // Base order (lease-only clients, or a sale client with nothing currently in escrow):
-  // In Escrow sits near the bottom, right before Closed Escrow. Dead is always last —
-  // it's a terminal, out-of-the-running state, not part of the normal progression.
-  let order = ['signedLease','negotiating','signedLOI','loi','prospects','inEscrow','closedEscrow','openForBusiness','dead'];
-  // But if this client actually has a deal sitting in escrow right now, promote In Escrow
-  // up next to Signed Lease so an active sale doesn't get buried near the bottom.
-  if(rowsByKey.inEscrow.length){
-    order = ['signedLease','inEscrow','negotiating','signedLOI','loi','prospects','closedEscrow','openForBusiness','dead'];
-  }
+  // In Escrow always sits directly below Signed Lease, whether or not anything is
+  // currently in that stage — a fixed position, not one that shifts around based on
+  // what's in it. Dead stays last — it's a terminal, out-of-the-running state, not
+  // part of the normal progression.
+  const order = ['signedLease','inEscrow','negotiating','signedLOI','loi','prospects','closedEscrow','openForBusiness','dead'];
   return order.map(k=>renderDealGroupSection(l, c, {key:k, ...DEAL_GROUPS[k]}, rowsByKey[k])).join('');
 }
 function renderDealGroupSection(l, c, g, rows){
@@ -7009,7 +7129,7 @@ function renderContactPickerPanel(){
   if(!state.contactPickerOpen) return '';
   const standalone = !!state.contactPickerOpen.standalone;
   const q = state.contactPickerQuery.toLowerCase();
-  const matches = q ? db.contacts.filter(c=>contactMatchesQuery(`${c.last} ${c.first}`, q)) : [];
+  const matches = q ? db.contacts.filter(c=>matchesSearchTokens(`${c.last} ${c.first}`, q)) : [];
   return `
   <div class="modal-overlay" style="z-index:600;" id="contactPickerOverlay">
     <div class="modal-card">
@@ -7425,7 +7545,7 @@ function renderEditContactModal(){
 // "Smith John" and "John Smith" both match the same person, commas don't matter, and
 // each additional word typed only ever narrows the results further, never changes
 // the matching logic.
-function contactMatchesQuery(hayString, query){
+function matchesSearchTokens(hayString, query){
   const tokens = query.toLowerCase().replace(/,/g, ' ').split(/\s+/).filter(Boolean);
   if(!tokens.length) return true;
   const hay = hayString.toLowerCase();
@@ -7443,7 +7563,7 @@ function renderContactsTableRows(filtered){
 function renderContactsMain(){
   const q = (state.contactSearchQuery||'').toLowerCase().trim();
   const filtered = q ? db.contacts.filter(c=>{
-    return contactMatchesQuery(`${c.last} ${c.first} ${c.company||''} ${c.email||''}`, q);
+    return matchesSearchTokens(`${c.last} ${c.first} ${c.company||''} ${c.email||''}`, q);
   }) : db.contacts;
   return `
   <div style="font-size:12px;color:var(--ink-soft);margin-bottom:8px;">🔒 New contacts you add or import are private to you until attached to a shared Client, Deal, Entry, or Prospect — then whoever can see that record can see the contact too.</div>
@@ -7499,7 +7619,7 @@ function attachContactsHandlers(){
       state.contactSearchQuery = searchBox.value;
       const q = state.contactSearchQuery.toLowerCase().trim();
       const filtered = q ? db.contacts.filter(c=>{
-        return contactMatchesQuery(`${c.last} ${c.first} ${c.company||''} ${c.email||''}`, q);
+        return matchesSearchTokens(`${c.last} ${c.first} ${c.company||''} ${c.email||''}`, q);
       }) : db.contacts;
       const countLabel = document.getElementById('contactsCountLabel');
       if(countLabel) countLabel.textContent = `${filtered.length} of ${db.contacts.length} contacts`;
@@ -8144,7 +8264,7 @@ const MAPS_STAGE_OPTIONS = [
   {id:'skip', label:'Skip this folder — don\'t import'},
   {id:'loi', label:'→ LOI'},
   {id:'signedLOI', label:'→ Signed LOI'},
-  {id:'negotiating', label:'→ Negotiating Lease'},
+  {id:'negotiating', label:'→ Negotiating Lease / PSA'},
   {id:'signedLease', label:'→ Signed Lease'},
   {id:'auto', label:'→ Auto: store number (AZ####) = Signed LOI, else LOI'},
   {id:'manual', label:'→ No stage yet — let me pick individually which sites import'},
@@ -8630,7 +8750,7 @@ render = function(){
       input.oninput=()=>{
         state.contactPickerQuery=input.value;
         const q = state.contactPickerQuery.toLowerCase();
-        const matches = q ? db.contacts.filter(c=>contactMatchesQuery(`${c.last} ${c.first}`, q)) : [];
+        const matches = q ? db.contacts.filter(c=>matchesSearchTokens(`${c.last} ${c.first}`, q)) : [];
         const box = document.getElementById('contactSearchSuggestions');
         if(box){
           box.innerHTML = renderContactSearchSuggestions(matches);
