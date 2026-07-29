@@ -1,54 +1,64 @@
-// Southwest Edge Portal — service worker
-// Genuinely network-first: always tries the network first for the app shell,
-// and only falls back to a cached copy if the network request itself fails
-// (i.e., truly offline). The previous version returned a cached copy
-// immediately whenever one existed, only refreshing it quietly in the
-// background — that's cache-first behavior, not network-first, and it's
-// why deploys sometimes appeared not to take effect for a session or two.
-const CACHE_NAME = 'swe-portal-shell-v3';
-const SHELL_FILES = [
-  './index.html',
-  './manifest.json',
-  './icon-192.png',
-  './icon-512.png'
-];
+// Southwest Edge Portal — Service Worker (network-first)
+//
+// This file must be deployed alongside index.html, at the same path referenced
+// by index.html's registration call: navigator.serviceWorker.register('sw.js').
+//
+// The whole point of this file: NEVER let a stale cached copy of the app be
+// served when a fresh one is available. Every request tries the network
+// FIRST. The cache is only ever used as a fallback if the network genuinely
+// fails (e.g., the device is offline) — never as a shortcut when online.
+//
+// CACHE_NAME is deliberately bumped so that installing this new service
+// worker forces every old cache to be thrown out immediately, and every
+// currently-open tab gets taken over right away rather than waiting for the
+// user to close and reopen the app.
+
+const CACHE_NAME = 'edge-portal-network-first-v3';
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(SHELL_FILES))
-  );
+  // Activate this service worker immediately, without waiting for other
+  // open tabs running an older version to close first.
   self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((names) =>
-      Promise.all(names.filter((n) => n !== CACHE_NAME).map((n) => caches.delete(n)))
-    )
+    (async () => {
+      // Throw away every cache that isn't this version — guarantees no old,
+      // stale cached files can ever be served again once this activates.
+      const keys = await caches.keys();
+      await Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key)));
+      // Take control of every currently-open tab immediately, rather than
+      // only affecting tabs opened after this point.
+      await self.clients.claim();
+    })()
   );
-  self.clients.claim();
 });
 
 self.addEventListener('fetch', (event) => {
-  const url = new URL(event.request.url);
-  const isShellFile = SHELL_FILES.some((f) => url.pathname.endsWith(f.replace('./', '')));
-  const isSameOrigin = url.origin === self.location.origin;
-
-  if (!isSameOrigin || !isShellFile) {
-    // Anything else (weather API, ORION feed, contact logo lookups, etc.) — let the
-    // browser handle it normally, straight to the network, no caching involved.
-    return;
-  }
+  // Only handle simple GET requests — anything else (POST, etc.) should
+  // always just go straight to the network untouched.
+  if (event.request.method !== 'GET') return;
 
   event.respondWith(
-    fetch(event.request)
-      .then((response) => {
-        if (response && response.ok) {
-          const copy = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
-        }
-        return response;
-      })
-      .catch(() => caches.match(event.request)) // offline — fall back to whatever we've cached
+    (async () => {
+      try {
+        // Always try the network first. This is the entire fix: a "deploy"
+        // should always actually be what a user sees the next time they load
+        // the app, as long as they have any connection at all.
+        const networkResponse = await fetch(event.request, { cache: 'no-store' });
+        // Keep a copy for offline fallback, but never let this cached copy
+        // be used while the network is actually reachable.
+        const cache = await caches.open(CACHE_NAME);
+        cache.put(event.request, networkResponse.clone());
+        return networkResponse;
+      } catch (err) {
+        // Network genuinely failed (offline, etc.) — fall back to whatever
+        // was last successfully cached, if anything.
+        const cached = await caches.match(event.request);
+        if (cached) return cached;
+        throw err;
+      }
+    })()
   );
 });

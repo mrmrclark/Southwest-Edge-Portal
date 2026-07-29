@@ -671,9 +671,21 @@ function contactLocalToRow(c){
           created_by: (state.currentUser && state.currentUser.authId) || null};
 }
 async function fetchContactsFromSupabase(){
-  const { data, error } = await supabaseClient.from('contacts').select('*');
-  if(error){ console.error('fetchContactsFromSupabase error:', error); return; }
-  db.contacts = data.map(contactRowToLocal);
+  // Supabase/PostgREST caps any single request at 1000 rows by default — with several
+  // thousand real contacts, a single .select('*') silently only ever returns the first
+  // 1000. Paging through in batches until a batch comes back with fewer than the page
+  // size guarantees every contact loads, no matter how many exist.
+  const PAGE_SIZE = 1000;
+  let all = [];
+  let from = 0;
+  while(true){
+    const { data, error } = await supabaseClient.from('contacts').select('*').range(from, from + PAGE_SIZE - 1);
+    if(error){ console.error('fetchContactsFromSupabase error:', error); return; }
+    all = all.concat(data);
+    if(data.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
+  }
+  db.contacts = all.map(contactRowToLocal);
 }
 async function supaCreateContact(c){
   const { error } = await supabaseClient.from('contacts').insert(contactLocalToRow(c));
@@ -1350,6 +1362,7 @@ const LSR_STAGES = [
   {id:'inEscrow', name:'In Escrow', track:'sale', color:'#E0469A'},
   {id:'signedLOI', name:'Signed LOI', track:'both', color:'#00A65A'},
   {id:'loi', name:'LOI', track:'both', color:'#00A65A'},
+  {id:'prospect', name:'Prospect', track:'both', color:'#8A8378'},
   {id:'dead', name:'Dead', track:'both', color:'#8A7D6E'},
 ];
 const LSR_STAGE_MAP = {}; LSR_STAGES.forEach(s=>LSR_STAGE_MAP[s.id]=s);
@@ -1365,8 +1378,8 @@ function lsrStagesForTrack(dealType){
   // dropdown options once converted, in hierarchy order (lowest to highest for a <select>).
   // Dead sits at the very end on both tracks — it's not part of the natural progression,
   // it's a terminal "this fell through" state a deal can drop into from anywhere.
-  if(dealType==='sale') return ['loi','signedLOI','inEscrow','closedEscrow','dead'];
-  return ['loi','signedLOI','negotiating','signedLease','dead'];
+  if(dealType==='sale') return ['prospect','loi','signedLOI','inEscrow','closedEscrow','dead'];
+  return ['prospect','loi','signedLOI','negotiating','signedLease','dead'];
 }
 // Baked-in Phoenix retail tenant roster — a standing reference list, not re-uploaded per listing.
 const TENANT_ROSTER = [
@@ -5218,6 +5231,12 @@ function renderTodoDetailModal(){
     if(confirm(`Delete "${td.title}"? This can't be undone.`)){ deleteTodo(td.id); render(); }
   };
   overlay.querySelector('[data-action="detToggleComplete"]').onclick=()=>{ td.completed=!td.completed; td.completedAt = td.completed ? new Date() : null; supaUpdateTodo(td); render(); };
+  // Live-commit these fields as they're typed, so the checklist add/remove/edit
+  // handlers below (which do trigger a full re-render) can never wipe them out.
+  const detTitleEl = document.getElementById('detTitle'); if(detTitleEl) detTitleEl.oninput=()=>{ td.title = detTitleEl.value; };
+  const detCategoryEl = document.getElementById('detCategory'); if(detCategoryEl) detCategoryEl.oninput=()=>{ td.category = detCategoryEl.value; };
+  const detStatusEl = document.getElementById('detStatus'); if(detStatusEl) detStatusEl.oninput=()=>{ td.status = detStatusEl.value; };
+  const detNotesEl = document.getElementById('detNotes'); if(detNotesEl) detNotesEl.oninput=()=>{ td.notes = detNotesEl.value; };
   overlay.querySelectorAll('[data-action="detSave"]').forEach(btn=>btn.onclick=()=>{
     td.title=document.getElementById('detTitle').value.trim()||td.title;
     td.category=document.getElementById('detCategory').value.trim();
@@ -5424,6 +5443,14 @@ function renderTopModalCard(){
     <div class="modal-body">${bodyHtml}</div>
   </div>`;
 }
+function contactRowCompact(contactId){
+  const c = db.contacts.find(x=>x.id===contactId);
+  if(!c) return `<div class="tiny" style="color:var(--ink-soft);font-size:12px;">No contact attached.</div>`;
+  return `
+  <div class="contact-line"><span>Name</span><b>${c.first} ${c.last}</b></div>
+  <div class="contact-line"><span>Email</span><b>${c.email? `<a href="mailto:${escapeAttr(c.email)}" style="color:var(--edge);text-decoration:none;">${escapeHtml(c.email)}</a>` : '—'}</b></div>
+  <div class="contact-line"><span>Mobile</span><b>${c.mobile||'—'}</b></div>`;
+}
 function contactRow(contactId){
   const c = db.contacts.find(x=>x.id===contactId);
   if(!c) return `<div class="tiny" style="color:var(--ink-soft);font-size:12px;">No contact attached.</div>`;
@@ -5481,23 +5508,25 @@ function renderClientModalBody(l,c,viewMode,pendingDel){
   <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
     ${canEdit ? `<button class="btn sm" data-action="addDeal" data-client="${c.id}">+ Add site / deal</button>` : ''}
   </div>
-  <div class="contact-card">
-    <div class="label">Primary Contact</div>
-    ${contactRow(c.primary)}
-    ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickContact" data-client="${c.id}" data-slot="primary">${c.primary? 'Change contact':'Attach contact'}</button>` : ''}
+  <div style="display:flex;gap:14px;margin-bottom:14px;flex-wrap:wrap;">
+    <div class="contact-card" style="flex:1;min-width:220px;">
+      <div class="label">Primary Contact</div>
+      ${contactRowCompact(c.primary)}
+      ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickContact" data-client="${c.id}" data-slot="primary">${c.primary? 'Change contact':'Attach contact'}</button>` : ''}
+    </div>
+    ${(c.primary && !state.isMobile) ? `
+    <div class="contact-card" style="flex:1;min-width:220px;">
+      <div class="label">Second Contact</div>
+      ${contactRowCompact(c.secondContactId)}
+      ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickContact" data-client="${c.id}" data-slot="second">${c.secondContactId? 'Change contact':'Attach contact'}</button>` : ''}
+    </div>` : ''}
+    ${(c.primary && c.secondContactId && !state.isMobile) ? `
+    <div class="contact-card" style="flex:1;min-width:220px;">
+      <div class="label">Third Contact</div>
+      ${contactRowCompact(c.thirdContactId)}
+      ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickContact" data-client="${c.id}" data-slot="third">${c.thirdContactId? 'Change contact':'Attach contact'}</button>` : ''}
+    </div>` : ''}
   </div>
-  ${c.primary ? `
-  <div class="contact-card">
-    <div class="label">Second Contact</div>
-    ${contactRow(c.secondContactId)}
-    ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickContact" data-client="${c.id}" data-slot="second">${c.secondContactId? 'Change contact':'Attach contact'}</button>` : ''}
-  </div>` : ''}
-  ${(c.primary && c.secondContactId) ? `
-  <div class="contact-card">
-    <div class="label">Third Contact</div>
-    ${contactRow(c.thirdContactId)}
-    ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickContact" data-client="${c.id}" data-slot="third">${c.thirdContactId? 'Change contact':'Attach contact'}</button>` : ''}
-  </div>` : ''}
   <div class="section-label">Sites / Deals</div>
   ${renderDealGroupsInClient(l,c)}
   ` : ''}
@@ -5589,7 +5618,7 @@ const DEAL_GROUPS = {
   negotiating:     {title:'Negotiating Lease', color:'#E0469A', match:d=>!d.complete && d.stage==='negotiating'},
   signedLOI:       {title:'Signed LOI',        color:'#00A65A', match:d=>!d.complete && d.stage==='signedLOI'},
   loi:             {title:'LOI',               color:'#00A65A', match:d=>!d.complete && d.stage==='loi'},
-  prospects:       {title:'Prospects',         color:'#8A8378', match:d=>!d.complete && !d.stage},
+  prospects:       {title:'Prospects',         color:'#8A8378', match:d=>!d.complete && (!d.stage || d.stage==='prospect')},
   inEscrow:        {title:'In Escrow',         color:'#E0469A', match:d=>!d.complete && d.stage==='inEscrow'},
   closedEscrow:    {title:'Closed Escrow',     color:'#E8951E', match:d=>!d.complete && d.stage==='closedEscrow'},
   dead:            {title:'Dead',              color:'#8A7D6E', match:d=>!d.complete && d.stage==='dead'},
@@ -5768,6 +5797,10 @@ function renderCommissionModal(){
   </div>`;
   document.getElementById('app').appendChild(overlay);
   overlay.querySelector('[data-action="closeCommission"]').onclick=()=>{ state.commissionModal=null; render(); };
+  const commStructureEl = document.getElementById('commStructure');
+  if(commStructureEl) commStructureEl.oninput=()=>{ obj.commissionStructure = commStructureEl.value; };
+  const commTotalFeeEl = document.getElementById('commTotalFee');
+  if(commTotalFeeEl) commTotalFeeEl.oninput=()=>{ obj.totalFee = commTotalFeeEl.value; };
   overlay.querySelector('[data-action="addSplitRow"]').onclick=()=>{
     draft.push({userId: USERS[0].id, pct: ''});
     renderPreservingScroll('.modal-body');
@@ -6816,6 +6849,23 @@ function attachModalHandlers(root){
     flashToast('Deal terms saved.');
     render();
   });
+  // Live-commit every Deal Terms field as it's typed, so it's never lost to a full
+  // re-render triggered by something else on this same screen (a checkbox, opening
+  // Commission) before "Save Deal Terms" is ever clicked.
+  (function wireDealTermsLiveCommit(){
+    const frame = state.modalStack[state.modalStack.length-1];
+    if(!frame || frame.kind!=='deal') return;
+    const l=db.lists.find(x=>x.id===frame.listId); const c=l && l.clients.find(x=>x.id===frame.clientId);
+    const d=c && c.deals.find(x=>x.id===frame.dealId);
+    if(!d) return;
+    const buildingEl = document.getElementById('dtBuilding'); if(buildingEl) buildingEl.oninput=()=>{ d.building = buildingEl.value; };
+    const spaceNumEl = document.getElementById('dtSpaceNum'); if(spaceNumEl) spaceNumEl.oninput=()=>{ d.spaceNum = spaceNumEl.value; };
+    const sizeEl = document.getElementById('dtSize'); if(sizeEl) sizeEl.oninput=()=>{ d.size = sizeEl.value; };
+    const moneyEl = document.getElementById('dtMoney'); if(moneyEl) moneyEl.oninput=()=>{ if(d.dealType==='sale') d.price = moneyEl.value; else d.rent = moneyEl.value; };
+    const termEl = document.getElementById('dtTerm'); if(termEl) termEl.oninput=()=>{ d.term = termEl.value; };
+    const tiEl = document.getElementById('dtTI'); if(tiEl) tiEl.oninput=()=>{ d.tiAllowance = tiEl.value; };
+    const notesEl = document.getElementById('dtNotes'); if(notesEl) notesEl.oninput=()=>{ d.notes = notesEl.value; };
+  })();
   const openCommBtn = root.querySelector('[data-action="openCommission"]'); if(openCommBtn) openCommBtn.onclick=()=>{
     if(openCommBtn.dataset.kind==='deal'){
       state.commissionModal = {kind:'deal', listId:openCommBtn.dataset.listid, clientId:openCommBtn.dataset.client, dealId:openCommBtn.dataset.deal};
@@ -7262,6 +7312,12 @@ function renderNewTodoModal(){
     document.getElementById('ntSaveBtn').textContent = forMe? 'Save & Close' : 'Save & Assign';
   };
   wireAttachmentZone(overlay, 'ntDropZone', 'ntFileInput', ()=>m.attachments, 'new');
+  // Live-commit these fields as they're typed, so the checklist add/remove/edit
+  // handlers below (which do trigger a full re-render) can never wipe them out.
+  const ntTitleLiveEl = document.getElementById('ntTitle'); if(ntTitleLiveEl) ntTitleLiveEl.oninput=()=>{ m.title = ntTitleLiveEl.value; };
+  const ntCategoryLiveEl = document.getElementById('ntCategory'); if(ntCategoryLiveEl) ntCategoryLiveEl.oninput=()=>{ m.category = ntCategoryLiveEl.value; };
+  const ntStatusLiveEl = document.getElementById('ntStatus'); if(ntStatusLiveEl) ntStatusLiveEl.oninput=()=>{ m.status = ntStatusLiveEl.value; };
+  const ntNotesLiveEl = document.getElementById('ntNotes'); if(ntNotesLiveEl) ntNotesLiveEl.oninput=()=>{ m.notes = ntNotesLiveEl.value; };
   overlay.querySelector('[data-action="saveTodo"]').onclick=()=>{
     const title=document.getElementById('ntTitle').value.trim();
     if(!title){ flashToast('Give the to-do a title first.'); return; }
@@ -7379,7 +7435,7 @@ function renderContactsMain(){
     <div style="display:flex;gap:8px;">
       <button class="btn sm" id="newContactBtn">+ New Contact</button>
       ${!state.isMobile ? `<label class="btn secondary sm" style="display:inline-block;">Import CSV<input type="file" id="csvImportInput" accept=".csv" style="display:none;"></label>` : ''}
-      <button class="btn sm" id="exportVcardBtn" ${state.selectedContactIds.length? '' : 'disabled'}>Export vCard (${state.selectedContactIds.length})</button>
+      <button class="btn sm" id="exportVcardBtn" ${state.selectedContactIds.length? '' : 'disabled'} style="${state.selectedContactIds.length>5?'background:var(--bad,#C0392B);':''}">Export vCard (${state.selectedContactIds.length}${state.selectedContactIds.length>5?' — max 5':''})</button>
       <button class="btn danger sm" id="deleteContactsBtn" ${state.selectedContactIds.length? '' : 'disabled'}>🗑️ Delete (${state.selectedContactIds.length})</button>
     </div>
   </div>
@@ -7391,7 +7447,7 @@ function renderContactsMain(){
     </tr></thead>
     <tbody>
       ${filtered.slice().sort((a,b)=>a.last.localeCompare(b.last)||a.first.localeCompare(b.first)).slice(0,300).map(c=>`
-        <tr data-contactrow="${c.id}">
+        <tr data-contactrow="${c.id}" style="cursor:pointer;">
           <td class="checkbox-cell"><input type="checkbox" data-contactcheck="${c.id}" ${state.selectedContactIds.includes(c.id)?'checked':''}></td>
           <td>${c.isPrivate ? `<span title="Private — only visible to you until it's attached to a shared Client, Deal, Entry, or Prospect" style="margin-right:4px;">🔒</span>`:''}${escapeHtml(c.last)}</td><td>${escapeHtml(c.first)}</td><td>${escapeHtml(c.company||'')}</td>
           <td>${escapeHtml(c.email||'')}</td><td>${escapeHtml(c.mobile||'')}</td><td>${escapeHtml(c.phone||'')}</td>
@@ -7430,6 +7486,10 @@ function attachContactsHandlers(){
     state.editContactModal = {id: el.dataset.editcontact};
     render();
   });
+  document.querySelectorAll('[data-contactrow]').forEach(el=>el.onclick=()=>{
+    state.editContactModal = {id: el.dataset.contactrow};
+    render();
+  });
   const selAll = document.getElementById('selectAllContacts');
   if(selAll) selAll.onclick=()=>{
     if(selAll.checked) state.selectedContactIds = db.contacts.map(c=>c.id);
@@ -7437,7 +7497,13 @@ function attachContactsHandlers(){
     render();
   };
   const exportBtn = document.getElementById('exportVcardBtn');
-  if(exportBtn) exportBtn.onclick=()=>exportVCards(state.selectedContactIds);
+  if(exportBtn) exportBtn.onclick=()=>{
+    if(state.selectedContactIds.length > 5){
+      flashToast(`You can only export 5 contacts at a time — you have ${state.selectedContactIds.length} selected. Narrow it down to 5 or fewer, export, then select the next batch.`);
+      return;
+    }
+    exportVCards(state.selectedContactIds);
+  };
   const deleteBtn = document.getElementById('deleteContactsBtn');
   if(deleteBtn) deleteBtn.onclick=()=>{
     const n = state.selectedContactIds.length;
