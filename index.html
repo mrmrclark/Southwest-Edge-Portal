@@ -7420,6 +7420,15 @@ function renderEditContactModal(){
     }
   };
 }
+function renderContactsTableRows(filtered){
+  return filtered.slice().sort((a,b)=>a.last.localeCompare(b.last)||a.first.localeCompare(b.first)).slice(0,300).map(c=>`
+        <tr data-contactrow="${c.id}" style="cursor:pointer;">
+          <td class="checkbox-cell"><input type="checkbox" data-contactcheck="${c.id}" ${state.selectedContactIds.includes(c.id)?'checked':''}></td>
+          <td>${c.isPrivate ? `<span title="Private — only visible to you until it's attached to a shared Client, Deal, Entry, or Prospect" style="margin-right:4px;">🔒</span>`:''}${escapeHtml(c.last)}</td><td>${escapeHtml(c.first)}</td><td>${escapeHtml(c.company||'')}</td>
+          <td>${escapeHtml(c.email||'')}</td><td>${escapeHtml(c.mobile||'')}</td><td>${escapeHtml(c.phone||'')}</td>
+          <td><button class="row-trash" style="opacity:.7;" data-editcontact="${c.id}" title="Edit">✏️</button></td>
+        </tr>`).join('');
+}
 function renderContactsMain(){
   const q = (state.contactSearchQuery||'').toLowerCase().trim();
   const filtered = q ? db.contacts.filter(c=>{
@@ -7431,7 +7440,7 @@ function renderContactsMain(){
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:12px;flex-wrap:wrap;">
     <input id="contactSearchBox" placeholder="🔍 Search by name, company, or email…" value="${escapeAttr(state.contactSearchQuery||'')}"
       style="flex:1;min-width:220px;padding:9px 12px;border:1px solid var(--line);border-radius:8px;font-size:13.5px;">
-    <div style="font-size:12.5px;color:var(--ink-soft);white-space:nowrap;">${filtered.length} of ${db.contacts.length} contacts</div>
+    <div id="contactsCountLabel" style="font-size:12.5px;color:var(--ink-soft);white-space:nowrap;">${filtered.length} of ${db.contacts.length} contacts</div>
     <div style="display:flex;gap:8px;">
       <button class="btn sm" id="newContactBtn">+ New Contact</button>
       ${!state.isMobile ? `<label class="btn secondary sm" style="display:inline-block;">Import CSV<input type="file" id="csvImportInput" accept=".csv" style="display:none;"></label>` : ''}
@@ -7445,35 +7454,14 @@ function renderContactsMain(){
       <th class="checkbox-cell"><input type="checkbox" id="selectAllContacts"></th>
       <th>Last Name</th><th>First Name</th><th>Company</th><th>Email</th><th>Mobile</th><th>Phone</th><th></th>
     </tr></thead>
-    <tbody>
-      ${filtered.slice().sort((a,b)=>a.last.localeCompare(b.last)||a.first.localeCompare(b.first)).slice(0,300).map(c=>`
-        <tr data-contactrow="${c.id}" style="cursor:pointer;">
-          <td class="checkbox-cell"><input type="checkbox" data-contactcheck="${c.id}" ${state.selectedContactIds.includes(c.id)?'checked':''}></td>
-          <td>${c.isPrivate ? `<span title="Private — only visible to you until it's attached to a shared Client, Deal, Entry, or Prospect" style="margin-right:4px;">🔒</span>`:''}${escapeHtml(c.last)}</td><td>${escapeHtml(c.first)}</td><td>${escapeHtml(c.company||'')}</td>
-          <td>${escapeHtml(c.email||'')}</td><td>${escapeHtml(c.mobile||'')}</td><td>${escapeHtml(c.phone||'')}</td>
-          <td><button class="row-trash" style="opacity:.7;" data-editcontact="${c.id}" title="Edit">✏️</button></td>
-        </tr>`).join('')}
+    <tbody id="contactsTableBody">
+      ${renderContactsTableRows(filtered)}
     </tbody>
   </table>
-  ${filtered.length>300 ? `<div style="padding:10px 14px;font-size:12px;color:var(--ink-soft);">Showing first 300 matches — narrow your search to see more precisely.</div>` : ''}
+  <div id="contactsOverflowNote">${filtered.length>300 ? `<div style="padding:10px 14px;font-size:12px;color:var(--ink-soft);">Showing first 300 matches — narrow your search to see more precisely.</div>` : ''}</div>
   </div>`;
 }
-function attachContactsHandlers(){
-  const searchBox = document.getElementById('contactSearchBox');
-  if(searchBox){
-    searchBox.oninput = ()=>{ state.contactSearchQuery = searchBox.value; render(); };
-    if(state.contactSearchFocused){
-      searchBox.focus();
-      const len = searchBox.value.length;
-      searchBox.setSelectionRange(len, len);
-    }
-    searchBox.onfocus = ()=>{ state.contactSearchFocused=true; };
-    searchBox.onblur = ()=>{ state.contactSearchFocused=false; };
-  }
-  const csvInput = document.getElementById('csvImportInput');
-  if(csvInput) csvInput.onchange=(e)=>{ if(e.target.files[0]) importCSV(e.target.files[0]); };
-  const newContactBtn = document.getElementById('newContactBtn');
-  if(newContactBtn) newContactBtn.onclick=()=>{ state.contactPickerOpen={standalone:true}; state.contactPickerQuery=''; render(); };
+function wireContactsTableRowHandlers(){
   document.querySelectorAll('[data-contactcheck]').forEach(el=>el.onclick=(ev)=>{
     ev.stopPropagation();
     const id=el.dataset.contactcheck;
@@ -7490,6 +7478,41 @@ function attachContactsHandlers(){
     state.editContactModal = {id: el.dataset.contactrow};
     render();
   });
+}
+function attachContactsHandlers(){
+  const searchBox = document.getElementById('contactSearchBox');
+  if(searchBox){
+    // Never call the full render() here — that would rebuild this very input on
+    // every keystroke and reset the cursor to the start, same bug that hit the
+    // Commission fields. Only the results table/count below get refreshed.
+    searchBox.oninput = ()=>{
+      state.contactSearchQuery = searchBox.value;
+      const q = state.contactSearchQuery.toLowerCase().trim();
+      const filtered = q ? db.contacts.filter(c=>{
+        const hay = `${c.last} ${c.first} ${c.company||''} ${c.email||''}`.toLowerCase();
+        return hay.includes(q);
+      }) : db.contacts;
+      const countLabel = document.getElementById('contactsCountLabel');
+      if(countLabel) countLabel.textContent = `${filtered.length} of ${db.contacts.length} contacts`;
+      const tbody = document.getElementById('contactsTableBody');
+      if(tbody) tbody.innerHTML = renderContactsTableRows(filtered);
+      const overflowNote = document.getElementById('contactsOverflowNote');
+      if(overflowNote) overflowNote.innerHTML = filtered.length>300 ? `<div style="padding:10px 14px;font-size:12px;color:var(--ink-soft);">Showing first 300 matches — narrow your search to see more precisely.</div>` : '';
+      wireContactsTableRowHandlers();
+    };
+    if(state.contactSearchFocused){
+      searchBox.focus();
+      const len = searchBox.value.length;
+      searchBox.setSelectionRange(len, len);
+    }
+    searchBox.onfocus = ()=>{ state.contactSearchFocused=true; };
+    searchBox.onblur = ()=>{ state.contactSearchFocused=false; };
+  }
+  const csvInput = document.getElementById('csvImportInput');
+  if(csvInput) csvInput.onchange=(e)=>{ if(e.target.files[0]) importCSV(e.target.files[0]); };
+  const newContactBtn = document.getElementById('newContactBtn');
+  if(newContactBtn) newContactBtn.onclick=()=>{ state.contactPickerOpen={standalone:true}; state.contactPickerQuery=''; render(); };
+  wireContactsTableRowHandlers();
   const selAll = document.getElementById('selectAllContacts');
   if(selAll) selAll.onclick=()=>{
     if(selAll.checked) state.selectedContactIds = db.contacts.map(c=>c.id);
