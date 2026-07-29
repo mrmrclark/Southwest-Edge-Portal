@@ -7009,7 +7009,7 @@ function renderContactPickerPanel(){
   if(!state.contactPickerOpen) return '';
   const standalone = !!state.contactPickerOpen.standalone;
   const q = state.contactPickerQuery.toLowerCase();
-  const matches = q ? db.contacts.filter(c=>(`${c.last} ${c.first}`).toLowerCase().includes(q) || (`${c.first} ${c.last}`).toLowerCase().includes(q)) : [];
+  const matches = q ? db.contacts.filter(c=>contactMatchesQuery(`${c.last} ${c.first}`, q)) : [];
   return `
   <div class="modal-overlay" style="z-index:600;" id="contactPickerOverlay">
     <div class="modal-card">
@@ -7420,6 +7420,17 @@ function renderEditContactModal(){
     }
   };
 }
+// Splits the search text into individual words and requires every one of them to
+// appear somewhere in the contact's info — not as one continuous phrase. This means
+// "Smith John" and "John Smith" both match the same person, commas don't matter, and
+// each additional word typed only ever narrows the results further, never changes
+// the matching logic.
+function contactMatchesQuery(hayString, query){
+  const tokens = query.toLowerCase().replace(/,/g, ' ').split(/\s+/).filter(Boolean);
+  if(!tokens.length) return true;
+  const hay = hayString.toLowerCase();
+  return tokens.every(t => hay.includes(t));
+}
 function renderContactsTableRows(filtered){
   return filtered.slice().sort((a,b)=>a.last.localeCompare(b.last)||a.first.localeCompare(b.first)).slice(0,300).map(c=>`
         <tr data-contactrow="${c.id}" style="cursor:pointer;">
@@ -7432,8 +7443,7 @@ function renderContactsTableRows(filtered){
 function renderContactsMain(){
   const q = (state.contactSearchQuery||'').toLowerCase().trim();
   const filtered = q ? db.contacts.filter(c=>{
-    const hay = `${c.last} ${c.first} ${c.company||''} ${c.email||''}`.toLowerCase();
-    return hay.includes(q);
+    return contactMatchesQuery(`${c.last} ${c.first} ${c.company||''} ${c.email||''}`, q);
   }) : db.contacts;
   return `
   <div style="font-size:12px;color:var(--ink-soft);margin-bottom:8px;">🔒 New contacts you add or import are private to you until attached to a shared Client, Deal, Entry, or Prospect — then whoever can see that record can see the contact too.</div>
@@ -7489,8 +7499,7 @@ function attachContactsHandlers(){
       state.contactSearchQuery = searchBox.value;
       const q = state.contactSearchQuery.toLowerCase().trim();
       const filtered = q ? db.contacts.filter(c=>{
-        const hay = `${c.last} ${c.first} ${c.company||''} ${c.email||''}`.toLowerCase();
-        return hay.includes(q);
+        return contactMatchesQuery(`${c.last} ${c.first} ${c.company||''} ${c.email||''}`, q);
       }) : db.contacts;
       const countLabel = document.getElementById('contactsCountLabel');
       if(countLabel) countLabel.textContent = `${filtered.length} of ${db.contacts.length} contacts`;
@@ -8621,7 +8630,7 @@ render = function(){
       input.oninput=()=>{
         state.contactPickerQuery=input.value;
         const q = state.contactPickerQuery.toLowerCase();
-        const matches = q ? db.contacts.filter(c=>(`${c.last} ${c.first}`).toLowerCase().includes(q) || (`${c.first} ${c.last}`).toLowerCase().includes(q)) : [];
+        const matches = q ? db.contacts.filter(c=>contactMatchesQuery(`${c.last} ${c.first}`, q)) : [];
         const box = document.getElementById('contactSearchSuggestions');
         if(box){
           box.innerHTML = renderContactSearchSuggestions(matches);
