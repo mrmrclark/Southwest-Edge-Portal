@@ -1359,7 +1359,7 @@ const DEFAULT_PROPERTY_CATEGORIES = [
 const LSR_STAGES = [
   {id:'signedLease', name:'Signed Lease', track:'lease', color:'#E8951E'},
   {id:'closedEscrow', name:'Closed Escrow', track:'sale', color:'#E8951E'},
-  {id:'negotiating', name:'Negotiating Lease / PSA', track:'lease', color:'#E0469A'},
+  {id:'negotiating', name:'Negotiating Lease / PSA', track:'both', color:'#E0469A'},
   {id:'inEscrow', name:'In Escrow', track:'sale', color:'#E0469A'},
   {id:'signedLOI', name:'Signed LOI', track:'both', color:'#00A65A'},
   {id:'loi', name:'LOI', track:'both', color:'#00A65A'},
@@ -1379,7 +1379,7 @@ function lsrStagesForTrack(dealType){
   // dropdown options once converted, in hierarchy order (lowest to highest for a <select>).
   // Dead sits at the very end on both tracks — it's not part of the natural progression,
   // it's a terminal "this fell through" state a deal can drop into from anywhere.
-  if(dealType==='sale') return ['prospect','loi','signedLOI','inEscrow','closedEscrow','dead'];
+  if(dealType==='sale') return ['prospect','loi','signedLOI','negotiating','inEscrow','closedEscrow','dead'];
   return ['prospect','loi','signedLOI','negotiating','signedLease','dead'];
 }
 // Baked-in Phoenix retail tenant roster — a standing reference list, not re-uploaded per listing.
@@ -5891,6 +5891,17 @@ function renderMyNotesModal(){
     render();
   };
 }
+function renderSplitRowHtml(row,i){
+  return `
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">
+      <select data-splituser="${i}" style="flex:1;">
+        ${USERS.map(u=>`<option value="${u.id}" ${row.userId===u.id?'selected':''}>${u.name}</option>`).join('')}
+      </select>
+      <input type="number" step="0.01" data-splitpct="${i}" value="${row.pct!=null?row.pct:''}" placeholder="%" style="width:80px;">
+      <span style="font-size:12.5px;color:var(--ink-soft);">%</span>
+      <button class="row-trash" data-removesplitrow="${i}">✕</button>
+    </div>`;
+}
 function renderCommissionModal(){
   const m = state.commissionModal;
   let obj, saveFn;
@@ -5923,18 +5934,10 @@ function renderCommissionModal(){
       <div class="field">
         <label>Splits</label>
         <div id="splitsRows">
-          ${draft.map((row,i)=>`
-            <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">
-              <select data-splituser="${i}" style="flex:1;">
-                ${USERS.map(u=>`<option value="${u.id}" ${row.userId===u.id?'selected':''}>${u.name}</option>`).join('')}
-              </select>
-              <input type="number" step="0.01" data-splitpct="${i}" value="${row.pct!=null?row.pct:''}" placeholder="%" style="width:80px;">
-              <span style="font-size:12.5px;color:var(--ink-soft);">%</span>
-              <button class="row-trash" data-removesplitrow="${i}">✕</button>
-            </div>`).join('')}
+          ${draft.map((row,i)=>renderSplitRowHtml(row,i)).join('')}
         </div>
         <button class="btn secondary sm" data-action="addSplitRow" style="margin-top:4px;">+ Add person</button>
-        <div style="margin-top:8px;font-size:12.5px;font-weight:600;color:${totalOk?'var(--good)':'var(--bad)'};">
+        <div id="splitsTotalLine" style="margin-top:8px;font-size:12.5px;font-weight:600;color:${totalOk?'var(--good)':'var(--bad)'};">
           Total: ${total.toFixed(2)}%${totalOk?' ✓':' — must equal 100%'}
         </div>
       </div>
@@ -5972,7 +5975,13 @@ function renderCommissionModal(){
   });
   overlay.querySelectorAll('[data-splitpct]').forEach(el=>el.oninput=()=>{
     draft[parseInt(el.dataset.splitpct)].pct = el.value;
-    renderPreservingScroll('.modal-body');
+    const newTotal = draft.reduce((s,row)=>s + (parseFloat(row.pct)||0), 0);
+    const newTotalOk = Math.abs(newTotal-100) < 0.02;
+    const totalLine = document.getElementById('splitsTotalLine');
+    if(totalLine){
+      totalLine.style.color = newTotalOk ? 'var(--good)' : 'var(--bad)';
+      totalLine.textContent = `Total: ${newTotal.toFixed(2)}%${newTotalOk?' ✓':' — must equal 100%'}`;
+    }
   });
   overlay.querySelector('[data-action="saveCommission"]').onclick=()=>{
     const currentTotal = draft.reduce((s,row)=>s + (parseFloat(row.pct)||0), 0);
@@ -6963,7 +6972,14 @@ function attachModalHandlers(root){
     const l=db.lists.find(x=>x.id===frame.listId); const c=l && l.clients.find(x=>x.id===frame.clientId);
     const d=c && c.deals.find(x=>x.id===frame.dealId);
     if(!d){ flashToast("Couldn't find this deal."); render(); return; }
-    d.dealType = btn.dataset.dealtypebtn;
+    const newType = btn.dataset.dealtypebtn;
+    if(d.stage && !lsrStagesForTrack(newType).includes(d.stage)){
+      // Only clear the stage if it genuinely doesn't exist on the new track —
+      // e.g. "Negotiating Lease / PSA" or "In Escrow" don't both apply to both
+      // tracks. Anything valid on both (LOI, Signed LOI, Prospect, Dead) stays put.
+      d.stage = '';
+    }
+    d.dealType = newType;
     render();
   }));
   const saveHashtagsBtn = root.querySelector('[data-action="saveHashtags"]'); if(saveHashtagsBtn) saveHashtagsBtn.onclick=safeHandler(()=>{
@@ -7023,6 +7039,8 @@ function attachModalHandlers(root){
     const termEl = document.getElementById('dtTerm'); if(termEl) termEl.oninput=()=>{ d.term = termEl.value; };
     const tiEl = document.getElementById('dtTI'); if(tiEl) tiEl.oninput=()=>{ d.tiAllowance = tiEl.value; };
     const notesEl = document.getElementById('dtNotes'); if(notesEl) notesEl.oninput=()=>{ d.notes = notesEl.value; };
+    const stageEl = document.getElementById('dtStage'); if(stageEl) stageEl.onchange=()=>{ d.stage = stageEl.value; };
+    const categoryEl = document.getElementById('dtCategory'); if(categoryEl) categoryEl.onchange=()=>{ d.categoryId = categoryEl.value; };
   })();
   const openCommBtn = root.querySelector('[data-action="openCommission"]'); if(openCommBtn) openCommBtn.onclick=()=>{
     if(openCommBtn.dataset.kind==='deal'){
