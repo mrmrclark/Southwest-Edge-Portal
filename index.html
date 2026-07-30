@@ -522,6 +522,7 @@ let state = {
   showArchivedClients:false,
   listsCollapsed:false,
   otherAccountsOpen:{},          // {listId: bool} — NOT persisted anymore; always starts closed on a fresh load
+  allDealsAccountOpen:{},        // {clientId: bool} — per-account expand/collapse in the All Deals list, not persisted
   globalSearchQuery:'',
   globalSearchFocused:false,
   quickLinks:null,
@@ -3614,21 +3615,35 @@ function renderAllDealsMain(){
   const isAdmin = state.currentUser.role==='Admin' || state.currentUser.role==='FullAccess';
   const me = state.currentUser.id;
   const isMine = c => c.createdBy===me || (c.authorizedUserIds||[]).includes(me);
+  if(!state.allDealsAccountOpen) state.allDealsAccountOpen = {};
 
-  const renderAccountGroup = g => `
-    <div style="margin:10px 0;">
-      <div style="font-weight:600;font-size:13.5px;color:var(--ink);margin-bottom:4px;">${escapeHtml(g.client.name)}</div>
-      ${g.deals.map(d=>{
-        const stageInfo = LSR_STAGE_MAP[d.stage];
-        return `
-        <div class="row-card" data-opendealdirect="${d.id}" data-client="${g.client.id}" data-listid="${g.listId}" style="margin-bottom:6px;">
-          <div class="row-body">
-            <div class="row-title">${escapeHtml(d.name)}</div>
-            <div class="row-meta">${stageInfo ? `<span class="pill" style="background:${stageInfo.color}22;color:${stageInfo.color};">${stageInfo.name}</span>` : `<span class="pill gray">No stage</span>`}</div>
-          </div>
-        </div>`;
-      }).join('')}
+  // Each account is its own collapsed row, just like the real Clients/Listings list —
+  // clicking it expands to reveal its deals inline, right here, without navigating away.
+  const renderAccountRow = g => {
+    const isOpen = !!state.allDealsAccountOpen[g.client.id];
+    return `
+    <div class="row-card" data-action="toggleAllDealsAccount" data-accountid="${g.client.id}" style="cursor:pointer;margin-bottom:6px;flex-direction:column;align-items:stretch;">
+      <div style="display:flex;align-items:center;">
+        <div class="nav-icon" style="font-size:16px;">${isOpen?'▾':'▸'}</div>
+        <div class="row-body">
+          <div class="row-title">${escapeHtml(g.client.name)}</div>
+          <div class="row-meta"><span>${g.deals.length} deal${g.deals.length===1?'':'s'}</span></div>
+        </div>
+      </div>
+      ${isOpen ? `<div style="margin:8px 0 2px 26px;">
+        ${g.deals.map(d=>{
+          const stageInfo = LSR_STAGE_MAP[d.stage];
+          return `
+          <div class="row-card" data-opendealdirect="${d.id}" data-client="${g.client.id}" data-listid="${g.listId}" style="margin-bottom:6px;">
+            <div class="row-body">
+              <div class="row-title">${escapeHtml(d.name)}</div>
+              <div class="row-meta">${stageInfo ? `<span class="pill" style="background:${stageInfo.color}22;color:${stageInfo.color};">${stageInfo.name}</span>` : `<span class="pill gray">No stage</span>`}</div>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>` : ''}
     </div>`;
+  };
 
   const renderSection = (listId, sectionTitle)=>{
     const sectionRows = rows.filter(r=>r.listId===listId);
@@ -3639,8 +3654,8 @@ function renderAllDealsMain(){
 
     if(!isAdmin){
       // A regular User's own data is already scoped to what they can see —
-      // no split needed, just show it all.
-      return `<div class="section-label" style="margin-top:18px;">${sectionTitle} <span style="font-weight:400;color:var(--ink-soft);">(${sectionRows.length})</span></div>${groups.map(renderAccountGroup).join('')}`;
+      // no mine/others split needed, just show every account as its own row.
+      return `<div class="section-label" style="margin-top:18px;">${sectionTitle} <span style="font-weight:400;color:var(--ink-soft);">(${sectionRows.length})</span></div>${groups.map(renderAccountRow).join('')}`;
     }
 
     const mineGroups = groups.filter(g=>isMine(g.client));
@@ -3649,12 +3664,12 @@ function renderAllDealsMain(){
     const otherOpen = !!(state.otherAccountsOpen && state.otherAccountsOpen[toggleKey]);
     return `
     <div class="section-label" style="margin-top:18px;">${sectionTitle} <span style="font-weight:400;color:var(--ink-soft);">(${sectionRows.length})</span></div>
-    ${mineGroups.map(renderAccountGroup).join('')}
+    ${mineGroups.map(renderAccountRow).join('')}
     ${otherGroups.length ? `
     <div class="nav-section-label" style="cursor:pointer;margin-top:10px;" data-action="toggleOtherAccounts" data-listid="${toggleKey}">
       <span>${otherOpen?'▾':'▸'} Other ${sectionTitle} <span class="tiny" style="color:var(--ink-soft);">(${otherGroups.length} — you're not on ${otherGroups.length===1?'this one':'these'})</span></span>
     </div>
-    ${otherOpen ? otherGroups.map(renderAccountGroup).join('') : ''}
+    ${otherOpen ? otherGroups.map(renderAccountRow).join('') : ''}
     ` : ''}`;
   };
   return renderSection('clients', 'Clients') + renderSection('listings', 'Listings');
@@ -4198,13 +4213,20 @@ function attachShellHandlers(){
     openTodoDetail(el.dataset.openproject);
     render();
   });
-  document.querySelectorAll('[data-opendealdirect]').forEach(el=>el.onclick=()=>{
+  document.querySelectorAll('[data-opendealdirect]').forEach(el=>el.onclick=(ev)=>{
+    ev.stopPropagation();
     const listId = el.dataset.listid || 'clients';
     state.modalStack = [
       {kind:'client', listId, clientId:el.dataset.client, viewMode:'all'},
       {kind:'deal', listId, clientId:el.dataset.client, dealId:el.dataset.opendealdirect}
     ];
     render();
+  });
+  document.querySelectorAll('[data-action="toggleAllDealsAccount"]').forEach(el=>el.onclick=()=>{
+    const id = el.dataset.accountid;
+    if(!state.allDealsAccountOpen) state.allDealsAccountOpen = {};
+    state.allDealsAccountOpen[id] = !state.allDealsAccountOpen[id];
+    renderPreservingScroll('.content');
   });
   document.querySelectorAll('[data-openentry]').forEach(el=>el.onclick=()=>{
     openEntryModal(el.dataset.listid, el.dataset.openentry); render();
