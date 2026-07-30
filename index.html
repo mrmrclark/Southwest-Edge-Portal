@@ -3611,30 +3611,51 @@ function renderAllDealsMain(){
     ? `<div class="empty-state"><div class="big">No matches for "${escapeHtml(searchQ)}".</div><div class="tiny">Try a different search, or clear it to see everything.</div></div>`
     : `<div class="empty-state"><div class="big">No open deals right now.</div><div class="tiny">Closed Escrow and Open for Business deals are left out of this list on purpose.</div></div>`;
 
+  const isAdmin = state.currentUser.role==='Admin' || state.currentUser.role==='FullAccess';
+  const me = state.currentUser.id;
+  const isMine = c => c.createdBy===me || (c.authorizedUserIds||[]).includes(me);
+
+  const renderAccountGroup = g => `
+    <div style="margin:10px 0;">
+      <div style="font-weight:600;font-size:13.5px;color:var(--ink);margin-bottom:4px;">${escapeHtml(g.client.name)}</div>
+      ${g.deals.map(d=>{
+        const stageInfo = LSR_STAGE_MAP[d.stage];
+        return `
+        <div class="row-card" data-opendealdirect="${d.id}" data-client="${g.client.id}" data-listid="${g.listId}" style="margin-bottom:6px;">
+          <div class="row-body">
+            <div class="row-title">${escapeHtml(d.name)}</div>
+            <div class="row-meta">${stageInfo ? `<span class="pill" style="background:${stageInfo.color}22;color:${stageInfo.color};">${stageInfo.name}</span>` : `<span class="pill gray">No stage</span>`}</div>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`;
+
   const renderSection = (listId, sectionTitle)=>{
     const sectionRows = rows.filter(r=>r.listId===listId);
     if(!sectionRows.length) return '';
-    // Group by account, alphabetically, each with its deals listed underneath.
     const byClient = {};
-    sectionRows.forEach(r=>{ (byClient[r.client.id] = byClient[r.client.id] || {client:r.client, deals:[]}).deals.push(r.deal); });
+    sectionRows.forEach(r=>{ (byClient[r.client.id] = byClient[r.client.id] || {client:r.client, listId, deals:[]}).deals.push(r.deal); });
     const groups = Object.values(byClient).sort((a,b)=>a.client.name.localeCompare(b.client.name));
+
+    if(!isAdmin){
+      // A regular User's own data is already scoped to what they can see —
+      // no split needed, just show it all.
+      return `<div class="section-label" style="margin-top:18px;">${sectionTitle} <span style="font-weight:400;color:var(--ink-soft);">(${sectionRows.length})</span></div>${groups.map(renderAccountGroup).join('')}`;
+    }
+
+    const mineGroups = groups.filter(g=>isMine(g.client));
+    const otherGroups = groups.filter(g=>!isMine(g.client));
+    const toggleKey = 'allDeals_'+listId;
+    const otherOpen = !!(state.otherAccountsOpen && state.otherAccountsOpen[toggleKey]);
     return `
     <div class="section-label" style="margin-top:18px;">${sectionTitle} <span style="font-weight:400;color:var(--ink-soft);">(${sectionRows.length})</span></div>
-    ${groups.map(g=>`
-      <div style="margin:10px 0;">
-        <div style="font-weight:600;font-size:13.5px;color:var(--ink);margin-bottom:4px;">${escapeHtml(g.client.name)}</div>
-        ${g.deals.map(d=>{
-          const stageInfo = LSR_STAGE_MAP[d.stage];
-          return `
-          <div class="row-card" data-opendealdirect="${d.id}" data-client="${g.client.id}" data-listid="${listId}" style="margin-bottom:6px;">
-            <div class="row-body">
-              <div class="row-title">${escapeHtml(d.name)}</div>
-              <div class="row-meta">${stageInfo ? `<span class="pill" style="background:${stageInfo.color}22;color:${stageInfo.color};">${stageInfo.name}</span>` : `<span class="pill gray">No stage</span>`}</div>
-            </div>
-          </div>`;
-        }).join('')}
-      </div>`).join('')}
-    `;
+    ${mineGroups.map(renderAccountGroup).join('')}
+    ${otherGroups.length ? `
+    <div class="nav-section-label" style="cursor:pointer;margin-top:10px;" data-action="toggleOtherAccounts" data-listid="${toggleKey}">
+      <span>${otherOpen?'▾':'▸'} Other ${sectionTitle} <span class="tiny" style="color:var(--ink-soft);">(${otherGroups.length} — you're not on ${otherGroups.length===1?'this one':'these'})</span></span>
+    </div>
+    ${otherOpen ? otherGroups.map(renderAccountGroup).join('') : ''}
+    ` : ''}`;
   };
   return renderSection('clients', 'Clients') + renderSection('listings', 'Listings');
 }
