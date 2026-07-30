@@ -40,6 +40,14 @@ self.addEventListener('fetch', (event) => {
   // always just go straight to the network untouched.
   if (event.request.method !== 'GET') return;
 
+  // Only ever intervene for this app's own files (HTML, JS, CSS, images).
+  // Anything cross-origin — most importantly every call to Supabase's own
+  // API (auth, database, storage) — must pass through completely untouched.
+  // Intercepting and re-caching cross-origin responses is unreliable across
+  // browsers and was very likely the cause of session restore silently
+  // failing on some mobile browsers.
+  if (new URL(event.request.url).origin !== self.location.origin) return;
+
   event.respondWith(
     (async () => {
       try {

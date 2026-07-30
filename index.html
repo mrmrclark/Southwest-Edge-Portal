@@ -9027,6 +9027,7 @@ function dateAwareReviver(key, value){
 function saveAppState(){
   try{
     const snapshot = {
+      mainView: state.mainView,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot, dateAwareReplacer));
   } catch(e){ /* private-browsing mode, storage full, etc. — fail quietly, app still works */ }
@@ -9042,6 +9043,7 @@ function loadAppState(){
     // (Phase 2+). Restoring them from this old local cache was actively harmful:
     // it could overwrite fresh data with a stale snapshot from before this app had
     // a real backend. Only things Supabase doesn't manage yet stay local.
+    if(saved.mainView) state.mainView = saved.mainView;
     appStateWasLoaded = true;
   } catch(e){ /* corrupted/old save shape — just fall back to the seed data */ }
 }
@@ -9058,30 +9060,37 @@ render();
     // Directory additions must land BEFORE the session check below — otherwise
     // someone admitted since this code was last deployed, opening the app on a
     // device that's never seen them, would fail to match against USERS here.
-    if(await fetchDirectoryAdditions()) render();
+    // Wrapped separately: if this one thing fails (e.g. a flaky connection),
+    // it must never prevent the actual session restore below from running.
+    try{ if(await fetchDirectoryAdditions()) render(); }
+    catch(e){ console.error('Directory additions check failed (continuing anyway):', e); }
+
     const { data: { session } } = await supabaseClient.auth.getSession();
-    if(session && session.user){
-      const profile = await fetchMyProfile(session.user.id);
-      if(profile){
-        await fetchAllProfilesIntoUsers();
-        const u = USERS.find(x=>x.email.toLowerCase()===profile.email.toLowerCase());
-        if(u){
-          u.authId = profile.id;
-          if(!u.emailClient) u.emailClient = profile.email_client;
-          if(profile.widget_order) state.widgetOrder = profile.widget_order;
+    if(!session || !session.user) return;
+
+    const profile = await fetchMyProfile(session.user.id);
+    if(!profile) return;
+
+    await fetchAllProfilesIntoUsers();
+    const u = USERS.find(x=>x.email.toLowerCase()===profile.email.toLowerCase());
+    if(!u) return;
+
+    u.authId = profile.id;
+    if(!u.emailClient) u.emailClient = profile.email_client;
+    if(profile.widget_order) state.widgetOrder = profile.widget_order;
     if(profile.sidebar_lists_order && profile.sidebar_lists_order.length) sidebarListsOrder = profile.sidebar_lists_order;
-          u.notesList = await fetchPersonalNotes(profile.id);
-          if(u.emailClient){
-            state.currentUser = u;
-            state.screen = 'app';
-            if(!appStateWasLoaded) seedAll();
-            await fetchAllAppDataFromSupabase();
-            checkTodoDeepLink();
-            render();
-          }
-        }
-      }
-    }
+    try{ u.notesList = await fetchPersonalNotes(profile.id); }
+    catch(e){ console.error('Fetching personal notes failed (continuing anyway):', e); u.notesList = u.notesList || []; }
+
+    // A session and a matching profile is genuinely enough to let someone back in —
+    // no email client on file yet shouldn't be able to strand a real, valid login
+    // on the sign-in screen with no explanation.
+    state.currentUser = u;
+    state.screen = 'app';
+    if(!appStateWasLoaded) seedAll();
+    await fetchAllAppDataFromSupabase();
+    checkTodoDeepLink();
+    render();
   } catch(e){ console.error('Session check failed:', e); }
 })();
 
