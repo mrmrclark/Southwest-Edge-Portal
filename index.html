@@ -3731,30 +3731,40 @@ function renderProjectsListMain(){
 }
 function renderCAStatusMain(){
   const clientsList = db.lists.find(x=>x.id==='clients');
-  const rows = [];
+  let rows = [];
   clientsList.clients.forEach(c=>{
     c.deals.forEach(d=>{
       const caExecuted = d.caExecuted!==undefined ? d.caExecuted : false;
       rows.push({client:c, deal:d, caExecuted});
     });
   });
-  const outstanding = rows.filter(r=>!r.caExecuted);
-  const executed = rows.filter(r=>r.caExecuted);
-  const renderGroup = (title, items, color)=>{
-    if(!items.length) return `<div class="section-label" style="color:${color};">${title} (0)</div><div class="empty-state" style="padding:14px;"><div class="tiny">Nothing here.</div></div>`;
-    return `<div class="section-label" style="color:${color};">${title} (${items.length})</div>` + items.map(r=>`
-      <div class="row-card" data-opendealdirect="${r.deal.id}" data-client="${r.client.id}">
-        <div class="nav-icon" style="font-size:18px;">📄</div>
-        <div class="row-body">
-          <div class="row-title">${escapeHtml(r.client.name)} — ${escapeHtml(r.deal.name)}</div>
-          <div class="row-meta"><span>${r.deal.dueDate? fmtDate(r.deal.dueDate):'No date'}</span></div>
-        </div>
-      </div>`).join('');
-  };
+  const searchQ = (state.listSearchQuery||'').trim();
+  if(searchQ) rows = rows.filter(r=>matchesSearchTokens(`${r.client.name} ${r.deal.name}`, searchQ));
+  if(!rows.length) return searchQ
+    ? `<div class="empty-state"><div class="big">No matches for "${escapeHtml(searchQ)}".</div><div class="tiny">Try a different search, or clear it to see everything.</div></div>`
+    : `<div class="empty-state"><div class="big">Nothing here.</div></div>`;
+
+  const byClient = {};
+  rows.forEach(r=>{ (byClient[r.client.id] = byClient[r.client.id] || {client:r.client, rows:[]}).rows.push(r); });
+  const groups = Object.values(byClient).sort((a,b)=>a.client.name.localeCompare(b.client.name));
+  const outstandingTotal = rows.filter(r=>!r.caExecuted).length;
+
   return `
-    <p style="font-size:12.5px;color:var(--ink-soft);margin-top:0;">Commission Agreement status across every Client deal. Listings aren't shown here — they're always covered by the property's Exclusive Listing Agreement.</p>
-    ${renderGroup('CA Outstanding', outstanding, 'var(--bad)')}
-    ${renderGroup('CA Executed', executed, 'var(--good)')}
+    <p style="font-size:12.5px;color:var(--ink-soft);margin-top:0;">Commission Agreement status across every Client deal, grouped the same way the Clients view is. Listings aren't shown here — they're always covered by the property's Exclusive Listing Agreement instead.</p>
+    <div class="section-label">${outstandingTotal} Outstanding of ${rows.length} total</div>
+    ${groups.map(g=>`
+      <div style="margin:10px 0;">
+        <div style="font-weight:600;font-size:13.5px;color:var(--ink);margin-bottom:4px;">${escapeHtml(g.client.name)}</div>
+        ${g.rows.map(r=>`
+          <div class="row-card" data-opendealdirect="${r.deal.id}" data-client="${r.client.id}" data-listid="clients" style="margin-bottom:6px;">
+            <div class="nav-icon" style="font-size:18px;">📄</div>
+            <div class="row-body">
+              <div class="row-title">${escapeHtml(r.deal.name)}</div>
+              <div class="row-meta"><span>${r.deal.dueDate? fmtDate(r.deal.dueDate):'No date'}</span></div>
+            </div>
+            <span class="pill" style="background:${r.caExecuted?'var(--good)':'var(--bad)'}22;color:${r.caExecuted?'var(--good)':'var(--bad)'};flex-shrink:0;">${r.caExecuted?'Executed':'Outstanding'}</span>
+          </div>`).join('')}
+      </div>`).join('')}
   `;
 }
 function renderArchivedMain(){
@@ -3957,12 +3967,13 @@ function renderListMain(listId){
       </div>`;
     };
     const byName = (a,b)=>a.name.localeCompare(b.name);
+    const debugLine = `<div style="background:#fffbe6;border:1px solid #e0c040;padding:8px 12px;margin-bottom:10px;font-size:12px;font-family:monospace;">🔧 TEMP DEBUG — role: "${state.currentUser.role}" | total clients: ${l.clients.length} | createdBy match: ${l.clients.filter(c=>c.createdBy===state.currentUser.id).length} | authorizedUserIds match: ${l.clients.filter(c=>(c.authorizedUserIds||[]).includes(state.currentUser.id)).length}</div>`;
     if(state.currentUser.role==='Admin' || state.currentUser.role==='FullAccess'){
       const me = state.currentUser.id;
       const mine = l.clients.filter(c=>c.createdBy===me || (c.authorizedUserIds||[]).includes(me)).sort(byName);
       const others = l.clients.filter(c=>!(c.createdBy===me || (c.authorizedUserIds||[]).includes(me))).sort(byName);
       const otherOpen = !!(state.otherAccountsOpen && state.otherAccountsOpen[l.id]);
-      return addBtn + mine.map(renderRow).join('') +
+      return debugLine + addBtn + mine.map(renderRow).join('') +
         (others.length ? `
         <div class="nav-section-label" style="cursor:pointer;margin-top:10px;" data-action="toggleOtherAccounts" data-listid="${l.id}">
           <span>${otherOpen?'▾':'▸'} Other ${l.name} <span class="tiny" style="color:var(--ink-soft);">(${others.length} — you're not on ${others.length===1?'this one':'these'})</span></span>
@@ -3970,7 +3981,7 @@ function renderListMain(listId){
         ${otherOpen ? others.map(renderRow).join('') : ''}
         ` : '');
     }
-    return addBtn + l.clients.slice().sort(byName).map(renderRow).join('');
+    return debugLine + addBtn + l.clients.slice().sort(byName).map(renderRow).join('');
   } else {
     const isAdmin = state.currentUser.role==='Admin';
     const me = state.currentUser.id;
