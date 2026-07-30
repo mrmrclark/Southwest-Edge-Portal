@@ -2871,7 +2871,7 @@ function renderSidebar(){
     <div class="nav-section-label">Smart Lists <button class="nav-add" data-action="addSmartList">+</button></div>
     <div class="nav-list">
       ${visibleSmarts.map(sl=>{
-        let items = sl.id==='activeDeals' ? activeDealsClients() : (sl.id==='allDeals' ? allDealsList() : (sl.id==='caStatus' ? caOutstandingCount() : (smartListTodos(sl.id) ? smartListTodos(sl.id).filter(visibleTodo) : [])));
+        let items = sl.id==='activeDeals' ? activeDealsClients() : (sl.id==='allDeals' ? allDealsList().filter(r=>r.client.createdBy===state.currentUser.id || (r.client.authorizedUserIds||[]).includes(state.currentUser.id)) : (sl.id==='caStatus' ? caOutstandingCount() : (smartListTodos(sl.id) ? smartListTodos(sl.id).filter(visibleTodo) : [])));
         if((sl.id==='week' || sl.id==='month') && state.todoView!=='team'){
           // Match exactly what clicking into this list actually shows: by default that's
           // narrowed to "assigned to me" only, not everything in my broader sphere — the
@@ -3606,44 +3606,17 @@ function allDealsList(){
 }
 function renderAllDealsMain(){
   let rows = allDealsList();
+  const me = state.currentUser.id;
+  const isMine = c => c.createdBy===me || (c.authorizedUserIds||[]).includes(me);
+  // Only your own deals — Admin/Full Access no longer see everyone else's here at all.
+  // Anything else is already visible elsewhere (the Clients/Listings "Other" sections).
+  rows = rows.filter(r=>isMine(r.client));
+
   const searchQ = (state.listSearchQuery||'').trim();
   if(searchQ) rows = rows.filter(r=>matchesSearchTokens(`${r.deal.name} ${r.client.name}`, searchQ));
   if(!rows.length) return searchQ
     ? `<div class="empty-state"><div class="big">No matches for "${escapeHtml(searchQ)}".</div><div class="tiny">Try a different search, or clear it to see everything.</div></div>`
-    : `<div class="empty-state"><div class="big">No open deals right now.</div><div class="tiny">Closed Escrow and Open for Business deals are left out of this list on purpose.</div></div>`;
-
-  const isAdmin = state.currentUser.role==='Admin' || state.currentUser.role==='FullAccess';
-  const me = state.currentUser.id;
-  const isMine = c => c.createdBy===me || (c.authorizedUserIds||[]).includes(me);
-  if(!state.allDealsAccountOpen) state.allDealsAccountOpen = {};
-
-  // Each account is its own collapsed row, just like the real Clients/Listings list —
-  // clicking it expands to reveal its deals inline, right here, without navigating away.
-  const renderAccountRow = g => {
-    const isOpen = !!state.allDealsAccountOpen[g.client.id];
-    return `
-    <div class="row-card" data-action="toggleAllDealsAccount" data-accountid="${g.client.id}" style="cursor:pointer;margin-bottom:6px;flex-direction:column;align-items:stretch;">
-      <div style="display:flex;align-items:center;">
-        <div class="nav-icon" style="font-size:16px;">${isOpen?'▾':'▸'}</div>
-        <div class="row-body">
-          <div class="row-title">${escapeHtml(g.client.name)}</div>
-          <div class="row-meta"><span>${g.deals.length} deal${g.deals.length===1?'':'s'}</span></div>
-        </div>
-      </div>
-      ${isOpen ? `<div style="margin:8px 0 2px 26px;">
-        ${g.deals.map(d=>{
-          const stageInfo = LSR_STAGE_MAP[d.stage];
-          return `
-          <div class="row-card" data-opendealdirect="${d.id}" data-client="${g.client.id}" data-listid="${g.listId}" style="margin-bottom:6px;">
-            <div class="row-body">
-              <div class="row-title">${escapeHtml(d.name)}</div>
-              <div class="row-meta">${stageInfo ? `<span class="pill" style="background:${stageInfo.color}22;color:${stageInfo.color};">${stageInfo.name}</span>` : `<span class="pill gray">No stage</span>`}</div>
-            </div>
-          </div>`;
-        }).join('')}
-      </div>` : ''}
-    </div>`;
-  };
+    : `<div class="empty-state"><div class="big">No open deals of yours right now.</div><div class="tiny">Closed Escrow and Open for Business deals are left out of this list on purpose.</div></div>`;
 
   const renderSection = (listId, sectionTitle)=>{
     const sectionRows = rows.filter(r=>r.listId===listId);
@@ -3651,26 +3624,23 @@ function renderAllDealsMain(){
     const byClient = {};
     sectionRows.forEach(r=>{ (byClient[r.client.id] = byClient[r.client.id] || {client:r.client, listId, deals:[]}).deals.push(r.deal); });
     const groups = Object.values(byClient).sort((a,b)=>a.client.name.localeCompare(b.client.name));
-
-    if(!isAdmin){
-      // A regular User's own data is already scoped to what they can see —
-      // no mine/others split needed, just show every account as its own row.
-      return `<div class="section-label" style="margin-top:18px;">${sectionTitle} <span style="font-weight:400;color:var(--ink-soft);">(${sectionRows.length})</span></div>${groups.map(renderAccountRow).join('')}`;
-    }
-
-    const mineGroups = groups.filter(g=>isMine(g.client));
-    const otherGroups = groups.filter(g=>!isMine(g.client));
-    const toggleKey = 'allDeals_'+listId;
-    const otherOpen = !!(state.otherAccountsOpen && state.otherAccountsOpen[toggleKey]);
     return `
     <div class="section-label" style="margin-top:18px;">${sectionTitle} <span style="font-weight:400;color:var(--ink-soft);">(${sectionRows.length})</span></div>
-    ${mineGroups.map(renderAccountRow).join('')}
-    ${otherGroups.length ? `
-    <div class="nav-section-label" style="cursor:pointer;margin-top:10px;" data-action="toggleOtherAccounts" data-listid="${toggleKey}">
-      <span>${otherOpen?'▾':'▸'} Other ${sectionTitle} <span class="tiny" style="color:var(--ink-soft);">(${otherGroups.length} — you're not on ${otherGroups.length===1?'this one':'these'})</span></span>
-    </div>
-    ${otherOpen ? otherGroups.map(renderAccountRow).join('') : ''}
-    ` : ''}`;
+    ${groups.map(g=>`
+      <div style="margin:10px 0;">
+        <div style="font-weight:600;font-size:13.5px;color:var(--ink);margin-bottom:4px;">${escapeHtml(g.client.name)}</div>
+        ${g.deals.map(d=>{
+          const stageInfo = LSR_STAGE_MAP[d.stage];
+          return `
+          <div class="row-card" data-opendealdirect="${d.id}" data-client="${g.client.id}" data-listid="${listId}" style="margin-bottom:6px;">
+            <div class="row-body">
+              <div class="row-title">${escapeHtml(d.name)}</div>
+              <div class="row-meta">${stageInfo ? `<span class="pill" style="background:${stageInfo.color}22;color:${stageInfo.color};">${stageInfo.name}</span>` : `<span class="pill gray">No stage</span>`}</div>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>`).join('')}
+    `;
   };
   return renderSection('clients', 'Clients') + renderSection('listings', 'Listings');
 }
