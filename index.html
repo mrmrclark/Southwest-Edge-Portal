@@ -2109,7 +2109,6 @@ const SMART_LIST_DEFAULTS = [
   {id:'completed', name:'Completed', icon:'✅'},
   {id:'archived', name:'Archived', icon:'🗄️'},
   {id:'everything', name:'Everything', icon:'📚'},
-  {id:'activeDeals', name:'Active Deals', icon:'⭐'},
   {id:'allDeals', name:'All Deals', icon:'📋'},
   {id:'caStatus', name:'CA Status', icon:'📄'},
 ];
@@ -2871,7 +2870,7 @@ function renderSidebar(){
     <div class="nav-section-label">Smart Lists <button class="nav-add" data-action="addSmartList">+</button></div>
     <div class="nav-list">
       ${visibleSmarts.map(sl=>{
-        let items = sl.id==='activeDeals' ? activeDealsClients() : (sl.id==='allDeals' ? allDealsList().filter(r=>r.client.createdBy===state.currentUser.id || (r.client.authorizedUserIds||[]).includes(state.currentUser.id)) : (sl.id==='caStatus' ? caOutstandingCount() : (smartListTodos(sl.id) ? smartListTodos(sl.id).filter(visibleTodo) : [])));
+        let items = sl.id==='allDeals' ? allDealsList().filter(r=>r.client.createdBy===state.currentUser.id || (r.client.authorizedUserIds||[]).includes(state.currentUser.id)) : (sl.id==='caStatus' ? caOutstandingCount() : (smartListTodos(sl.id) ? smartListTodos(sl.id).filter(visibleTodo) : []));
         if((sl.id==='week' || sl.id==='month') && state.todoView!=='team'){
           // Match exactly what clicking into this list actually shows: by default that's
           // narrowed to "assigned to me" only, not everything in my broader sphere — the
@@ -3634,7 +3633,7 @@ function renderAllDealsMain(){
         <div style="display:flex;align-items:center;">
           <div class="nav-icon" style="font-size:16px;">${isOpen?'▾':'▸'}</div>
           <div class="row-body">
-            <div class="row-title">${escapeHtml(g.client.name)}</div>
+            <div class="row-title" data-openaccountdirect="${g.client.id}" data-listid="${listId}" style="cursor:pointer;text-decoration:underline;text-decoration-color:transparent;" onmouseover="this.style.textDecorationColor='currentColor'" onmouseout="this.style.textDecorationColor='transparent'">${escapeHtml(g.client.name)}</div>
             <div class="row-meta"><span>${g.deals.length} deal${g.deals.length===1?'':'s'}</span></div>
           </div>
         </div>
@@ -3684,7 +3683,6 @@ function renderMainContent(){
   if(state.mainView.type==='list') return renderListMain(state.mainView.id);
   // smart list
   const id = state.mainView.id;
-  if(id==='activeDeals') return renderActiveDealsMain();
   if(id==='allDeals') return renderAllDealsMain();
   if(id==='archived') return renderArchivedMain();
   if(id==='caStatus') return renderCAStatusMain();
@@ -4209,6 +4207,11 @@ function attachShellHandlers(){
     if(!state.allDealsAccountOpen) state.allDealsAccountOpen = {};
     state.allDealsAccountOpen[id] = !state.allDealsAccountOpen[id];
     renderPreservingScroll('.content');
+  });
+  document.querySelectorAll('[data-openaccountdirect]').forEach(el=>el.onclick=(ev)=>{
+    ev.stopPropagation();
+    openClientModal(el.dataset.listid, el.dataset.openaccountdirect, 'all');
+    render();
   });
   document.querySelectorAll('[data-openentry]').forEach(el=>el.onclick=()=>{
     openEntryModal(el.dataset.listid, el.dataset.openentry); render();
