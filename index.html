@@ -3618,6 +3618,7 @@ function renderAllDealsMain(){
     ? `<div class="empty-state"><div class="big">No matches for "${escapeHtml(searchQ)}".</div><div class="tiny">Try a different search, or clear it to see everything.</div></div>`
     : `<div class="empty-state"><div class="big">No open deals of yours right now.</div><div class="tiny">Closed Escrow and Open for Business deals are left out of this list on purpose.</div></div>`;
 
+  if(!state.allDealsAccountOpen) state.allDealsAccountOpen = {};
   const renderSection = (listId, sectionTitle)=>{
     const sectionRows = rows.filter(r=>r.listId===listId);
     if(!sectionRows.length) return '';
@@ -3626,20 +3627,31 @@ function renderAllDealsMain(){
     const groups = Object.values(byClient).sort((a,b)=>a.client.name.localeCompare(b.client.name));
     return `
     <div class="section-label" style="margin-top:18px;">${sectionTitle} <span style="font-weight:400;color:var(--ink-soft);">(${sectionRows.length})</span></div>
-    ${groups.map(g=>`
-      <div style="margin:10px 0;">
-        <div style="font-weight:600;font-size:13.5px;color:var(--ink);margin-bottom:4px;">${escapeHtml(g.client.name)}</div>
-        ${g.deals.map(d=>{
-          const stageInfo = LSR_STAGE_MAP[d.stage];
-          return `
-          <div class="row-card" data-opendealdirect="${d.id}" data-client="${g.client.id}" data-listid="${listId}" style="margin-bottom:6px;">
-            <div class="row-body">
-              <div class="row-title">${escapeHtml(d.name)}</div>
-              <div class="row-meta">${stageInfo ? `<span class="pill" style="background:${stageInfo.color}22;color:${stageInfo.color};">${stageInfo.name}</span>` : `<span class="pill gray">No stage</span>`}</div>
-            </div>
-          </div>`;
-        }).join('')}
-      </div>`).join('')}
+    ${groups.map(g=>{
+      const isOpen = !!state.allDealsAccountOpen[g.client.id];
+      return `
+      <div class="row-card" data-action="toggleAllDealsAccount" data-accountid="${g.client.id}" style="cursor:pointer;margin-bottom:6px;flex-direction:column;align-items:stretch;">
+        <div style="display:flex;align-items:center;">
+          <div class="nav-icon" style="font-size:16px;">${isOpen?'▾':'▸'}</div>
+          <div class="row-body">
+            <div class="row-title">${escapeHtml(g.client.name)}</div>
+            <div class="row-meta"><span>${g.deals.length} deal${g.deals.length===1?'':'s'}</span></div>
+          </div>
+        </div>
+        ${isOpen ? `<div style="margin:8px 0 2px 26px;">
+          ${g.deals.map(d=>{
+            const stageInfo = LSR_STAGE_MAP[d.stage];
+            return `
+            <div class="row-card" data-opendealdirect="${d.id}" data-client="${g.client.id}" data-listid="${listId}" style="margin-bottom:6px;">
+              <div class="row-body">
+                <div class="row-title">${escapeHtml(d.name)}</div>
+                <div class="row-meta">${stageInfo ? `<span class="pill" style="background:${stageInfo.color}22;color:${stageInfo.color};">${stageInfo.name}</span>` : `<span class="pill gray">No stage</span>`}</div>
+              </div>
+            </div>`;
+          }).join('')}
+        </div>` : ''}
+      </div>`;
+    }).join('')}
     `;
   };
   return renderSection('clients', 'Clients') + renderSection('listings', 'Listings');
