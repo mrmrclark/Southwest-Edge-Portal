@@ -521,7 +521,7 @@ let state = {
   moveDealPicker:null,           // {dealId, sourceListId, sourceClientId, step:'client'|'createNew', query}
   showArchivedClients:false,
   listsCollapsed:false,
-  otherAccountsOpen:{},          // {listId: bool} — persisted, remembers last view per Michael's request
+  otherAccountsOpen:{},          // {listId: bool} — NOT persisted anymore; always starts closed on a fresh load
   globalSearchQuery:'',
   globalSearchFocused:false,
   quickLinks:null,
@@ -3967,13 +3967,12 @@ function renderListMain(listId){
       </div>`;
     };
     const byName = (a,b)=>a.name.localeCompare(b.name);
-    const debugLine = `<div style="background:#fffbe6;border:1px solid #e0c040;padding:8px 12px;margin-bottom:10px;font-size:12px;font-family:monospace;">🔧 TEMP DEBUG — role: "${state.currentUser.role}" | total clients: ${l.clients.length} | createdBy match: ${l.clients.filter(c=>c.createdBy===state.currentUser.id).length} | authorizedUserIds match: ${l.clients.filter(c=>(c.authorizedUserIds||[]).includes(state.currentUser.id)).length}</div>`;
     if(state.currentUser.role==='Admin' || state.currentUser.role==='FullAccess'){
       const me = state.currentUser.id;
       const mine = l.clients.filter(c=>c.createdBy===me || (c.authorizedUserIds||[]).includes(me)).sort(byName);
       const others = l.clients.filter(c=>!(c.createdBy===me || (c.authorizedUserIds||[]).includes(me))).sort(byName);
       const otherOpen = !!(state.otherAccountsOpen && state.otherAccountsOpen[l.id]);
-      return debugLine + addBtn + mine.map(renderRow).join('') +
+      return addBtn + mine.map(renderRow).join('') +
         (others.length ? `
         <div class="nav-section-label" style="cursor:pointer;margin-top:10px;" data-action="toggleOtherAccounts" data-listid="${l.id}">
           <span>${otherOpen?'▾':'▸'} Other ${l.name} <span class="tiny" style="color:var(--ink-soft);">(${others.length} — you're not on ${others.length===1?'this one':'these'})</span></span>
@@ -3981,7 +3980,7 @@ function renderListMain(listId){
         ${otherOpen ? others.map(renderRow).join('') : ''}
         ` : '');
     }
-    return debugLine + addBtn + l.clients.slice().sort(byName).map(renderRow).join('');
+    return addBtn + l.clients.slice().sort(byName).map(renderRow).join('');
   } else {
     const isAdmin = state.currentUser.role==='Admin';
     const me = state.currentUser.id;
@@ -8982,7 +8981,6 @@ function dateAwareReviver(key, value){
 function saveAppState(){
   try{
     const snapshot = {
-      otherAccountsOpen: state.otherAccountsOpen,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot, dateAwareReplacer));
   } catch(e){ /* private-browsing mode, storage full, etc. — fail quietly, app still works */ }
@@ -8998,7 +8996,6 @@ function loadAppState(){
     // (Phase 2+). Restoring them from this old local cache was actively harmful:
     // it could overwrite fresh data with a stale snapshot from before this app had
     // a real backend. Only things Supabase doesn't manage yet stay local.
-    if(saved.otherAccountsOpen) state.otherAccountsOpen = saved.otherAccountsOpen;
     appStateWasLoaded = true;
   } catch(e){ /* corrupted/old save shape — just fall back to the seed data */ }
 }
