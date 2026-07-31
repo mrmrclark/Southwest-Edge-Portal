@@ -523,6 +523,8 @@ let state = {
   listsCollapsed:false,
   otherAccountsOpen:{},          // {listId: bool} — NOT persisted anymore; always starts closed on a fresh load
   allDealsAccountOpen:{},        // {clientId: bool} — per-account expand/collapse in the All Deals list, not persisted
+  mustRespondTodoId:null,        // set when a to-do was opened via a reminder link — can't close until a real response is given
+  mustRespondSnapshot:null,      // {status, notes, dueDate, completed} captured the moment the gate activates
   globalSearchQuery:'',
   globalSearchFocused:false,
   quickLinks:null,
@@ -1081,6 +1083,7 @@ function todoRowToLocal(r){
     listId:r.list_id, clientId:r.client_id, dealId:r.deal_id, entryId:r.entry_id, projectId:r.project_id, attachments:[],
     checklistItems: r.checklist_items || [],
     status: r.status || '',
+    reminderPending: !!r.reminder_pending,
     createdAt: r.created_at ? new Date(r.created_at) : null,
     completedAt: r.completed_at ? new Date(r.completed_at) : null,
     archivedAt: r.archived_at ? new Date(r.archived_at) : undefined};
@@ -1092,6 +1095,7 @@ function todoLocalToRow(t){
     list_id:t.listId||null, client_id:t.clientId||null, deal_id:t.dealId||null, entry_id:t.entryId||null, project_id:t.projectId||null,
     checklist_items: t.checklistItems || [],
     status: t.status || null,
+    reminder_pending: !!t.reminderPending,
     completed_at: t.completedAt ? t.completedAt.toISOString() : null,
     skip_assignment_notification: !!t.skipAssignmentNotification,
     archived_at: t.archivedAt ? t.archivedAt.toISOString() : null};
@@ -4994,14 +4998,39 @@ function openTodoDetail(id){
 // Deep-link support: digest emails link to a specific to-do via ?todo=<id>. Call this
 // once, right after app data has actually loaded (db.todos populated), so the to-do
 // exists to be found. Cleans the URL either way so a refresh doesn't repeat this.
+function attemptCloseTodoDetail(td){
+  if(state.mustRespondTodoId === td.id){
+    const snap = state.mustRespondSnapshot;
+    const changed = td.status !== snap.status || td.notes !== snap.notes || td.completed !== snap.completed ||
+      (td.dueDate ? +td.dueDate : null) !== snap.dueDate;
+    if(!changed){
+      flashToast("Before closing this, please update the status, add a note, mark it complete, or change the due date — whoever sent this reminder is waiting on an update.");
+      return false;
+    }
+    td.reminderPending = false;
+    supaUpdateTodo(td);
+    state.mustRespondTodoId = null;
+    state.mustRespondSnapshot = null;
+  }
+  state.todoDetailModal = null;
+  return true;
+}
 function checkTodoDeepLink(){
   const params = new URLSearchParams(window.location.search);
   const todoId = params.get('todo');
   if(!todoId) return;
+  const isReminder = params.get('reminder')==='1';
   history.replaceState(null, '', window.location.pathname);
   const td = db.todos.find(x=>x.id===todoId);
   if(td){
     openTodoDetail(todoId);
+    if(isReminder && td.reminderPending && td.assignedTo===state.currentUser.id){
+      state.mustRespondTodoId = td.id;
+      state.mustRespondSnapshot = {
+        status: td.status, notes: td.notes, completed: td.completed,
+        dueDate: td.dueDate ? +td.dueDate : null,
+      };
+    }
   } else {
     flashToast("That to-do couldn't be found — it may have been completed, moved, or removed since the email was sent.");
   }
@@ -5256,6 +5285,7 @@ function renderTodoDetailModal(){
       </div>
     </div>
     <div class="modal-body">
+      ${(state.mustRespondTodoId===td.id) ? `<div style="background:#fffbe6;border:1px solid #e0c040;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:13px;">⏰ <b>${USERS.find(u=>u.id===td.createdBy).name}</b> asked for a quick update on this. Change the Status, add a Note, mark it complete, or change the due date — then you're all set.</div>` : ''}
       <div class="type-toggle">
         <button class="${td.type==='task'?'active':''}" data-dettype="task">Task</button>
         <button class="${td.type==='project'?'active':''}" data-dettype="project">Project</button>
@@ -5316,7 +5346,11 @@ function renderTodoDetailModal(){
     </div>
     <div class="modal-foot" style="justify-content:space-between;">
       <button class="btn danger" data-action="detDelete">🗑️ Delete</button>
-      <div style="display:flex;gap:8px;">
+      <div style="display:flex;gap:8px;align-items:center;">
+        ${(td.createdBy===state.currentUser.id && td.assignedTo && td.assignedTo!==td.createdBy) ? `
+          ${td.reminderPending ? `<span class="tiny" style="color:var(--ink-soft);">⏰ Reminder sent — waiting on a response</span>` : ''}
+          <button class="btn secondary" data-action="detSendReminder" ${td.reminderPending?'disabled':''}>🔔 ${td.reminderPending?'Reminder Sent':'Send Reminder'}</button>
+        ` : ''}
         <button class="btn secondary" data-action="detToggleComplete">${td.completed? 'Mark Incomplete':'✓ Mark Complete'}</button>
         <button class="btn" data-action="detSave" id="detSaveBtn">${isForMe? 'Save & Close' : 'Save & Assign'}</button>
       </div>
@@ -5338,7 +5372,7 @@ function renderTodoDetailModal(){
     else if(val==='next week') d = addDays(todayDate(), 7);
     document.getElementById('detDue').value = d ? toLocalDateStr(d) : '';
   });
-  overlay.querySelector('[data-action="closeTodoDetail"]').onclick=()=>{ state.todoDetailModal=null; render(); };
+  overlay.querySelector('[data-action="closeTodoDetail"]').onclick=()=>{ if(attemptCloseTodoDetail(td)) render(); };
   overlay.querySelectorAll('[data-action="addChecklistItem"]').forEach(btn=>btn.onclick=()=>{
     td.checklistItems.push({id:crypto.randomUUID(), text:'', done:false});
     supaUpdateTodo(td);
@@ -5393,12 +5427,21 @@ function renderTodoDetailModal(){
     if(confirm(`Delete "${td.title}"? This can't be undone.`)){ deleteTodo(td.id); render(); }
   };
   overlay.querySelector('[data-action="detToggleComplete"]').onclick=()=>{ td.completed=!td.completed; td.completedAt = td.completed ? new Date() : null; supaUpdateTodo(td); render(); };
+  const sendReminderBtn = overlay.querySelector('[data-action="detSendReminder"]');
+  if(sendReminderBtn) sendReminderBtn.onclick=()=>{
+    if(!confirm(`Send ${USERS.find(u=>u.id===td.assignedTo).name} a reminder to update this to-do? They'll get an email and won't be able to close it without responding.`)) return;
+    td.reminderPending = true;
+    supaUpdateTodo(td);
+    flashToast('Reminder sent.');
+    render();
+  };
   // Live-commit these fields as they're typed, so the checklist add/remove/edit
   // handlers below (which do trigger a full re-render) can never wipe them out.
   const detTitleEl = document.getElementById('detTitle'); if(detTitleEl) detTitleEl.oninput=()=>{ td.title = detTitleEl.value; };
   const detCategoryEl = document.getElementById('detCategory'); if(detCategoryEl) detCategoryEl.oninput=()=>{ td.category = detCategoryEl.value; };
   const detStatusEl = document.getElementById('detStatus'); if(detStatusEl) detStatusEl.oninput=()=>{ td.status = detStatusEl.value; };
   const detNotesEl = document.getElementById('detNotes'); if(detNotesEl) detNotesEl.oninput=()=>{ td.notes = detNotesEl.value; };
+  const detDueEl = document.getElementById('detDue'); if(detDueEl) detDueEl.onchange=()=>{ td.dueDate = detDueEl.value ? new Date(detDueEl.value+'T00:00:00') : null; };
   overlay.querySelectorAll('[data-action="detSave"]').forEach(btn=>btn.onclick=()=>{
     td.title=document.getElementById('detTitle').value.trim()||td.title;
     td.category=document.getElementById('detCategory').value.trim();
@@ -5420,7 +5463,7 @@ function renderTodoDetailModal(){
       }
     }
     td.private=document.getElementById('detPrivate').checked;
-    state.todoDetailModal=null;
+    if(!attemptCloseTodoDetail(td)){ render(); return; }
     supaUpdateTodo(td);
     flashToast('Changes saved.');
     render();
@@ -8979,7 +9022,7 @@ document.addEventListener('keydown', (ev)=>{
   if(state.myNotesOpen){ state.myNotesOpen=false; render(); return; }
   if(state.editContactModal){ state.editContactModal=null; render(); return; }
   if(state.editBrokerModal){ state.editBrokerModal=null; render(); return; }
-  if(state.todoDetailModal){ state.todoDetailModal=null; render(); return; }
+  if(state.todoDetailModal){ const td = db.todos.find(x=>x.id===state.todoDetailModal.id); if(!td || attemptCloseTodoDetail(td)) render(); return; }
   if(state.newTodoModal){ state.newTodoModal=null; render(); return; }
   if(state.newSmartListModal){ state.newSmartListModal=null; render(); return; }
   if(state.importTodosModal){ state.importTodosModal=null; render(); return; }
