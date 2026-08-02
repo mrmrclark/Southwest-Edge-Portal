@@ -136,7 +136,7 @@
   }
 
   /* ---------- CALENDAR VIEW ---------- */
-  .cv-overlay{position:fixed;inset:0;background:rgba(20,14,8,0.5);z-index:150;display:flex;align-items:stretch;justify-content:stretch;}
+  .cv-overlay{position:fixed;inset:0;background:rgba(20,14,8,0.5);z-index:150;display:flex;align-items:stretch;justify-content:stretch;overscroll-behavior-y:contain;}
   .cv-card{background:var(--canvas);width:100vw;height:100vh;border-radius:0;box-shadow:var(--shadow);display:flex;flex-direction:column;overflow:hidden;}
   .cv-head{background:var(--edge);color:#fff;padding:14px 22px;display:flex;align-items:center;gap:14px;}
   .cv-head-title{font-size:19px;font-weight:700;flex:1;}
@@ -358,7 +358,7 @@
   /* ---------- MODALS ---------- */
   .modal-overlay{
     position:fixed;inset:0;background:rgba(20,14,8,0.42);display:flex;align-items:center;justify-content:center;
-    z-index:100;animation:fadeIn .12s ease-out;
+    z-index:100;animation:fadeIn .12s ease-out;overscroll-behavior-y:contain;
   }
   @keyframes fadeIn{from{opacity:0;}to{opacity:1;}}
   .modal-card{
@@ -375,7 +375,7 @@
   .modal-title{font-size:17px;font-weight:600;flex:1;}
   .modal-close{background:rgba(255,255,255,.18);border:none;color:#fff;width:28px;height:28px;border-radius:8px;font-size:14px;}
   .modal-close:hover{background:rgba(255,255,255,.32);}
-  .modal-body{padding:18px 20px;overflow-y:auto;flex:1;}
+  .modal-body{padding:18px 20px;overflow-y:auto;flex:1;overscroll-behavior-y:contain;}
   .modal-foot{padding:12px 20px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end;}
 
   .contact-card{
@@ -4991,8 +4991,8 @@ function bulkCompleteSelected(){
 
 /* ---------------- TODO DETAIL / EDIT MODAL ---------------- */
 function openTodoDetail(id){
-  state.todoDetailModal = {id};
   const td = db.todos.find(x=>x.id===id);
+  state.todoDetailModal = {id, originalAssignedTo: td ? td.assignedTo : null};
   if(td && td.isNew && td.assignedTo===state.currentUser.id) td.isNew=false;
 }
 // Deep-link support: digest emails link to a specific to-do via ?todo=<id>. Call this
@@ -5203,7 +5203,7 @@ function renderMoveTodoPicker(){
     supaUpdateTodo(td);
     state.moveTodoPicker=null;
     flashToast('Moved.');
-    render();
+    renderPreservingScroll('.modal-body');
   });
 }
 // A Checklist is a series of free-form checkable boxes that live only inside this one
@@ -5362,7 +5362,7 @@ function renderTodoDetailModal(){
     if((td.type==='checklist' || td.type==='project') && td.checklistItems.length===0){
       for(let i=0;i<5;i++) td.checklistItems.push({id:crypto.randomUUID(), text:'', done:false});
     }
-    render();
+    renderPreservingScroll('.modal-body');
   });
   overlay.querySelectorAll('[data-detquickdate]').forEach(b=>b.onclick=()=>{
     const val = b.dataset.detquickdate;
@@ -5374,9 +5374,18 @@ function renderTodoDetailModal(){
   });
   overlay.querySelector('[data-action="closeTodoDetail"]').onclick=()=>{ if(attemptCloseTodoDetail(td)) render(); };
   overlay.querySelectorAll('[data-action="addChecklistItem"]').forEach(btn=>btn.onclick=()=>{
-    td.checklistItems.push({id:crypto.randomUUID(), text:'', done:false});
+    const newItem = {id:crypto.randomUUID(), text:'', done:false};
+    td.checklistItems.push(newItem);
     supaUpdateTodo(td);
     renderPreservingScroll('.modal-body');
+    // render() inside renderPreservingScroll runs synchronously, so the new input
+    // already exists in the DOM by the time we get here — focusing it immediately,
+    // in the same tick as the tap, is what makes mobile Safari actually raise the
+    // keyboard. Wrapping this in requestAnimationFrame (as scroll-restore needs)
+    // breaks that connection to the original tap and silently fails on mobile.
+    const els = document.querySelectorAll(`[data-checklistitemtext="${newItem.id}"]`);
+    const newInput = els[els.length-1];
+    if(newInput) newInput.focus();
   });
   overlay.querySelectorAll('[data-checklistitemtext]').forEach(el=>el.onchange=()=>{
     const item = td.checklistItems.find(i=>i.id===el.dataset.checklistitemtext);
@@ -5418,10 +5427,12 @@ function renderTodoDetailModal(){
   };
   const detAssign = document.getElementById('detAssign');
   detAssign.onchange = ()=>{
+    td.assignedTo = detAssign.value;
     const forMe = detAssign.value===state.currentUser.id;
     document.getElementById('detSaveBtn').textContent = forMe? 'Save & Close' : 'Save & Assign';
     document.getElementById('detSaveBtnTop').textContent = forMe? 'Save & Close' : 'Save & Assign';
   };
+  const detPrivateEl = document.getElementById('detPrivate'); if(detPrivateEl) detPrivateEl.onchange=()=>{ td.private = detPrivateEl.checked; };
   wireAttachmentZone(overlay, 'detDropZone', 'detFileInput', ()=>td.attachments, 'det');
   overlay.querySelector('[data-action="detDelete"]').onclick=()=>{
     if(confirm(`Delete "${td.title}"? This can't be undone.`)){ deleteTodo(td.id); render(); }
@@ -5448,15 +5459,15 @@ function renderTodoDetailModal(){
     td.status=document.getElementById('detStatus').value.trim();
     td.dueDate=parseNaturalDate(document.getElementById('detDue').value.trim());
     td.notes=document.getElementById('detNotes').value.trim();
-    const newAssign=document.getElementById('detAssign').value;
-    if(newAssign!==td.assignedTo){
+    const newAssign=td.assignedTo;
+    const originalAssign=state.todoDetailModal.originalAssignedTo;
+    if(newAssign!==originalAssign){
       const targetClientId = td.clientId || (td.dealId ? clientIdForDeal(td.dealId) : null);
       if(newAssign!==state.currentUser.id && targetClientId && !userHasClientAccess(newAssign, targetClientId)){
         const nu = USERS.find(x=>x.id===newAssign);
         const ok = confirm(`${nu.name} doesn't have access to this client yet, so they'll only be able to see this specific to-do — not the rest of the client's deals or info. Assign it to them anyway?`);
-        if(!ok) return;
+        if(!ok){ td.assignedTo = originalAssign; return; }
       }
-      td.assignedTo=newAssign;
       if(newAssign!==state.currentUser.id){
         td.isNew=true;
         flashToast(`Assigned to ${USERS.find(x=>x.id===newAssign).name}.`);
@@ -7510,8 +7521,12 @@ function renderNewTodoModal(){
   overlay.querySelectorAll('[data-action="closeNewTodo"]').forEach(btn=>btn.onclick=()=>{ state.newTodoModal=null; render(); });
   overlay.querySelectorAll('[data-action="addNtChecklistItem"]').forEach(btn=>btn.onclick=()=>{
     if(!m.checklistItems) m.checklistItems=[];
-    m.checklistItems.push({id:crypto.randomUUID(), text:'', done:false});
+    const newItem = {id:crypto.randomUUID(), text:'', done:false};
+    m.checklistItems.push(newItem);
     renderPreservingScroll('.modal-body');
+    const els = document.querySelectorAll(`[data-ntchecklistitemtext="${newItem.id}"]`);
+    const newInput = els[els.length-1];
+    if(newInput) newInput.focus();
   });
   overlay.querySelectorAll('[data-ntchecklistitemtext]').forEach(el=>el.onchange=()=>{
     const item = (m.checklistItems||[]).find(i=>i.id===el.dataset.ntchecklistitemtext);
@@ -8780,12 +8795,19 @@ function flashToast(msg){ state.toast = msg; }
 // position to the top — this saves it beforehand and restores it right after, so opening
 // or closing a section simply reveals/hides content in place instead of jumping the screen.
 function renderPreservingScroll(containerSelector){
-  const scroller = document.querySelector(containerSelector);
+  // querySelectorAll + take the LAST match, not querySelector's first match — when a
+  // modal is nested inside another (e.g. a Project opened from within a Client page),
+  // multiple elements can match the same selector at once. The one the user is
+  // actually scrolled within is always the topmost/innermost one, added to the DOM
+  // most recently — never the outer one underneath it.
+  const matches = document.querySelectorAll(containerSelector);
+  const scroller = matches.length ? matches[matches.length-1] : null;
   const savedScrollTop = scroller ? scroller.scrollTop : null;
   render();
   if(savedScrollTop!==null){
     requestAnimationFrame(()=>{
-      const s = document.querySelector(containerSelector);
+      const s2 = document.querySelectorAll(containerSelector);
+      const s = s2.length ? s2[s2.length-1] : null;
       if(s) s.scrollTop = savedScrollTop;
     });
   }
