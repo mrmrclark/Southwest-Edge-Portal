@@ -2319,6 +2319,7 @@ function render(){
   if(state.pendingUsersModalOpen) renderPendingUsersModal();
   if(state.manageUsersModalOpen) renderManageUsersModal();
   if(state.resetPasswordModalOpen) renderResetPasswordModal();
+  if(state.testCalendarModalOpen) renderTestCalendarModal();
   if(state.pendingDeletionsOpen) renderPendingDeletionsModal();
   if(state.contactImportReview) renderContactImportReviewModal();
   if(state.taskfireImport) renderTaskFireImportModal();
@@ -4081,6 +4082,7 @@ function renderAdminMenu(){
     <div class="admin-item" data-action="adminUsers">👥 Manage Users</div>
     <div class="admin-item" data-action="adminTimes">⏱️ Email Send Times</div>
     <div class="admin-item" data-action="adminReset">🔑 Reset a Password</div>
+    <div class="admin-item" data-action="adminTestCalendar">🗓️ Test Calendar Connection (TEMP)</div>
   </div>`;
 }
 
@@ -4381,7 +4383,7 @@ function attachShellHandlers(){
     flashToast(`${name} added to ${l.name}.`);
     render();
   });
-  ['adminPending','adminFullTeam','adminImportTodos','adminImportTaskFire','adminImportMaps','adminDigest','adminUsers','adminTimes','adminReset'].forEach(a=>{
+  ['adminPending','adminFullTeam','adminImportTodos','adminImportTaskFire','adminImportMaps','adminDigest','adminUsers','adminTimes','adminReset','adminTestCalendar'].forEach(a=>{
     const e=document.querySelector(`[data-action="${a}"]`);
     if(e) e.onclick=()=>{ state.showAdminMenu=false; handleAdminAction(a); };
   });
@@ -4484,6 +4486,54 @@ async function supaUpdateUserRole(u, newRole){
   const { error } = await supabaseClient.from('profiles').update({role:newRole}).eq('id', u.authId);
   if(error){ console.error('supaUpdateUserRole error:', error); flashToast(`Saved here, but syncing ${u.name}'s role failed. (${error.message})`); return false; }
   return true;
+}
+function renderTestCalendarModal(){
+  const overlay = document.createElement('div');
+  overlay.className='modal-overlay'; overlay.style.zIndex=175;
+  overlay.innerHTML = `
+  <div class="modal-card">
+    <div class="modal-head"><div class="modal-title">🗓️ Test Calendar Connection (Temporary)</div><button class="modal-close" data-action="closeTestCalendar">✕</button></div>
+    <div class="modal-body">
+      <div style="font-size:12.5px;color:var(--ink-soft);line-height:1.5;margin-bottom:14px;">
+        This is a one-time test, not a real feature yet. Your email and password go straight from this browser to a temporary test function and then to Microsoft's own servers — they are never logged, stored, or saved anywhere, and this whole test screen gets removed after we're done with it.
+      </div>
+      <div class="field">
+        <label>Email (e.g. you@mrcdevpartners.com)</label>
+        <input type="email" id="testCalEmail" autocomplete="off">
+      </div>
+      <div class="field">
+        <label>Password</label>
+        <input type="password" id="testCalPassword" autocomplete="off">
+      </div>
+      <div id="testCalResult" style="margin-top:10px;"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn secondary" data-action="closeTestCalendar">Close</button>
+      <button class="btn" data-action="runTestCalendar">Test Connection</button>
+    </div>
+  </div>`;
+  document.getElementById('app').appendChild(overlay);
+  overlay.querySelectorAll('[data-action="closeTestCalendar"]').forEach(b=>b.onclick=()=>{ state.testCalendarModalOpen=false; render(); });
+  overlay.querySelector('[data-action="runTestCalendar"]').onclick=safeHandler(async ()=>{
+    const email = document.getElementById('testCalEmail').value.trim();
+    const password = document.getElementById('testCalPassword').value;
+    if(!email || !password){ flashToast('Enter both an email and a password.'); return; }
+    const resultBox = document.getElementById('testCalResult');
+    resultBox.innerHTML = `<span class="tiny" style="color:var(--ink-soft);">Testing…</span>`;
+    const { data, error } = await supabaseClient.functions.invoke('temp-test-ews-connection', { body: { email, password } });
+    if(error){
+      resultBox.innerHTML = `<div style="background:#fdecea;border:1px solid var(--bad,#C0392B);border-radius:8px;padding:10px 12px;font-size:13px;">❌ Request failed: ${escapeHtml(error.message)}</div>`;
+      return;
+    }
+    if(data && data.success){
+      resultBox.innerHTML = `<div style="background:var(--edge-lighter);border:1px solid var(--good,#1E8E5A);border-radius:8px;padding:10px 12px;font-size:13px;">✅ ${escapeHtml(data.meaning)}</div>`;
+    } else {
+      resultBox.innerHTML = `<div style="background:#fdecea;border:1px solid var(--bad,#C0392B);border-radius:8px;padding:10px 12px;font-size:13px;">
+        ❌ ${escapeHtml((data && data.meaning) || (data && data.error) || 'Unknown failure.')}
+        ${data && data.rawResponseSnippet ? `<div class="tiny" style="margin-top:6px;font-family:monospace;white-space:pre-wrap;color:var(--ink-soft);">${escapeHtml(data.rawResponseSnippet)}</div>` : ''}
+      </div>`;
+    }
+  });
 }
 function renderResetPasswordModal(){
   const overlay = document.createElement('div');
@@ -4610,6 +4660,7 @@ async function handleAdminAction(a){
   }
   if(a==='adminTimes'){ state.notifSettingsOpen=true; }
   if(a==='adminReset'){ state.resetPasswordModalOpen=true; }
+  if(a==='adminTestCalendar'){ state.testCalendarModalOpen=true; }
   render();
 }
 function promptAddSmartList(editingId){
