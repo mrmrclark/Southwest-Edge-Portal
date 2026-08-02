@@ -4353,28 +4353,34 @@ function attachShellHandlers(){
   document.querySelectorAll('[data-action="connectOutlook"]').forEach(outlookBtn=>outlookBtn.onclick=()=>{
     alert("Real Outlook Calendar sync needs a Microsoft-registered app (one-time setup by whoever admins your Microsoft 365) plus your portal's real, final web address — that can't be wired up from a plain preview URL. Once you're on a stable Netlify domain, this is genuinely buildable with no backend server required. For now nothing is synced yet.");
   });
-  const addClientBtn=document.querySelector('[data-action="addClient"]'); if(addClientBtn) addClientBtn.onclick=()=>{
+  const addClientBtn=document.querySelector('[data-action="addClient"]'); if(addClientBtn) addClientBtn.onclick=safeHandler(async ()=>{
     const l = db.lists.find(x=>x.id===addClientBtn.dataset.listid);
     const name = prompt(`Name this ${l.id==='listings'?'listing':'client'}:`);
     if(!name) return;
     const newClient = {id:crypto.randomUUID(), name, primary:null, secondContactId:null, thirdContactId:null, deals:[], createdBy:state.currentUser.id, authorizedUserIds:[]};
     if(l.id==='listings'){ newClient.prospects=[]; newClient.categoryConfig=newLSRCategoryConfig(); }
     l.clients.push(newClient);
-    supaCreateClient(newClient, l.id);
+    render();
+    // Wait for the actual server-side insert to finish before anything else can
+    // reference this client — otherwise a to-do (or anything else) added against
+    // it right away can arrive at the server before the client itself has, and
+    // silently fail to save since client_id is a real, enforced foreign key.
+    await supaCreateClient(newClient, l.id);
     flashToast(`${name} added. Open it to attach a contact and add sites.`);
     state.addUsersPrompt = {listId:l.id, clientId:newClient.id};
     render();
-  };
-  const addEntryBtn=document.querySelector('[data-action="addEntry"]'); if(addEntryBtn) addEntryBtn.onclick=()=>{
+  });
+  const addEntryBtn=document.querySelector('[data-action="addEntry"]'); if(addEntryBtn) addEntryBtn.onclick=safeHandler(async ()=>{
     const name = prompt('Name this prospect:');
     if(!name) return;
     const l = db.lists.find(x=>x.id===addEntryBtn.dataset.listid);
     const newEntry = {id:crypto.randomUUID(), name, lastCall:null, feedback:'', contactId:null, ownerId:state.currentUser.id};
     l.entries.push(newEntry);
-    supaCreateEntry(newEntry, l.id);
+    render();
+    await supaCreateEntry(newEntry, l.id);
     flashToast(`${name} added to ${l.name}.`);
     render();
-  };
+  });
   ['adminPending','adminFullTeam','adminImportTodos','adminImportTaskFire','adminImportMaps','adminDigest','adminUsers','adminTimes','adminReset'].forEach(a=>{
     const e=document.querySelector(`[data-action="${a}"]`);
     if(e) e.onclick=()=>{ state.showAdminMenu=false; handleAdminAction(a); };
@@ -7006,7 +7012,7 @@ function attachModalHandlers(root){
   const pickEntry = root.querySelector('[data-action="pickEntryContact"]'); if(pickEntry) pickEntry.onclick=()=>{
     openContactPicker({listId: pickEntry.dataset.listid, entryId: pickEntry.dataset.entry}); render();
   };
-  const addDeal = root.querySelector('[data-action="addDeal"]'); if(addDeal) addDeal.onclick=safeHandler(()=>{
+  const addDeal = root.querySelector('[data-action="addDeal"]'); if(addDeal) addDeal.onclick=safeHandler(async ()=>{
     const name = prompt('Site / deal name (e.g. an intersection or address):');
     if(!name) return;
     const frame = state.modalStack[state.modalStack.length-1];
@@ -7014,7 +7020,7 @@ function attachModalHandlers(root){
     if(!c){ flashToast("Couldn't find this client."); render(); return; }
     const newDeal = {id:crypto.randomUUID(), name, complete:false, activeDeal:false, dueDate:null, caExecuted: list.id==='listings'};
     c.deals.push(newDeal);
-    supaCreateDeal(newDeal, c.id);
+    await supaCreateDeal(newDeal, c.id);
     openDealModal(frame.listId, c.id, newDeal.id);
     render();
   });
