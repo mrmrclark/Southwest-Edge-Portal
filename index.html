@@ -256,11 +256,11 @@
   .segmented button.active{background:var(--paper);color:var(--edge-darker);box-shadow:var(--shadow-sm);}
 
   .content{flex:1;overflow-y:auto;padding:20px 26px 60px;}
-  .content-flex{display:flex;gap:24px;align-items:flex-start;max-width:1800px;margin:0 auto;}
-  .content-inner{flex:1;min-width:0;max-width:1000px;}
+  .content-flex{display:flex;gap:24px;align-items:flex-start;max-width:1280px;margin:0 auto;}
+  .content-inner{flex:1;min-width:0;max-width:760px;}
   .side-panel{width:300px;flex-shrink:0;display:flex;flex-direction:column;gap:16px;}
   .side-panel-columns{display:flex;gap:16px;flex-shrink:0;}
-  .side-panel-calendar-col{width:340px;flex-shrink:0;}
+  .side-panel-calendar-col{width:300px;flex-shrink:0;}
   @media (max-width:1180px){ .side-panel{display:none;} .side-panel-columns{display:none;} }
   .widget-card{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:16px;box-shadow:var(--shadow-sm);}
   .widget-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
@@ -434,7 +434,7 @@
   .admin-item:hover{background:var(--edge-lighter);cursor:pointer;}
   .admin-item:last-child{border-bottom:none;}
 
-  .contacts-table{width:100%;border-collapse:collapse;font-size:13px;}
+  .contacts-table{width:100%;min-width:720px;border-collapse:collapse;font-size:13px;}
   .contacts-table th{
     text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft);
     padding:8px 10px;border-bottom:2px solid var(--line);position:sticky;top:0;background:var(--canvas);
@@ -561,6 +561,7 @@ let state = {
   lsrCategoryManagerOpen:null, // clientId of the listing being managed, or null
   calendarViewOpen:false,
   msalAccount:null,
+  changePasswordModalOpen:false,
   myCalendarEvents:null,
   myCalendarLoading:false,
   myCalendarError:null,
@@ -2365,6 +2366,7 @@ function render(){
   if(state.pendingUsersModalOpen) renderPendingUsersModal();
   if(state.manageUsersModalOpen) renderManageUsersModal();
   if(state.resetPasswordModalOpen) renderResetPasswordModal();
+  if(state.changePasswordModalOpen) renderChangePasswordModal();
   if(state.pendingDeletionsOpen) renderPendingDeletionsModal();
   if(state.contactImportReview) renderContactImportReviewModal();
   if(state.taskfireImport) renderTaskFireImportModal();
@@ -2747,6 +2749,7 @@ function attachLoginHandlers(){
   };
   const submit = document.getElementById('loginSubmitBtn');
   if(submit) submit.onclick=async ()=>{
+   try{
     const u = USERS.find(x=>x.id===state.selectedLoginUser);
     const pw = document.getElementById('loginPw').value;
     state.loginError = null;
@@ -2822,9 +2825,20 @@ function attachLoginHandlers(){
       return;
     }
     state.currentUser=u; state.screen='app'; if(!appStateWasLoaded) seedAll(); state.loginTarget=null;
-    await fetchAllAppDataFromSupabase();
-    checkTodoDeepLink();
+    try{
+      await fetchAllAppDataFromSupabase();
+      checkTodoDeepLink();
+    } catch(e){
+      console.error('Post-login data load failed (still letting the user in):', e);
+      flashToast("Signed in, but something went wrong loading your data. Try refreshing — if this keeps happening, tell an admin.");
+    }
     render();
+   } catch(e){
+    console.error('Sign-in failed unexpectedly:', e);
+    state.loginError = `Something unexpected went wrong signing in: ${e.message}. Try again — if it keeps happening, tell an admin.`;
+    submit.disabled=false;
+    render();
+   }
   };
   const showReg = document.getElementById('showRegisterBtn');
   if(showReg) showReg.onclick=()=>{ state.showRegisterForm=true; render(); };
@@ -2907,6 +2921,7 @@ function renderSidebar(){
         <div class="admin-menu" style="top:100%;left:0;margin-top:6px;min-width:160px;">
           <button class="admin-item" data-action="openMyNotes" style="width:100%;border:none;background:none;text-align:left;">📝 My Notes</button>
           <button class="admin-item" data-action="openNotifSettingsFromMenu" style="width:100%;border:none;background:none;text-align:left;">⚙️ Notification Settings</button>
+          <button class="admin-item" data-action="openChangePassword" style="width:100%;border:none;background:none;text-align:left;">🔑 Change Password</button>
           <button class="admin-item" data-action="logout" style="width:100%;border:none;background:none;text-align:left;">⏻ Sign out</button>
         </div>` : ''}
       </div>
@@ -4451,6 +4466,7 @@ function attachShellHandlers(){
   const refreshBtn=document.querySelector('[data-action="refreshApp"]'); if(refreshBtn) refreshBtn.onclick=()=>{ doAppRefresh(); };
   const myNotesBtn=document.querySelector('[data-action="openMyNotes"]'); if(myNotesBtn) myNotesBtn.onclick=()=>{ state.myNotesOpen=true; state.showUserMenu=false; render(); };
   const notifFromMenuBtn=document.querySelector('[data-action="openNotifSettingsFromMenu"]'); if(notifFromMenuBtn) notifFromMenuBtn.onclick=()=>{ state.notifSettingsOpen=true; state.showUserMenu=false; render(); };
+  const changePwBtn=document.querySelector('[data-action="openChangePassword"]'); if(changePwBtn) changePwBtn.onclick=()=>{ state.changePasswordModalOpen=true; state.showUserMenu=false; render(); };
   const newEmailBtn=document.querySelector('[data-action="openBlankEmail"]'); if(newEmailBtn) newEmailBtn.onclick=()=>{
     openBlankEmailDraft();
     flashToast('Opening a new email draft…');
@@ -4692,6 +4708,48 @@ function renderTestCalendarModal(){
     }
   });
 }
+function renderChangePasswordModal(){
+  const overlay = document.createElement('div');
+  overlay.className='modal-overlay'; overlay.style.zIndex=175;
+  overlay.innerHTML = `
+  <div class="modal-card">
+    <div class="modal-head"><div class="modal-title">🔑 Change Your Password</div><button class="modal-close" data-action="closeChangePassword">✕</button></div>
+    <div class="modal-body">
+      <div class="field">
+        <label>New Password</label>
+        <input type="password" id="cpNewPassword" autocomplete="new-password">
+      </div>
+      <div class="field">
+        <label>Confirm New Password</label>
+        <input type="password" id="cpConfirmPassword" autocomplete="new-password">
+      </div>
+      <div class="tiny" style="color:var(--ink-soft);margin-bottom:6px;">At least 8 characters.</div>
+      <div id="cpResult" style="margin-top:6px;"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn secondary" data-action="closeChangePassword">Cancel</button>
+      <button class="btn" data-action="submitChangePassword">Change Password</button>
+    </div>
+  </div>`;
+  document.getElementById('app').appendChild(overlay);
+  overlay.querySelectorAll('[data-action="closeChangePassword"]').forEach(b=>b.onclick=()=>{ state.changePasswordModalOpen=false; render(); });
+  overlay.querySelector('[data-action="submitChangePassword"]').onclick=safeHandler(async ()=>{
+    const pw1 = document.getElementById('cpNewPassword').value;
+    const pw2 = document.getElementById('cpConfirmPassword').value;
+    const resultBox = document.getElementById('cpResult');
+    if(pw1.length < 8){ resultBox.innerHTML = `<span class="tiny" style="color:var(--bad,#C0392B);">Password must be at least 8 characters.</span>`; return; }
+    if(pw1 !== pw2){ resultBox.innerHTML = `<span class="tiny" style="color:var(--bad,#C0392B);">Those two passwords don't match.</span>`; return; }
+    resultBox.innerHTML = `<span class="tiny" style="color:var(--ink-soft);">Updating…</span>`;
+    const { error } = await supabaseClient.auth.updateUser({ password: pw1 });
+    if(error){
+      resultBox.innerHTML = `<span class="tiny" style="color:var(--bad,#C0392B);">Couldn't change your password: ${escapeHtml(error.message)}</span>`;
+      return;
+    }
+    flashToast('Password changed.');
+    state.changePasswordModalOpen=false;
+    render();
+  });
+}
 function renderResetPasswordModal(){
   const overlay = document.createElement('div');
   overlay.className='modal-overlay'; overlay.style.zIndex=175;
@@ -4745,8 +4803,14 @@ function renderResetPasswordModal(){
       body: { targetUserId: u.authId, newPassword: tempPassword }
     });
     if(error || (data && data.error)){
-      const msg = (data && data.error) || error.message;
-      resultBox.innerHTML = `<span class="tiny" style="color:var(--bad, #C0392B);">Couldn't set the password: ${escapeHtml(msg)}</span>`;
+      let msg = (data && data.error) || error.message;
+      // The generic "non-2xx status code" message hides the actual reason the
+      // function gave — try to pull the real detail out of the response body.
+      if(error && error.context && typeof error.context.json === 'function'){
+        try{ const body = await error.context.json(); if(body && body.error) msg = body.error; } catch(e){ /* body wasn't JSON or already consumed — fall back to the generic message */ }
+      }
+      const resultBox2 = document.getElementById('tempPasswordResult');
+      resultBox2.innerHTML = `<span class="tiny" style="color:var(--bad, #C0392B);">Couldn't set the password: ${escapeHtml(msg)}</span>`;
       return;
     }
     resultBox.innerHTML = `
@@ -4820,7 +4884,13 @@ async function handleAdminAction(a){
     state.manageUsersModalOpen=true;
   }
   if(a==='adminTimes'){ state.notifSettingsOpen=true; }
-  if(a==='adminReset'){ state.resetPasswordModalOpen=true; }
+  if(a==='adminReset'){
+    // Same fix as adminUsers above — refresh profiles fresh first, so someone who
+    // logged in for the first time after this browser session started doesn't
+    // silently fail here with a stale/missing authId.
+    await fetchAllProfilesIntoUsers();
+    state.resetPasswordModalOpen=true;
+  }
   render();
 }
 function promptAddSmartList(editingId){
@@ -7909,7 +7979,7 @@ function renderContactsMain(){
       <button class="btn danger sm" id="deleteContactsBtn" ${state.selectedContactIds.length? '' : 'disabled'}>🗑️ Delete (${state.selectedContactIds.length})</button>
     </div>
   </div>
-  <div style="max-height:calc(100vh - 200px);overflow-y:auto;border:1px solid var(--line);border-radius:10px;">
+  <div style="max-height:calc(100vh - 200px);overflow-y:auto;overflow-x:auto;border:1px solid var(--line);border-radius:10px;">
   <table class="contacts-table">
     <thead><tr>
       <th class="checkbox-cell"><input type="checkbox" id="selectAllContacts"></th>
@@ -8020,7 +8090,7 @@ function renderBrokerListMain(){
   ${!PHOENIX_BROKER_LIST.length ? `
     <div class="empty-state"><div class="big">No brokers yet.</div><div class="tiny">Add brokers here, or attach one from any prospect's detail view — either way, they land in this same shared list.</div></div>
   ` : `
-  <div style="max-height:calc(100vh - 200px);overflow-y:auto;border:1px solid var(--line);border-radius:10px;">
+  <div style="max-height:calc(100vh - 200px);overflow-y:auto;overflow-x:auto;border:1px solid var(--line);border-radius:10px;">
   <table class="contacts-table">
     <thead><tr><th>Name</th><th>Company</th><th>Email</th><th>Mobile</th><th>Phone</th><th></th></tr></thead>
     <tbody>
@@ -9263,6 +9333,8 @@ document.addEventListener('keydown', (ev)=>{
   if(state.commissionModal){ state.commissionModal=null; render(); return; }
   if(state.myNotesOpen){ state.myNotesOpen=false; render(); return; }
   if(state.editContactModal){ state.editContactModal=null; render(); return; }
+  if(state.resetPasswordModalOpen){ state.resetPasswordModalOpen=false; render(); return; }
+  if(state.changePasswordModalOpen){ state.changePasswordModalOpen=false; render(); return; }
   if(state.editBrokerModal){ state.editBrokerModal=null; render(); return; }
   if(state.todoDetailModal){ const td = db.todos.find(x=>x.id===state.todoDetailModal.id); if(!td || attemptCloseTodoDetail(td)) render(); return; }
   if(state.newTodoModal){ state.newTodoModal=null; render(); return; }
