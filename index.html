@@ -256,10 +256,12 @@
   .segmented button.active{background:var(--paper);color:var(--edge-darker);box-shadow:var(--shadow-sm);}
 
   .content{flex:1;overflow-y:auto;padding:20px 26px 60px;}
-  .content-flex{display:flex;gap:24px;align-items:flex-start;max-width:1280px;margin:0 auto;}
-  .content-inner{flex:1;min-width:0;max-width:760px;}
+  .content-flex{display:flex;gap:24px;align-items:flex-start;max-width:1800px;margin:0 auto;}
+  .content-inner{flex:1;min-width:0;max-width:1000px;}
   .side-panel{width:300px;flex-shrink:0;display:flex;flex-direction:column;gap:16px;}
-  @media (max-width:1180px){ .side-panel{display:none;} }
+  .side-panel-columns{display:flex;gap:16px;flex-shrink:0;}
+  .side-panel-calendar-col{width:340px;flex-shrink:0;}
+  @media (max-width:1180px){ .side-panel{display:none;} .side-panel-columns{display:none;} }
   .widget-card{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:16px;box-shadow:var(--shadow-sm);}
   .widget-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
   .widget-title{font-size:12.5px;font-weight:700;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.04em;}
@@ -541,7 +543,7 @@ let state = {
   showAllSmartLists:false,      // collapse toggle once there are more than 10 smart lists
   notifSettingsOpen:false,      // whether the notification-preferences modal is open
   pendingUsersModalOpen:false,
-  sidePanelWidgets:{calendar:true, weather:true, news:true, quicklinks:true},
+  sidePanelWidgets:{weather:true, news:true, quicklinks:true},
   showWidgetPicker:false,
   editContactModal:null,
   editBrokerModal:null,
@@ -558,7 +560,6 @@ let state = {
   leasingReportMode:null, // temporary override: 'deals'|'prospecting'|'all' while generating a report, then reset
   lsrCategoryManagerOpen:null, // clientId of the listing being managed, or null
   calendarViewOpen:false,
-  myCalendarOpen:false,
   msalAccount:null,
   myCalendarEvents:null,
   myCalendarLoading:false,
@@ -2353,7 +2354,6 @@ function render(){
   if(state.lsrConvertModal) renderLSRConvertModal();
   if(state.lsrCategoryManagerOpen) renderLSRCategoryManagerModal();
   if(state.calendarViewOpen && !state.isMobile) renderCalendarViewModal();
-  if(state.myCalendarOpen) renderMyCalendarModal();
   if(state.marketingListWizard) renderMarketingListWizard();
   if(state.addUsersPrompt) renderAddUsersPrompt();
   if(state.moveTodoPicker) renderMoveTodoPicker();
@@ -2914,7 +2914,6 @@ function renderSidebar(){
         <button class="icon-btn" data-action="refreshApp" title="Refresh">🔄</button>
         <button class="icon-btn" data-action="openBlankEmail" title="New Email">✉️</button>
         ${!state.isMobile ? `<button class="icon-btn" data-action="openCalendarView" title="Calendar View">📅</button>` : ''}
-        <button class="icon-btn" data-action="openMyCalendar" title="My Calendar (Outlook)">🗓️</button>
         ${cu.role==='Admin' ? `<button class="icon-btn" data-action="toggleAdmin" title="Admin menu">☰</button>` : ''}
       </div>
     </div>
@@ -3215,28 +3214,6 @@ function renderNewsWidget(){
     <div style="font-size:10px;color:var(--ink-soft);margin-top:8px;">Public headlines from orionprop.com — updated daily.</div>
   </div>`;
 }
-function renderCalendarWidget(){
-  const now = new Date();
-  const year = now.getFullYear(), month = now.getMonth();
-  const firstDay = new Date(year, month, 1).getDay();
-  const daysInMonth = new Date(year, month+1, 0).getDate();
-  const monthName = now.toLocaleDateString('en-US', {month:'long', year:'numeric'});
-  let cells = '';
-  for(let i=0;i<firstDay;i++) cells += `<div class="cal-day blank"></div>`;
-  for(let d=1; d<=daysInMonth; d++){
-    const isToday = d===now.getDate();
-    cells += `<div class="cal-day ${isToday?'today':''}">${d}</div>`;
-  }
-  return `
-  <div class="widget-card">
-    <div class="widget-head"><div class="widget-title">${monthName}</div></div>
-    <div class="cal-grid">
-      ${['S','M','T','W','T','F','S'].map(d=>`<div class="cal-dow">${d}</div>`).join('')}
-      ${cells}
-    </div>
-    <button class="btn secondary sm" style="width:100%;margin-top:12px;" data-action="connectOutlook">📅 Connect a Calendar</button>
-  </div>`;
-}
 /* ==================== CALENDAR VIEW (desktop only) ==================== */
 async function signInToMicrosoft(){
   try{
@@ -3293,23 +3270,37 @@ async function fetchMyOutlookEvents(){
   state.myCalendarLoading = false;
   render();
 }
-function renderMyCalendarModal(){
-  const overlay = document.createElement('div');
-  overlay.className='modal-overlay'; overlay.style.zIndex=175;
+function renderOutlookCalendarWidget(){
   const account = state.msalAccount;
+  const now = new Date();
+  const year = now.getFullYear(), month = now.getMonth();
+  const firstDay = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month+1, 0).getDate();
+  const monthName = now.toLocaleDateString('en-US', {month:'long', year:'numeric'});
+  let cells = '';
+  for(let i=0;i<firstDay;i++) cells += `<div class="cal-day blank"></div>`;
+  for(let d=1; d<=daysInMonth; d++){
+    const isToday = d===now.getDate();
+    cells += `<div class="cal-day ${isToday?'today':''}">${d}</div>`;
+  }
+  const monthGridHtml = `
+    <div class="widget-head"><div class="widget-title">${monthName}</div></div>
+    <div class="cal-grid">
+      ${['S','M','T','W','T','F','S'].map(d=>`<div class="cal-dow">${d}</div>`).join('')}
+      ${cells}
+    </div>`;
 
   let bodyHtml = '';
   if(!account){
-    bodyHtml = `
-      <div style="text-align:center;padding:30px 10px;">
-        <div style="font-size:15px;color:var(--ink-soft);margin-bottom:18px;">See your real Outlook meetings and appointments right here — read-only, nothing is ever created or changed from this view.</div>
-        <button class="btn" data-action="msSignIn">🔑 Sign in with Microsoft</button>
-      </div>`;
+    bodyHtml = `<div style="text-align:center;padding:16px 6px;">
+      <div style="font-size:12.5px;color:var(--ink-soft);margin-bottom:4px;">Not connected yet.</div>
+      <div class="tiny" style="color:var(--ink-soft);">An Admin can connect this under Admin → Connect Calendar (Outlook).</div>
+    </div>`;
   } else if(state.myCalendarLoading){
-    bodyHtml = `<div style="text-align:center;padding:30px 10px;color:var(--ink-soft);">Loading your calendar…</div>`;
+    bodyHtml = `<div style="text-align:center;padding:16px 6px;color:var(--ink-soft);font-size:12.5px;">Loading your calendar…</div>`;
   } else if(state.myCalendarError){
-    bodyHtml = `<div style="text-align:center;padding:30px 10px;">
-      <div style="color:var(--bad,#C0392B);margin-bottom:14px;">Couldn't load your calendar: ${escapeHtml(state.myCalendarError)}</div>
+    bodyHtml = `<div style="text-align:center;padding:16px 6px;">
+      <div style="color:var(--bad,#C0392B);font-size:12.5px;margin-bottom:10px;">Couldn't load: ${escapeHtml(state.myCalendarError)}</div>
       <button class="btn secondary sm" data-action="msRetry">Try Again</button>
     </div>`;
   } else {
@@ -3329,40 +3320,31 @@ function renderMyCalendarModal(){
       groups[key].push({...ev, label});
     });
     if(!events.length){
-      bodyHtml = `<div class="empty-state"><div class="big">Nothing on your calendar the next two weeks.</div></div>`;
+      bodyHtml = `<div style="text-align:center;padding:16px 6px;color:var(--ink-soft);font-size:12.5px;">Nothing on your calendar the next two weeks.</div>`;
     } else {
-      bodyHtml = order.map(key=>{
+      bodyHtml = `<div style="max-height:420px;overflow-y:auto;">` + order.map(key=>{
         const dayEvents = groups[key];
         return `
-        <div style="font-weight:700;font-size:13px;color:var(--ink);margin:16px 0 6px;">${dayEvents[0].label}</div>
+        <div style="font-weight:700;font-size:12.5px;color:var(--ink);margin:12px 0 5px;">${dayEvents[0].label}</div>
         ${dayEvents.map(ev=>`
-          <div style="display:flex;gap:12px;padding:8px 0;border-bottom:1px solid var(--line-soft);">
-            <div style="width:70px;flex-shrink:0;font-size:12.5px;color:var(--ink-soft);">${ev.isAllDay?'All day':ev.start.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'})}</div>
-            <div style="width:4px;background:var(--edge);border-radius:2px;flex-shrink:0;"></div>
+          <div style="display:flex;gap:8px;padding:6px 0;border-bottom:1px solid var(--line-soft);">
+            <div style="width:56px;flex-shrink:0;font-size:11px;color:var(--ink-soft);">${ev.isAllDay?'All day':ev.start.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'})}</div>
+            <div style="width:3px;background:var(--edge);border-radius:2px;flex-shrink:0;"></div>
             <div>
-              <div style="font-weight:600;font-size:13.5px;">${escapeHtml(ev.subject)}</div>
+              <div style="font-weight:600;font-size:12.5px;">${escapeHtml(ev.subject)}</div>
               ${ev.isOnline ? `<div class="tiny" style="color:var(--ink-soft);">Microsoft Teams Meeting</div>` : (ev.location ? `<div class="tiny" style="color:var(--ink-soft);">${escapeHtml(ev.location)}</div>` : '')}
             </div>
           </div>`).join('')}
         `;
-      }).join('');
+      }).join('') + `</div>`;
     }
   }
 
-  overlay.innerHTML = `
-  <div class="modal-card">
-    <div class="modal-head">
-      <div class="modal-title">🗓️ My Calendar</div>
-      ${account ? `<button class="btn secondary sm" data-action="msSignOut" style="margin-left:auto;margin-right:10px;">Sign Out</button>` : ''}
-      <button class="modal-close" data-action="closeMyCalendar">✕</button>
-    </div>
-    <div class="modal-body">${bodyHtml}</div>
+  return `
+  <div class="widget-card">
+    ${monthGridHtml}
+    <div style="border-top:1px solid var(--line-soft);margin-top:12px;padding-top:6px;">${bodyHtml}</div>
   </div>`;
-  document.getElementById('app').appendChild(overlay);
-  overlay.querySelectorAll('[data-action="closeMyCalendar"]').forEach(b=>b.onclick=()=>{ state.myCalendarOpen=false; render(); });
-  const signInBtn = overlay.querySelector('[data-action="msSignIn"]'); if(signInBtn) signInBtn.onclick=safeHandler(signInToMicrosoft);
-  const signOutBtn = overlay.querySelector('[data-action="msSignOut"]'); if(signOutBtn) signOutBtn.onclick=signOutOfMicrosoft;
-  const retryBtn = overlay.querySelector('[data-action="msRetry"]'); if(retryBtn) retryBtn.onclick=safeHandler(fetchMyOutlookEvents);
 }
 function openCalendarView(){
   const now = new Date();
@@ -3707,11 +3689,11 @@ function wireMarketingListWizard(overlay, listing, allCats){
     };
   }
 }
-const WIDGET_RENDERERS = { calendar: renderCalendarWidget, weather: renderWeatherWidget, news: renderNewsWidget, quicklinks: renderQuickLinksWidget };
+const WIDGET_RENDERERS = { weather: renderWeatherWidget, news: renderNewsWidget, quicklinks: renderQuickLinksWidget };
 function renderSidePanel(){
   if(state.isMobile) return ''; // widgets are desktop-only, full stop — no markup, no weather fetch
   const w = state.sidePanelWidgets;
-  const order = (state.widgetOrder||['calendar','weather','news','quicklinks']).filter(k=>WIDGET_RENDERERS[k]);
+  const order = (state.widgetOrder||['weather','news','quicklinks']).filter(k=>WIDGET_RENDERERS[k]);
   const visibleOrder = order.filter(k=>w[k]);
   const widgetsHtml = visibleOrder.map((key,i)=>`
     <div draggable="true" data-widgetdrag="${key}" style="position:relative;cursor:grab;">
@@ -3719,14 +3701,12 @@ function renderSidePanel(){
       ${WIDGET_RENDERERS[key]()}
     </div>`).join('');
   return `
+  <div class="side-panel-columns">
   <div class="side-panel">
     <div style="display:flex;justify-content:flex-end;position:relative;">
       <button class="widget-picker-toggle" data-action="toggleWidgetPicker" title="Choose widgets">⚙️ Widgets</button>
       ${state.showWidgetPicker ? `
       <div class="nav-context-menu" style="top:26px;">
-        <label style="display:flex;align-items:center;gap:8px;padding:8px 12px;font-size:12.5px;cursor:pointer;">
-          <input type="checkbox" data-widgettoggle="calendar" ${w.calendar?'checked':''} style="width:auto;"> Calendar
-        </label>
         <label style="display:flex;align-items:center;gap:8px;padding:8px 12px;font-size:12.5px;cursor:pointer;">
           <input type="checkbox" data-widgettoggle="weather" ${w.weather?'checked':''} style="width:auto;"> Weather
         </label>
@@ -3740,6 +3720,10 @@ function renderSidePanel(){
     </div>
     ${widgetsHtml}
     ${!visibleOrder.length ? `<div class="widget-card" style="text-align:center;color:var(--ink-soft);font-size:12.5px;">No widgets shown. Click "Widgets" above to add some.</div>` : ''}
+  </div>
+  <div class="side-panel-calendar-col">
+    ${renderOutlookCalendarWidget()}
+  </div>
   </div>`;
 }
 function caOutstandingCount(){
@@ -4250,6 +4234,7 @@ function renderAdminMenu(){
     ${!state.isMobile ? `<div class="admin-item" data-action="adminImportTodos">⬆️ Import To-Do's (CSV)</div>` : ''}
     ${!state.isMobile ? `<div class="admin-item" data-action="adminImportTaskFire">⬆️ Import from TaskFire</div>` : ''}
     ${!state.isMobile ? `<div class="admin-item" data-action="adminImportMaps">🗺️ Import from MyMaps</div>` : ''}
+    ${!state.isMobile ? `<div class="admin-item" data-action="adminConnectCalendar">🗓️ ${state.msalAccount ? 'Disconnect Calendar (Outlook)' : 'Connect Calendar (Outlook)'}</div>` : ''}
     <div class="admin-item" data-action="adminDigest">📨 Compose Weekly Digest</div>
     <div class="admin-item" data-action="adminUsers">👥 Manage Users</div>
     <div class="admin-item" data-action="adminTimes">⏱️ Email Send Times</div>
@@ -4474,16 +4459,7 @@ function attachShellHandlers(){
   const calBtn=document.querySelector('[data-action="openCalendarView"]'); if(calBtn) calBtn.onclick=()=>{
     openCalendarView(); render();
   };
-  const myCalBtn=document.querySelector('[data-action="openMyCalendar"]'); if(myCalBtn) myCalBtn.onclick=safeHandler(async ()=>{
-    state.myCalendarOpen=true;
-    render();
-    await ensureMsalInitialized();
-    const accounts = msalInstance.getAllAccounts();
-    if(accounts.length && !state.msalAccount){
-      state.msalAccount = accounts[0];
-      await fetchMyOutlookEvents();
-    }
-  });
+  const msRetryBtn=document.querySelector('[data-action="msRetry"]'); if(msRetryBtn) msRetryBtn.onclick=safeHandler(fetchMyOutlookEvents);
   const importBtn=document.querySelector('[data-action="openImportTodos"]'); if(importBtn) importBtn.onclick=()=>{
     state.importTodosModal = {step:'upload'};
     render();
@@ -4525,7 +4501,7 @@ function attachShellHandlers(){
     renderPreservingScroll('.content');
   });
   wireDragReorder('[data-widgetdrag]', 'widgetdrag', (fromKey, toKey)=>{
-    if(!state.widgetOrder) state.widgetOrder = ['calendar','weather','news','quicklinks'];
+    if(!state.widgetOrder) state.widgetOrder = ['weather','news','quicklinks'];
     const fromIdx = state.widgetOrder.indexOf(fromKey), toIdx = state.widgetOrder.indexOf(toKey);
     if(fromIdx<0 || toIdx<0) return;
     const [moved] = state.widgetOrder.splice(fromIdx, 1);
@@ -4564,7 +4540,7 @@ function attachShellHandlers(){
     flashToast(`${name} added to ${l.name}.`);
     render();
   });
-  ['adminPending','adminFullTeam','adminImportTodos','adminImportTaskFire','adminImportMaps','adminDigest','adminUsers','adminTimes','adminReset'].forEach(a=>{
+  ['adminPending','adminFullTeam','adminImportTodos','adminImportTaskFire','adminImportMaps','adminConnectCalendar','adminDigest','adminUsers','adminTimes','adminReset'].forEach(a=>{
     const e=document.querySelector(`[data-action="${a}"]`);
     if(e) e.onclick=()=>{ state.showAdminMenu=false; handleAdminAction(a); };
   });
@@ -4830,6 +4806,10 @@ async function handleAdminAction(a){
   if(a==='adminImportTodos'){ state.importTodosModal = {step:'upload'}; }
   if(a==='adminImportTaskFire'){ state.taskfireImport = {step:'upload'}; }
   if(a==='adminImportMaps'){ state.mapsImport = {step:'upload', clientQuery:'', pickedClient:null, newClientName:''}; }
+  if(a==='adminConnectCalendar'){
+    if(state.msalAccount){ signOutOfMicrosoft(); }
+    else { await signInToMicrosoft(); }
+  }
   if(a==='adminDigest'){ state.notifSettingsOpen=true; }
   if(a==='adminUsers'){
     // Refresh every profile fresh from the server first — without this, anyone who
@@ -7904,10 +7884,10 @@ function matchesSearchTokens(hayString, query){
 }
 function renderContactsTableRows(filtered){
   return filtered.slice().sort((a,b)=>a.last.localeCompare(b.last)||a.first.localeCompare(b.first)).slice(0,300).map(c=>`
-        <tr data-contactrow="${c.id}" style="cursor:pointer;">
+        <tr>
           <td class="checkbox-cell"><input type="checkbox" data-contactcheck="${c.id}" ${state.selectedContactIds.includes(c.id)?'checked':''}></td>
-          <td>${c.isPrivate ? `<span title="Private — only visible to you until it's attached to a shared Client, Deal, Entry, or Prospect" style="margin-right:4px;">🔒</span>`:''}${escapeHtml(c.last)}</td><td>${escapeHtml(c.first)}</td><td>${escapeHtml(c.company||'')}</td>
-          <td>${escapeHtml(c.email||'')}</td><td>${escapeHtml(c.mobile||'')}</td><td>${escapeHtml(c.phone||'')}</td>
+          <td style="cursor:pointer;" data-contactnameclick="${c.id}">${c.isPrivate ? `<span title="Private — only visible to you until it's attached to a shared Client, Deal, Entry, or Prospect" style="margin-right:4px;">🔒</span>`:''}${escapeHtml(c.last)}</td><td style="cursor:pointer;" data-contactnameclick="${c.id}">${escapeHtml(c.first)}</td><td>${escapeHtml(c.company||'')}</td>
+          <td style="${c.email?'cursor:pointer;color:var(--edge);':''}" ${c.email?`data-contactemailclick="${escapeAttr(c.email)}"`:''}>${escapeHtml(c.email||'')}</td><td>${escapeHtml(c.mobile||'')}</td><td>${escapeHtml(c.phone||'')}</td>
           <td><button class="row-trash" style="opacity:.7;" data-editcontact="${c.id}" title="Edit">✏️</button></td>
         </tr>`).join('');
 }
@@ -7955,9 +7935,12 @@ function wireContactsTableRowHandlers(){
     state.editContactModal = {id: el.dataset.editcontact};
     render();
   });
-  document.querySelectorAll('[data-contactrow]').forEach(el=>el.onclick=()=>{
-    state.editContactModal = {id: el.dataset.contactrow};
+  document.querySelectorAll('[data-contactnameclick]').forEach(el=>el.onclick=()=>{
+    state.editContactModal = {id: el.dataset.contactnameclick};
     render();
+  });
+  document.querySelectorAll('[data-contactemailclick]').forEach(el=>el.onclick=()=>{
+    window.location.href = 'mailto:' + el.dataset.contactemailclick;
   });
 }
 function attachContactsHandlers(){
@@ -9289,7 +9272,6 @@ document.addEventListener('keydown', (ev)=>{
   if(state.notifSettingsOpen){ state.notifSettingsOpen=false; render(); return; }
   if(state.marketingListWizard){ state.marketingListWizard=null; render(); return; }
   if(state.calendarViewOpen){ state.calendarViewOpen=false; render(); return; }
-  if(state.myCalendarOpen){ state.myCalendarOpen=false; render(); return; }
   if(state.contactModal){ state.contactModal=null; render(); return; }
   if(state.pendingUsersModalOpen){ state.pendingUsersModalOpen=false; render(); return; }
   if(state.pendingDeletionsOpen){ state.pendingDeletionsOpen=false; render(); return; }
@@ -9394,6 +9376,13 @@ render();
     await fetchAllAppDataFromSupabase();
     checkTodoDeepLink();
     render();
+    if(!state.isMobile){
+      try{
+        await ensureMsalInitialized();
+        const accounts = msalInstance.getAllAccounts();
+        if(accounts.length){ state.msalAccount = accounts[0]; await fetchMyOutlookEvents(); }
+      } catch(e){ console.error('Microsoft calendar auto-check failed (continuing anyway):', e); }
+    }
   } catch(e){ console.error('Session check failed:', e); }
 })();
 
