@@ -586,6 +586,16 @@ const USERS = [
   {id:'lkhoudary', name:'Lexi Khoudary', email:'lkhoudary@edge-re.com', role:'User', initials:'LK', emailClient:null, notifPref:null},
   {id:'aruiz', name:'Anthony Ruiz', email:'aruiz@edge-re.com', role:'User', initials:'AR', emailClient:null, notifPref:null},
 ];
+// For any "pick a person" dropdown — puts whoever's currently logged in first,
+// instead of always showing the same static Michael-first order for everyone.
+function usersSortedByMe(){
+  const me = state.currentUser ? state.currentUser.id : null;
+  return [...USERS].sort((a,b)=>{
+    if(a.id===me) return -1;
+    if(b.id===me) return 1;
+    return 0;
+  });
+}
 let pendingUsers = []; // {id, name, email, requestedAt} — awaiting admin approval before they can sign in
 async function fetchPendingUsersFromSupabase(){
   const { data, error } = await supabaseClient.from('pending_users').select('*');
@@ -2161,6 +2171,7 @@ const SMART_LIST_DEFAULTS = [
   {id:'archived', name:'Archived', icon:'🗄️'},
   {id:'everything', name:'Everything', icon:'📚'},
   {id:'allDeals', name:'All Deals', icon:'📋'},
+  {id:'archivedDeals', name:'Archived Deals', icon:'🗄️'},
   {id:'caStatus', name:'CA Status', icon:'📄'},
 ];
 // Single mutable, ordered list of every smart list (defaults + user-created). Reordering,
@@ -2935,7 +2946,7 @@ function renderSidebar(){
     <div class="nav-section-label">Smart Lists <button class="nav-add" data-action="addSmartList">+</button></div>
     <div class="nav-list">
       ${visibleSmarts.map(sl=>{
-        let items = sl.id==='allDeals' ? allDealsList().filter(r=>r.client.createdBy===state.currentUser.id || (r.client.authorizedUserIds||[]).includes(state.currentUser.id)) : (sl.id==='caStatus' ? caOutstandingCount() : (smartListTodos(sl.id) ? smartListTodos(sl.id).filter(visibleTodo) : []));
+        let items = sl.id==='allDeals' ? allDealsList().filter(r=>r.client.createdBy===state.currentUser.id || (r.client.authorizedUserIds||[]).includes(state.currentUser.id)) : (sl.id==='archivedDeals' ? archivedDealsList().filter(r=>r.client.createdBy===state.currentUser.id || (r.client.authorizedUserIds||[]).includes(state.currentUser.id)) : (sl.id==='caStatus' ? caOutstandingCount() : (smartListTodos(sl.id) ? smartListTodos(sl.id).filter(visibleTodo) : [])));
         if((sl.id==='week' || sl.id==='month') && state.todoView!=='team'){
           // Match exactly what clicking into this list actually shows: by default that's
           // narrowed to "assigned to me" only, not everything in my broader sphere — the
@@ -3771,9 +3782,24 @@ function allDealsList(){
   db.lists.filter(l=>l.type==='deep').forEach(l=>{
     l.clients.forEach(c=>{
       c.deals.forEach(d=>{
-        if(d.complete) return; // Open for Business — done, excluded
-        if(d.stage==='closedEscrow') return; // Closed Escrow — done, excluded
+        if(!d.stage || d.stage==='prospect') return; // Prospects — excluded, this list is deals only
+        const isDone = d.complete || d.stage==='closedEscrow'; // Open for Business or Closed Escrow
+        const fullyPaid = !!(d.commission1Paid && d.commission2Paid);
+        if(isDone && fullyPaid) return; // truly finished, nothing left to track — excluded
         out.push({deal:d, client:c, listId:l.id});
+      });
+    });
+  });
+  return out;
+}
+function archivedDealsList(){
+  const out = [];
+  db.lists.filter(l=>l.type==='deep').forEach(l=>{
+    l.clients.forEach(c=>{
+      c.deals.forEach(d=>{
+        const isDone = d.complete || d.stage==='closedEscrow';
+        const fullyPaid = !!(d.commission1Paid && d.commission2Paid);
+        if(isDone && fullyPaid) out.push({deal:d, client:c, listId:l.id});
       });
     });
   });
@@ -3831,6 +3857,53 @@ function renderAllDealsMain(){
   };
   return renderSection('clients', 'Clients') + renderSection('listings', 'Listings');
 }
+function renderArchivedDealsMain(){
+  let rows = archivedDealsList();
+  const me = state.currentUser.id;
+  const isMine = c => c.createdBy===me || (c.authorizedUserIds||[]).includes(me);
+  rows = rows.filter(r=>isMine(r.client));
+
+  const searchQ = (state.listSearchQuery||'').trim();
+  if(searchQ) rows = rows.filter(r=>matchesSearchTokens(`${r.deal.name} ${r.client.name}`, searchQ));
+  if(!rows.length) return searchQ
+    ? `<div class="empty-state"><div class="big">No matches for "${escapeHtml(searchQ)}".</div><div class="tiny">Try a different search, or clear it to see everything.</div></div>`
+    : `<div class="empty-state"><div class="big">Nothing archived yet.</div><div class="tiny">A deal lands here once it's Open for Business (or Closed Escrow) and both commission halves are marked paid.</div></div>`;
+
+  if(!state.archivedDealsAccountOpen) state.archivedDealsAccountOpen = {};
+  const renderSection = (listId, sectionTitle)=>{
+    const sectionRows = rows.filter(r=>r.listId===listId);
+    if(!sectionRows.length) return '';
+    const byClient = {};
+    sectionRows.forEach(r=>{ (byClient[r.client.id] = byClient[r.client.id] || {client:r.client, listId, deals:[]}).deals.push(r.deal); });
+    const groups = Object.values(byClient).sort((a,b)=>a.client.name.localeCompare(b.client.name));
+    return `
+    <div class="section-label" style="margin-top:18px;">${sectionTitle} <span style="font-weight:400;color:var(--ink-soft);">(${sectionRows.length})</span></div>
+    ${groups.map(g=>{
+      const isOpen = !!state.archivedDealsAccountOpen[g.client.id];
+      return `
+      <div class="row-card" data-action="toggleArchivedDealsAccount" data-accountid="${g.client.id}" style="cursor:pointer;margin-bottom:6px;flex-direction:column;align-items:stretch;">
+        <div style="display:flex;align-items:center;">
+          <div class="nav-icon" style="font-size:16px;">${isOpen?'▾':'▸'}</div>
+          <div class="row-body">
+            <div class="row-title" data-openaccountdirect="${g.client.id}" data-listid="${listId}" style="cursor:pointer;text-decoration:underline;text-decoration-color:transparent;" onmouseover="this.style.textDecorationColor='currentColor'" onmouseout="this.style.textDecorationColor='transparent'">${escapeHtml(g.client.name)}</div>
+            <div class="row-meta"><span>${g.deals.length} deal${g.deals.length===1?'':'s'}</span></div>
+          </div>
+        </div>
+        ${isOpen ? `<div style="margin:8px 0 2px 26px;">
+          ${g.deals.map(d=>`
+            <div class="row-card" data-opendealdirect="${d.id}" data-client="${g.client.id}" data-listid="${listId}" style="margin-bottom:6px;">
+              <div class="row-body">
+                <div class="row-title">${escapeHtml(d.name)}</div>
+                <div class="row-meta"><span class="pill" style="background:var(--good,#1E8E5A)22;color:var(--good,#1E8E5A);">✅ Fully Paid</span></div>
+              </div>
+            </div>`).join('')}
+        </div>` : ''}
+      </div>`;
+    }).join('')}
+    `;
+  };
+  return renderSection('clients', 'Clients') + renderSection('listings', 'Listings');
+}
 function renderActiveDealsMain(){
   const rows = activeDealsClients();
   if(!rows.length) return `<div class="empty-state"><div class="big">No active deals right now.</div><div class="tiny">Check "Active Deal" on a site/deal inside a client to have it show up here.</div></div>`;
@@ -3860,6 +3933,7 @@ function renderMainContent(){
   // smart list
   const id = state.mainView.id;
   if(id==='allDeals') return renderAllDealsMain();
+  if(id==='archivedDeals') return renderArchivedDealsMain();
   if(id==='archived') return renderArchivedMain();
   if(id==='caStatus') return renderCAStatusMain();
   const teamCapable = (id==='week' || id==='month');
@@ -4042,13 +4116,33 @@ function renderTodoList(list){
   return html;
 }
 function contextLabel(td){
-  const parts=[];
-  if(td.listId){
-    const l = db.lists.find(x=>x.id===td.listId);
-    if(l) parts.push(l.name);
+  if(td.clientId){
+    for(const l of db.lists){
+      if(l.type==='deep'){
+        const c = l.clients.find(x=>x.id===td.clientId);
+        if(c){
+          if(td.dealId){
+            const d = c.deals.find(x=>x.id===td.dealId);
+            if(d) return `${c.name} → ${d.name}`;
+          }
+          return c.name;
+        }
+      }
+    }
   }
-  if(td.category) parts.push(td.category);
-  return parts.join(' · ') || 'Personal';
+  if(td.entryId){
+    for(const l of db.lists){
+      if(l.type==='flat'){
+        const e = l.entries.find(x=>x.id===td.entryId);
+        if(e) return e.name;
+      }
+    }
+  }
+  if(td.projectId){
+    const proj = db.todos.find(x=>x.id===td.projectId);
+    if(proj) return proj.title;
+  }
+  return 'Personal';
 }
 function contactForClient(c){
   if(!c || !c.primary) return null;
@@ -4383,6 +4477,12 @@ function attachShellHandlers(){
     const id = el.dataset.accountid;
     if(!state.allDealsAccountOpen) state.allDealsAccountOpen = {};
     state.allDealsAccountOpen[id] = !state.allDealsAccountOpen[id];
+    renderPreservingScroll('.content');
+  });
+  document.querySelectorAll('[data-action="toggleArchivedDealsAccount"]').forEach(el=>el.onclick=()=>{
+    const id = el.dataset.accountid;
+    if(!state.archivedDealsAccountOpen) state.archivedDealsAccountOpen = {};
+    state.archivedDealsAccountOpen[id] = !state.archivedDealsAccountOpen[id];
     renderPreservingScroll('.content');
   });
   document.querySelectorAll('[data-openaccountdirect]').forEach(el=>el.onclick=(ev)=>{
@@ -4760,7 +4860,7 @@ function renderResetPasswordModal(){
       <div class="field">
         <label>Who needs help logging in?</label>
         <select id="resetPasswordUserSelect">
-          ${USERS.map(u=>`<option value="${u.id}">${escapeHtml(u.name)} (${escapeHtml(u.email)})</option>`).join('')}
+          ${usersSortedByMe().map(u=>`<option value="${u.id}">${escapeHtml(u.name)} (${escapeHtml(u.email)})</option>`).join('')}
         </select>
       </div>
       <div style="font-size:12px;color:var(--ink-soft);line-height:1.5;margin-bottom:14px;">
@@ -5017,7 +5117,7 @@ function renderNewSmartListModal(){
           <option value="me" ${m.assignee==='me'?'selected':''}>Just me</option>
           <option value="meByOthers" ${m.assignee==='meByOthers'?'selected':''}>Assigned to me (by someone else)</option>
           <option value="unassigned" ${m.assignee==='unassigned'?'selected':''}>Unassigned</option>
-          ${USERS.map(u=>`<option value="${u.id}" ${m.assignee===u.id?'selected':''}>${u.name}</option>`).join('')}
+          ${usersSortedByMe().map(u=>`<option value="${u.id}" ${m.assignee===u.id?'selected':''}>${u.name}</option>`).join('')}
         </select>
       </div>
       <div class="field">
@@ -5586,8 +5686,7 @@ function renderTodoDetailModal(){
       </div>
       <div class="field autocomplete-box">
         <label>Status</label>
-        <input id="detStatus" value="${escapeAttr(td.status||'')}" list="detStatusList" placeholder="e.g., In Progress">
-        <datalist id="detStatusList">${STATUS_PRESETS.map(s=>`<option value="${escapeAttr(s)}">`).join('')}</datalist>
+        <select id="detStatus">${STATUS_PRESETS.map(s=>`<option value="${escapeAttr(s)}" ${(td.status||'Not Started')===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}</select>
       </div>
       <div class="field">
         <label>Due date</label>
@@ -5601,7 +5700,7 @@ function renderTodoDetailModal(){
       </div>
       <div class="field">
         <label>Assigned to</label>
-        <select id="detAssign">${USERS.map(u=>`<option value="${u.id}" ${td.assignedTo===u.id?'selected':''}>${u.name}${u.id===state.currentUser.id?' (me)':''}</option>`).join('')}</select>
+        <select id="detAssign">${usersSortedByMe().map(u=>`<option value="${u.id}" ${td.assignedTo===u.id?'selected':''}>${u.name}${u.id===state.currentUser.id?' (me)':''}</option>`).join('')}</select>
       </div>
       <div class="field" style="display:flex;align-items:center;gap:8px;">
         <input type="checkbox" id="detPrivate" style="width:auto;" ${td.private?'checked':''}>
@@ -6088,7 +6187,6 @@ function renderDealRowInClient(l,c,d){
   const moneyVal = d.dealType==='sale' ? d.price : d.rent;
   return `
   <div class="row-card" data-opendeal="${d.id}" data-client="${c.id}" data-listid="${l.id}">
-    <div class="row-check ${d.complete?'done':''}" data-toggledeal="${d.id}" title="Mark complete">${d.complete?'✓':''}</div>
     <div class="row-body">
       <div class="row-title ${d.complete?'done':''}">${escapeHtml(d.name)}</div>
       <div class="row-meta">
@@ -6236,7 +6334,7 @@ function renderSplitRowHtml(row,i){
   return `
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">
       <select data-splituser="${i}" style="flex:1;">
-        ${USERS.map(u=>`<option value="${u.id}" ${row.userId===u.id?'selected':''}>${u.name}</option>`).join('')}
+        ${usersSortedByMe().map(u=>`<option value="${u.id}" ${row.userId===u.id?'selected':''}>${u.name}</option>`).join('')}
       </select>
       <input type="number" step="0.01" data-splitpct="${i}" value="${row.pct!=null?row.pct:''}" placeholder="%" style="width:80px;">
       <span style="font-size:12.5px;color:var(--ink-soft);">%</span>
@@ -6390,6 +6488,11 @@ function renderDealModalBody(l,c,d){
     <button class="${d.dealType==='lease'?'active':''}" data-dealtypebtn="lease" ${ro}>Lease</button>
     <button class="${d.dealType==='sale'?'active':''}" data-dealtypebtn="sale" ${ro}>Sale</button>
   </div>
+  ${canEdit ? `
+  <label style="display:flex;align-items:center;gap:8px;margin:10px 0;cursor:pointer;font-size:13px;">
+    <input type="checkbox" id="dtOpenForBusiness" ${d.complete?'checked':''} style="width:auto;">
+    ✅ Open for Business — this deal is fully done
+  </label>` : (d.complete ? `<div class="tiny" style="color:var(--good);margin:10px 0;">✅ Open for Business</div>` : '')}
   <div class="field-row">
     <div class="field">
       <label style="font-size:14px;">Stage *</label>
@@ -6485,7 +6588,7 @@ function renderLSRInline(listing, mode){
         style="flex:1;min-width:180px;padding:8px 11px;border:1px solid var(--line);border-radius:8px;font-size:12.5px;">
       <select id="lsrTrackerSelect" style="padding:8px 11px;border:1px solid var(--line);border-radius:8px;font-size:12.5px;">
         <option value="all" ${state.lsrTrackerFilter==='all'?'selected':''}>All Edge Trackers</option>
-        ${USERS.map(u=>`<option value="${u.id}" ${state.lsrTrackerFilter===u.id?'selected':''}>${u.name}</option>`).join('')}
+        ${usersSortedByMe().map(u=>`<option value="${u.id}" ${state.lsrTrackerFilter===u.id?'selected':''}>${u.name}</option>`).join('')}
       </select>
       <button class="btn secondary sm" data-action="lsrManageCategories" data-client="${listing.id}">⚙️ Categories</button>
       <button class="btn secondary sm" data-action="lsrCreateMarketingList" data-client="${listing.id}">📋 Create Marketing List</button>
@@ -6636,7 +6739,7 @@ function renderLSRProspectBody(l, listing, p){
   <div class="field"><label>Notes / Next Steps</label><textarea id="lpNotes" rows="3">${escapeHtml(p.notes||'')}</textarea></div>
   <div class="field">
     <label>Edge Tracker</label>
-    <select id="lpTracker">${USERS.map(u=>`<option value="${u.id}" ${p.edgeTracker===u.id?'selected':''}>${u.name}</option>`).join('')}</select>
+    <select id="lpTracker">${usersSortedByMe().map(u=>`<option value="${u.id}" ${p.edgeTracker===u.id?'selected':''}>${u.name}</option>`).join('')}</select>
   </div>
   ${isConverted ? `
   <div class="section-label">Deal Terms (${p.dealType==='sale'?'Sale':'Lease'})</div>
@@ -6714,7 +6817,7 @@ function renderLSRNewProspectModal(){
       <div class="field"><label>Notes</label><textarea id="npNotes" rows="2">${escapeHtml(m.notes)}</textarea></div>
       <div class="field">
         <label>Edge Tracker</label>
-        <select id="npTracker">${USERS.map(u=>`<option value="${u.id}" ${m.edgeTracker===u.id?'selected':''}>${u.name}</option>`).join('')}</select>
+        <select id="npTracker">${usersSortedByMe().map(u=>`<option value="${u.id}" ${m.edgeTracker===u.id?'selected':''}>${u.name}</option>`).join('')}</select>
       </div>
       ${otherListings.length? `
       <div class="field">
@@ -7206,14 +7309,6 @@ function attachModalHandlers(root){
     state.dealGroupCollapsed[k]=!currentlyCollapsed;
     renderPreservingScroll('.modal-body');
   });
-  root.querySelectorAll('[data-toggledeal]').forEach(el=>el.onclick=safeHandler((ev)=>{
-    ev.stopPropagation();
-    const frame = state.modalStack[0];
-    const l=db.lists.find(x=>x.id===frame.listId); const c=l && l.clients.find(x=>x.id===frame.clientId);
-    const d=c && c.deals.find(x=>x.id===el.dataset.toggledeal);
-    if(!d){ flashToast("Couldn't find this deal."); render(); return; }
-    d.complete=!d.complete; supaUpdateDeal(d, c.id); render();
-  }));
   root.querySelectorAll('[data-toggleactive]').forEach(el=>el.onclick=safeHandler((ev)=>{
     ev.stopPropagation();
     const frame = state.modalStack[0];
@@ -7381,6 +7476,11 @@ function attachModalHandlers(root){
     const tiEl = document.getElementById('dtTI'); if(tiEl) tiEl.oninput=()=>{ d.tiAllowance = tiEl.value; };
     const notesEl = document.getElementById('dtNotes'); if(notesEl) notesEl.oninput=()=>{ d.notes = notesEl.value; };
     const stageEl = document.getElementById('dtStage'); if(stageEl) stageEl.onchange=()=>{ d.stage = stageEl.value; };
+    const openForBizEl = document.getElementById('dtOpenForBusiness'); if(openForBizEl) openForBizEl.onchange=()=>{
+      d.complete = openForBizEl.checked;
+      supaUpdateDeal(d, c.id);
+      renderPreservingScroll('.modal-body');
+    };
     const categoryEl = document.getElementById('dtCategory'); if(categoryEl) categoryEl.onchange=()=>{ d.categoryId = categoryEl.value; };
   })();
   const openCommBtn = root.querySelector('[data-action="openCommission"]'); if(openCommBtn) openCommBtn.onclick=()=>{
@@ -7733,8 +7833,7 @@ function renderNewTodoModal(){
       </div>
       <div class="field autocomplete-box">
         <label>Status</label>
-        <input id="ntStatus" value="${escapeAttr(m.status||'Not Started')}" list="ntStatusList">
-        <datalist id="ntStatusList">${STATUS_PRESETS.map(s=>`<option value="${escapeAttr(s)}">`).join('')}</datalist>
+        <select id="ntStatus">${STATUS_PRESETS.map(s=>`<option value="${escapeAttr(s)}" ${(m.status||'Not Started')===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}</select>
       </div>
       <div class="field">
         <label>Due date</label>
@@ -7749,7 +7848,7 @@ function renderNewTodoModal(){
       <div class="field">
         <label>Assign to</label>
         <select id="ntAssignSelect">
-          ${USERS.map(u=>`<option value="${u.id}" ${m.assignTo===u.id?'selected':''}>${u.name}${u.id===state.currentUser.id?' (me)':''}</option>`).join('')}
+          ${usersSortedByMe().map(u=>`<option value="${u.id}" ${m.assignTo===u.id?'selected':''}>${u.name}${u.id===state.currentUser.id?' (me)':''}</option>`).join('')}
         </select>
       </div>
       <div class="field" style="display:flex;align-items:center;gap:8px;">
@@ -8467,7 +8566,7 @@ function renderTaskFireImportModal(){
         <label>Whose TaskFire account is this from? *</label>
         <select id="tfOwner">
           <option value="">— choose —</option>
-          ${USERS.map(u=>`<option value="${u.id}" ${m.ownerUserId===u.id?'selected':''}>${u.name}</option>`).join('')}
+          ${usersSortedByMe().map(u=>`<option value="${u.id}" ${m.ownerUserId===u.id?'selected':''}>${u.name}</option>`).join('')}
         </select>
       </div>
       <div class="stats" style="display:flex;gap:14px;margin:14px 0;">
@@ -8740,6 +8839,13 @@ function mapsComputeResultDeals(m){
   });
   return results;
 }
+function renderMapsClientListHtml(matches, m){
+  if(!matches.length) return `<div class="tiny" style="padding:10px;color:var(--ink-soft);">No matches — type a name below to create a new one instead.</div>`;
+  return matches.map(c=>`
+    <div class="row-card" data-mapspickclient="${c.id}:${c.listId}" style="cursor:pointer;padding:8px 12px;${m.pickedClient&&m.pickedClient.id===c.id?'background:var(--edge-light);':''}">
+      <div class="row-body"><div class="row-title" style="font-size:13px;">${escapeHtml(c.name)}</div><div class="row-meta"><span>${escapeHtml(c.listName)}</span></div></div>
+    </div>`).join('');
+}
 function renderMapsImportModal(){
   const m = state.mapsImport;
   const overlay = document.createElement('div');
@@ -8756,10 +8862,7 @@ function renderMapsImportModal(){
         <label>Which Client/Listing do these sites belong to? *</label>
         <input class="searchbox" id="mapsClientSearch" placeholder="🔍 Search existing…" value="${escapeAttr(m.clientQuery)}" style="margin-bottom:6px;">
         <div id="mapsClientList" style="max-height:160px;overflow-y:auto;border:1px solid var(--line);border-radius:8px;margin-bottom:10px;">
-          ${matches.length ? matches.map(c=>`
-            <div class="row-card" data-mapspickclient="${c.id}:${c.listId}" style="cursor:pointer;padding:8px 12px;${m.pickedClient&&m.pickedClient.id===c.id?'background:var(--edge-light);':''}">
-              <div class="row-body"><div class="row-title" style="font-size:13px;">${escapeHtml(c.name)}</div><div class="row-meta"><span>${escapeHtml(c.listName)}</span></div></div>
-            </div>`).join('') : `<div class="tiny" style="padding:10px;color:var(--ink-soft);">No matches — type a name below to create a new one instead.</div>`}
+          ${renderMapsClientListHtml(matches, m)}
         </div>
         ${!m.pickedClient ? `
         <label style="margin-top:4px;">…or create a new one:</label>
@@ -8841,7 +8944,19 @@ function renderMapsImportModal(){
 
   if(m.step==='upload'){
     const searchEl = document.getElementById('mapsClientSearch');
-    if(searchEl) searchEl.oninput = ()=>{ m.clientQuery = searchEl.value; render(); };
+    if(searchEl) searchEl.oninput = ()=>{
+      m.clientQuery = searchEl.value;
+      const newMatches = mapsAllClientsFlat().filter(c=>!m.clientQuery || c.name.toLowerCase().includes(m.clientQuery.toLowerCase()));
+      const listBox = document.getElementById('mapsClientList');
+      if(listBox){
+        listBox.innerHTML = renderMapsClientListHtml(newMatches, m);
+        listBox.querySelectorAll('[data-mapspickclient]').forEach(el=>el.onclick=()=>{
+          const [id, listId] = el.dataset.mapspickclient.split(':');
+          const c = mapsAllClientsFlat().find(x=>x.id===id);
+          m.pickedClient = c; m.newClientName=''; renderPreservingScroll('.modal-body');
+        });
+      }
+    };
     overlay.querySelectorAll('[data-mapspickclient]').forEach(el=>el.onclick=()=>{
       const [id, listId] = el.dataset.mapspickclient.split(':');
       const c = mapsAllClientsFlat().find(x=>x.id===id);
