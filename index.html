@@ -14,7 +14,6 @@
 <meta name="apple-mobile-web-app-title" content="SW Edge">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-<script src="https://alcdn.msauth.net/browser/3.7.0/js/msal-browser.min.js"></script>
 <style>
   :root{
     --edge:#E1531A;
@@ -639,6 +638,9 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
 // Microsoft sign-in, for the read-only "My Calendar" view. This is completely
 // separate from Supabase's own login — it's a personal choice each user makes to
 // let the Portal read their own Outlook calendar specifically, nothing else.
+// Loaded lazily, on-demand, specifically so a problem with this optional feature
+// (a bad CDN version, a network hiccup) can never take down the entire app the
+// way a top-level failure did once already.
 const msalConfig = {
   auth: {
     clientId: '5ab0d33b-a3cb-4b3c-80d8-aa208aa91da3',
@@ -649,10 +651,28 @@ const msalConfig = {
     cacheLocation: 'localStorage', // so signing in once doesn't require doing it again every visit
   },
 };
-const msalInstance = new msal.PublicClientApplication(msalConfig);
+let msalInstance = null;
 let msalInitialized = false;
+let msalScriptPromise = null;
+function loadMsalScript(){
+  if(msalScriptPromise) return msalScriptPromise;
+  msalScriptPromise = new Promise((resolve, reject)=>{
+    if(window.msal){ resolve(); return; }
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/@azure/msal-browser@3/lib/msal-browser.min.js';
+    s.onload = ()=>resolve();
+    s.onerror = ()=>reject(new Error('Could not load the Microsoft sign-in library — check your connection and try again.'));
+    document.head.appendChild(s);
+  });
+  return msalScriptPromise;
+}
 async function ensureMsalInitialized(){
-  if(!msalInitialized){ await msalInstance.initialize(); msalInitialized = true; }
+  if(msalInitialized) return;
+  await loadMsalScript();
+  if(!window.msal) throw new Error('The Microsoft sign-in library loaded, but not the way we expected — nothing was changed on your account.');
+  msalInstance = new msal.PublicClientApplication(msalConfig);
+  await msalInstance.initialize();
+  msalInitialized = true;
 }
 
 async function fetchMyProfile(authUserId){
@@ -3219,8 +3239,8 @@ function renderCalendarWidget(){
 }
 /* ==================== CALENDAR VIEW (desktop only) ==================== */
 async function signInToMicrosoft(){
-  await ensureMsalInitialized();
   try{
+    await ensureMsalInitialized();
     const result = await msalInstance.loginPopup({ scopes: ['Calendars.Read', 'User.Read'] });
     state.msalAccount = result.account;
     await fetchMyOutlookEvents();
@@ -3240,15 +3260,15 @@ function signOutOfMicrosoft(){
   render();
 }
 async function fetchMyOutlookEvents(){
-  await ensureMsalInitialized();
-  const accounts = msalInstance.getAllAccounts();
-  const account = state.msalAccount || accounts[0];
-  if(!account){ return; }
-  state.msalAccount = account;
   state.myCalendarLoading = true;
   state.myCalendarError = null;
   render();
   try{
+    await ensureMsalInitialized();
+    const accounts = msalInstance.getAllAccounts();
+    const account = state.msalAccount || accounts[0];
+    if(!account){ state.myCalendarLoading=false; render(); return; }
+    state.msalAccount = account;
     const tokenResult = await msalInstance.acquireTokenSilent({ scopes: ['Calendars.Read'], account });
     const now = new Date();
     const start = new Date(now); start.setHours(0,0,0,0);
