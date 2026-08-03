@@ -1331,6 +1331,64 @@ function wireDragReorder(selector, dragAttr, onReorder){
       draggedId = null;
     };
   });
+
+  // Touch devices don't fire the HTML5 drag events above at all — this adds an
+  // equivalent long-press-then-drag gesture so reordering also works on mobile,
+  // without hijacking normal tapping (to open a list) or scrolling (to see more
+  // of the sidebar). A press has to hold still for a beat before it's treated as
+  // a drag, exactly like rearranging icons on a phone's home screen.
+  let touchDraggedId = null, touchStartX = 0, touchStartY = 0, touchHoldTimer = null, touchDragActive = false, lastTouchTargetEl = null;
+  const LONG_PRESS_MS = 350, MOVE_CANCEL_PX = 10;
+  document.querySelectorAll(selector).forEach(el=>{
+    el.ontouchstart = (ev)=>{
+      const touch = ev.touches[0];
+      touchStartX = touch.clientX; touchStartY = touch.clientY;
+      touchDraggedId = el.dataset[dragAttr];
+      touchDragActive = false;
+      clearTimeout(touchHoldTimer);
+      touchHoldTimer = setTimeout(()=>{
+        touchDragActive = true;
+        el.style.opacity = '0.4';
+        if(navigator.vibrate) navigator.vibrate(15);
+      }, LONG_PRESS_MS);
+    };
+    el.ontouchmove = (ev)=>{
+      const touch = ev.touches[0];
+      const dx = Math.abs(touch.clientX - touchStartX), dy = Math.abs(touch.clientY - touchStartY);
+      if(!touchDragActive){
+        // Moved too far before the hold timer fired — this is a scroll, not a drag.
+        if(dx > MOVE_CANCEL_PX || dy > MOVE_CANCEL_PX) clearTimeout(touchHoldTimer);
+        return;
+      }
+      // Actively dragging now — stop the page from scrolling underneath the finger.
+      ev.preventDefault();
+      if(lastTouchTargetEl) lastTouchTargetEl.style.background = '';
+      const under = document.elementFromPoint(touch.clientX, touch.clientY);
+      const dropEl = under && under.closest ? under.closest(selector) : null;
+      if(dropEl && dropEl.dataset[dragAttr] !== touchDraggedId){
+        dropEl.style.background = 'var(--edge-light)';
+        lastTouchTargetEl = dropEl;
+      } else {
+        lastTouchTargetEl = null;
+      }
+    };
+    el.ontouchend = ()=>{
+      clearTimeout(touchHoldTimer);
+      el.style.opacity = '';
+      if(lastTouchTargetEl){
+        lastTouchTargetEl.style.background = '';
+        const targetId = lastTouchTargetEl.dataset[dragAttr];
+        if(touchDraggedId && targetId && touchDraggedId!==targetId) onReorder(touchDraggedId, targetId);
+      }
+      touchDraggedId = null; touchDragActive = false; lastTouchTargetEl = null;
+    };
+    el.ontouchcancel = ()=>{
+      clearTimeout(touchHoldTimer);
+      el.style.opacity = '';
+      if(lastTouchTargetEl) lastTouchTargetEl.style.background = '';
+      touchDraggedId = null; touchDragActive = false; lastTouchTargetEl = null;
+    };
+  });
 }
 function dueStatus(d){
   if(!d) return 'none';
@@ -6040,7 +6098,7 @@ function renderTopModalCard(){
         <div class="modal-title-row">${brandLogoImg(brandName)}<div class="modal-title">${escapeHtml(titleText)}</div></div>
       </div>
       ${frame.kind==='deal' && dealCanEdit ? `<button class="btn sm" data-action="saveAndCloseDeal" style="background:#fff;color:var(--edge);">Save &amp; Close</button>` : ''}
-      <button class="modal-close" data-action="closeModal">${frame.kind==='client' ? '✓ Save & Close' : '✕ Done'}</button>
+      <button class="modal-close" data-action="closeModal">${(frame.kind==='client' || frame.kind==='entry') ? '✓ Save & Close' : '✕ Done'}</button>
     </div>
     <div class="modal-body">${bodyHtml}</div>
   </div>`;
@@ -6114,30 +6172,28 @@ function renderClientModalBody(l,c,viewMode,pendingDel){
     <div class="contact-card" style="flex:1;min-width:220px;">
       <div class="label">Primary Contact</div>
       ${contactRowCompact(c.primary)}
-      ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickContact" data-client="${c.id}" data-slot="primary">${c.primary? 'Change contact':'Attach contact'}</button>` : ''}
+      ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickContact" data-client="${c.id}" data-slot="primary">${c.primary? 'Change contact':'Add Contact / Create New Contact'}</button>` : ''}
     </div>
     ${(c.primary && !state.isMobile) ? `
     <div class="contact-card" style="flex:1;min-width:220px;">
       <div class="label">Second Contact</div>
       ${contactRowCompact(c.secondContactId)}
-      ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickContact" data-client="${c.id}" data-slot="second">${c.secondContactId? 'Change contact':'Attach contact'}</button>` : ''}
+      ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickContact" data-client="${c.id}" data-slot="second">${c.secondContactId? 'Change contact':'Add Contact / Create New Contact'}</button>` : ''}
     </div>` : ''}
     ${(c.primary && c.secondContactId && !state.isMobile) ? `
     <div class="contact-card" style="flex:1;min-width:220px;">
       <div class="label">Third Contact</div>
       ${contactRowCompact(c.thirdContactId)}
-      ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickContact" data-client="${c.id}" data-slot="third">${c.thirdContactId? 'Change contact':'Attach contact'}</button>` : ''}
+      ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickContact" data-client="${c.id}" data-slot="third">${c.thirdContactId? 'Change contact':'Add Contact / Create New Contact'}</button>` : ''}
     </div>` : ''}
   </div>
-  <div class="section-label">Sites / Deals</div>
-  ${renderDealGroupsInClient(l,c)}
-  ` : ''}
-  ${showProspecting ? renderLSRInline(c, state.leasingReportMode || viewMode) : ''}
-  ${showDeals ? `
   <div class="section-label">General To-Do's <span style="font-weight:400;color:var(--ink-soft);">(not tied to a specific site)</span></div>
   ${canEdit ? `<button class="btn secondary sm" data-action="newAccountTodo" data-listid="${l.id}" data-client="${c.id}" style="margin-bottom:10px;">+ New To-Do</button>` : ''}
   ${renderTodoList(db.todos.filter(t=>t.clientId===c.id && !t.dealId).filter(visibleTodo))}
+  <div class="section-label" style="margin-top:18px;">Sites / Deals</div>
+  ${renderDealGroupsInClient(l,c)}
   ` : ''}
+  ${showProspecting ? renderLSRInline(c, state.leasingReportMode || viewMode) : ''}
   ${showDeals ? accessHtml : ''}
   ${l.id==='listings' ? renderElaCard(c, canEdit) : ''}
   <div class="contact-card" style="margin-top:20px;">
@@ -6463,7 +6519,7 @@ function renderDealModalBody(l,c,d){
   <div class="contact-card">
     <div class="label">Primary Site Contact</div>
     ${contactRow(d.contactId)}
-    ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickDealContact" data-slot="primary" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">${d.contactId? 'Change contact':'Attach contact'}</button>` : ''}
+    ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickDealContact" data-slot="primary" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">${d.contactId? 'Change contact':'Add Contact / Create New Contact'}</button>` : ''}
   </div>
   ${d.contactId ? `
   <div class="contact-card">
@@ -6475,13 +6531,13 @@ function renderDealModalBody(l,c,d){
   <div class="contact-card">
     <div class="label">Second Site Contact</div>
     ${contactRow(d.secondContactId)}
-    ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickDealContact" data-slot="second" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">${d.secondContactId? 'Change contact':'Attach contact'}</button>` : ''}
+    ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickDealContact" data-slot="second" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">${d.secondContactId? 'Change contact':'Add Contact / Create New Contact'}</button>` : ''}
   </div>` : ''}
   ${d.secondContactId ? `
   <div class="contact-card">
     <div class="label">Third Site Contact</div>
     ${contactRow(d.thirdContactId)}
-    ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickDealContact" data-slot="third" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">${d.thirdContactId? 'Change contact':'Attach contact'}</button>` : ''}
+    ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickDealContact" data-slot="third" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">${d.thirdContactId? 'Change contact':'Add Contact / Create New Contact'}</button>` : ''}
   </div>` : ''}
   <div class="section-label">Deal Terms</div>
   <div class="type-toggle" id="dealTypeToggle">
@@ -6724,7 +6780,7 @@ function renderLSRProspectBody(l, listing, p){
   <div class="contact-card">
     <div class="label">Contact</div>
     ${contactRow(p.contactId)}
-    <button class="btn secondary sm" style="margin-top:10px;" data-action="lsrPickContact">${p.contactId?'Change contact':'Attach contact'}</button>
+    <button class="btn secondary sm" style="margin-top:10px;" data-action="lsrPickContact">${p.contactId?'Change contact':'Add Contact / Create New Contact'}</button>
   </div>
   <div class="contact-card" style="background:#F3F0FB;border-color:#DCD3F5;">
     <div class="label" style="color:#6B46C1;">Broker</div>
@@ -7197,17 +7253,17 @@ function renderEntryModalBody(l,e){
   <div class="contact-card">
     <div class="label">Contact</div>
     ${contactRow(e.contactId)}
-    <button class="btn secondary sm" style="margin-top:10px;" data-action="pickEntryContact" data-entry="${e.id}" data-listid="${l.id}">${e.contactId? 'Change contact':'Attach contact'}</button>
+    <button class="btn secondary sm" style="margin-top:10px;" data-action="pickEntryContact" data-entry="${e.id}" data-listid="${l.id}">${e.contactId? 'Change contact':'Add Contact / Create New Contact'}</button>
   </div>
-  <div class="contact-card">
+  <div class="section-label">To-Do's</div>
+  ${todos.length? renderTodoList(todos) : `<div class="empty-state" style="padding:26px;"><div class="big">No follow-up set.</div><div class="tiny">Add a to-do to keep this prospect moving.</div></div>`}
+  <div class="contact-card" style="margin-top:18px;">
     <div class="label">Prospect Details${owner?` · Owner: ${escapeHtml(owner.name)}`:''}</div>
     <div class="field" style="margin-top:8px;"><label>Client Name</label><input value="${escapeAttr(e.name)}" data-edit="name" data-entry="${e.id}" data-listid="${l.id}"></div>
     <div class="field"><label>Last Call</label><input value="${e.lastCall?toLocalDateStr(e.lastCall):''}" placeholder="e.g. today" data-edit="lastCall" data-entry="${e.id}" data-listid="${l.id}"></div>
     <div class="field"><label>Latest Feedback / Notes</label><textarea rows="2" data-edit="feedback" data-entry="${e.id}" data-listid="${l.id}">${escapeHtml(e.feedback||'')}</textarea></div>
   </div>
   ${accessHtml}
-  <div class="section-label">To-Do's</div>
-  ${todos.length? renderTodoList(todos) : `<div class="empty-state" style="padding:26px;"><div class="big">No follow-up set.</div><div class="tiny">Add a to-do to keep this prospect moving.</div></div>`}
   `;
 }
 
