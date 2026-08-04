@@ -480,6 +480,7 @@
 </head>
 <body>
 <div id="app"></div>
+<input type="file" id="mapsFileStatic" accept=".kml,.kmz" style="display:none;">
 
 <script>
 /* =========================================================================
@@ -9116,7 +9117,7 @@ function renderMapsImportModal(){
       </div>
       <div class="field">
         <label>KML/KMZ file *</label>
-        <input type="file" id="mapsFile" accept=".kml,.kmz">
+        <button class="btn secondary" data-action="mapsChooseFile" type="button">Choose File</button>
         <div id="mapsFileStatus" class="tiny" style="margin-top:8px;color:var(--ink-soft);"></div>
       </div>
     `;
@@ -9203,35 +9204,8 @@ function renderMapsImportModal(){
     if(newNameEl) newNameEl.oninput = ()=>{ m.newClientName = newNameEl.value; if(!m.newClientListId) m.newClientListId='clients'; render(); };
     overlay.querySelectorAll('[data-mapsnewlist]').forEach(b=>b.onclick=()=>{ m.newClientListId = b.dataset.mapsnewlist; render(); });
 
-    // File selection — kept as plain and direct as possible on purpose.
-    const fileInput = document.getElementById('mapsFile');
-    const fileStatusEl = document.getElementById('mapsFileStatus');
-    if(fileInput){
-      fileInput.addEventListener('change', function handleMapsFileChange(){
-        const file = fileInput.files && fileInput.files[0];
-        if(!file) return;
-        if(!m.pickedClient && !m.newClientName.trim()){
-          if(fileStatusEl) fileStatusEl.textContent = 'Pick or name a Client/Listing first, then choose the file again.';
-          fileInput.value = '';
-          return;
-        }
-        if(fileStatusEl) fileStatusEl.textContent = 'Reading ' + file.name + '…';
-        mapsReadKmlText(file).then(kmlText=>{
-          const folders = mapsParseFolders(kmlText);
-          if(!folders.length){
-            if(fileStatusEl) fileStatusEl.textContent = "Didn't find any pinned sites in that file.";
-            return;
-          }
-          m.folders = folders;
-          m.folderStage = folders.map(()=> 'skip');
-          m.manualPicks = folders.map(f=>f.placemarks.map(()=>false));
-          m.step = 'mapping';
-          render();
-        }).catch(err=>{
-          if(fileStatusEl) fileStatusEl.textContent = "Couldn't read that file — " + err.message;
-        });
-      });
-    }
+    const chooseFileBtn = overlay.querySelector('[data-action="mapsChooseFile"]');
+    if(chooseFileBtn) chooseFileBtn.onclick=()=>{ document.getElementById('mapsFileStatic').click(); };
   }
   if(m.step==='mapping'){
     overlay.querySelectorAll('[data-mapsfolderstage]').forEach(sel=>sel.onchange=()=>{
@@ -9754,6 +9728,36 @@ function loadAppState(){
     appStateWasLoaded = true;
   } catch(e){ /* corrupted/old save shape — just fall back to the seed data */ }
 }
+// Wired exactly once, here, at page load — this element is never recreated by any
+// render cycle, unlike the file input that used to live inside the MyMaps modal
+// itself, which got rebuilt every time that modal re-rendered.
+document.getElementById('mapsFileStatic').addEventListener('change', function(){
+  const file = this.files && this.files[0];
+  this.value = ''; // reset immediately so choosing the exact same file again still fires "change" next time
+  if(!file) return;
+  const m = state.mapsImport;
+  if(!m || m.step!=='upload') return;
+  const fileStatusEl = document.getElementById('mapsFileStatus');
+  if(!m.pickedClient && !m.newClientName.trim()){
+    if(fileStatusEl) fileStatusEl.textContent = 'Pick or name a Client/Listing first, then choose the file again.';
+    return;
+  }
+  if(fileStatusEl) fileStatusEl.textContent = 'Reading ' + file.name + '…';
+  mapsReadKmlText(file).then(kmlText=>{
+    const folders = mapsParseFolders(kmlText);
+    if(!folders.length){
+      if(fileStatusEl) fileStatusEl.textContent = "Didn't find any pinned sites in that file.";
+      return;
+    }
+    m.folders = folders;
+    m.folderStage = folders.map(()=> 'skip');
+    m.manualPicks = folders.map(f=>f.placemarks.map(()=>false));
+    m.step = 'mapping';
+    render();
+  }).catch(err=>{
+    if(fileStatusEl) fileStatusEl.textContent = "Couldn't read that file — " + err.message;
+  });
+});
 loadAppState();
 
 render();
