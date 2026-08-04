@@ -3990,8 +3990,9 @@ function todoRowLegend(ids){
     <span><span style="display:inline-block;width:15px;height:15px;border:2px solid var(--ink);border-radius:50%;vertical-align:middle;margin-right:6px;"></span>Mark complete</span>
   </div>`;
 }
-function renderTodoList(list){
+function renderTodoList(list, compact){
   if(!list.length){
+    if(compact) return `<div class="tiny" style="color:var(--ink-soft);padding:6px 0;">Nothing here right now.</div>`;
     return `<div class="empty-state"><div class="big">All clear.</div><div class="tiny">Nothing here right now. Nice work. Take five.</div></div>`;
   }
   // Group by assignee — mine first, then each teammate in turn — and within each
@@ -6037,7 +6038,7 @@ function renderClientModalBody(l,c,viewMode,pendingDel){
   </div>
   <div class="section-label">General To-Do's <span style="font-weight:400;color:var(--ink-soft);">(not tied to a specific site)</span></div>
   ${canEdit ? `<button class="btn secondary sm" data-action="newAccountTodo" data-listid="${l.id}" data-client="${c.id}" style="margin-bottom:10px;">+ New To-Do</button>` : ''}
-  ${renderTodoList(db.todos.filter(t=>t.clientId===c.id && !t.dealId).filter(visibleTodo))}
+  ${renderTodoList(db.todos.filter(t=>t.clientId===c.id && !t.dealId).filter(visibleTodo), true)}
   <div class="section-label" style="margin-top:18px;">Sites / Deals</div>
   ${renderDealGroupsInClient(l,c)}
   ` : ''}
@@ -6433,7 +6434,7 @@ function renderDealModalBody(l,c,d){
   <div class="field"><label>Notes</label><textarea id="dtNotes" rows="3" ${ro}>${escapeHtml(d.notes||'')}</textarea></div>
   ${canEdit ? `<button class="btn sm" data-action="saveDealTerms" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}" style="margin-bottom:6px;">Save Deal Terms</button>` : ''}
   <div class="section-label">To-Do's</div>
-  ${todos.length? renderTodoList(todos) : `<div class="empty-state" style="padding:26px;"><div class="big">No to-do's yet.</div><div class="tiny">Add the first action item for this site.</div></div>`}
+  ${todos.length? renderTodoList(todos, true) : `<div class="tiny" style="color:var(--ink-soft);padding:6px 0;">No to-do's yet — add the first action item for this site.</div>`}
   ${state.currentUser.role==='Admin' ? `
   <div style="margin-top:24px;padding-top:16px;border-top:1px solid var(--line-soft);">
     <button class="btn danger sm" data-action="deleteDeal" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">🗑️ Delete this Deal</button>
@@ -7104,7 +7105,7 @@ function renderEntryModalBody(l,e){
     <button class="btn secondary sm" style="margin-top:10px;" data-action="pickEntryContact" data-entry="${e.id}" data-listid="${l.id}">${e.contactId? 'Change contact':'Add Contact / Create New Contact'}</button>
   </div>
   <div class="section-label">To-Do's</div>
-  ${todos.length? renderTodoList(todos) : `<div class="empty-state" style="padding:26px;"><div class="big">No follow-up set.</div><div class="tiny">Add a to-do to keep this prospect moving.</div></div>`}
+  ${todos.length? renderTodoList(todos, true) : `<div class="tiny" style="color:var(--ink-soft);padding:6px 0;">No follow-up set — add a to-do to keep this prospect moving.</div>`}
   <div class="contact-card" style="margin-top:18px;">
     <div class="label">Prospect Details${owner?` · Owner: ${escapeHtml(owner.name)}`:''}</div>
     <div class="field" style="margin-top:8px;"><label>Client Name</label><input value="${escapeAttr(e.name)}" data-edit="name" data-entry="${e.id}" data-listid="${l.id}"></div>
