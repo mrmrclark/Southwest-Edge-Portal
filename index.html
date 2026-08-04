@@ -6352,8 +6352,7 @@ function renderDealModalBody(l,c,d){
   const ro = canEdit ? '' : 'disabled';
   return `
   ${!canEdit ? `<div style="background:#F3F1EC;border:1px solid var(--line);border-radius:8px;padding:8px 14px;font-size:12.5px;color:var(--ink-soft);margin-bottom:14px;">👁️ View-only — you have Full Access visibility but aren't personally added to this ${l.id==='listings'?'listing':'client'}, so editing is turned off.</div>` : ''}
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px;">
-    ${canEdit ? `<button class="btn sm" data-action="newTodoInDeal" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">+ New To-Do</button>` : '<div></div>'}
+  <div style="display:flex;align-items:center;justify-content:flex-end;margin-bottom:14px;flex-wrap:wrap;gap:10px;">
     <div style="display:flex;gap:14px;">
       <label style="display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--ink-soft);font-weight:600;">
         <input type="checkbox" data-toggleactive="${d.id}" ${d.activeDeal?'checked':''} ${ro} style="width:auto;accent-color:var(--edge);">
@@ -6370,24 +6369,25 @@ function renderDealModalBody(l,c,d){
     ${contactRow(d.contactId)}
     ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickDealContact" data-slot="primary" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">${d.contactId? 'Change contact':'Add Contact / Create New Contact'}</button>` : ''}
   </div>
-  ${d.contactId ? `
-  <div class="contact-card">
-    <div class="label">Broker</div>
-    ${brokerRow(d.brokerContactId)}
-    ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickDealBroker" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">${d.brokerContactId? 'Change broker':'Attach broker'}</button>` : ''}
-  </div>` : ''}
-  ${d.brokerContactId ? `
   <div class="contact-card">
     <div class="label">Second Site Contact</div>
     ${contactRow(d.secondContactId)}
     ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickDealContact" data-slot="second" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">${d.secondContactId? 'Change contact':'Add Contact / Create New Contact'}</button>` : ''}
-  </div>` : ''}
+  </div>
   ${d.secondContactId ? `
   <div class="contact-card">
     <div class="label">Third Site Contact</div>
     ${contactRow(d.thirdContactId)}
     ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickDealContact" data-slot="third" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">${d.thirdContactId? 'Change contact':'Add Contact / Create New Contact'}</button>` : ''}
   </div>` : ''}
+  <div class="section-label">To-Do's</div>
+  ${canEdit ? `<button class="btn secondary sm" data-action="newTodoInDeal" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}" style="margin-bottom:10px;">+ New To-Do</button>` : ''}
+  ${todos.length? renderTodoList(todos, true) : `<div class="tiny" style="color:var(--ink-soft);padding:6px 0;">No to-do's yet — add the first action item for this site.</div>`}
+  <div class="contact-card" style="margin-top:18px;">
+    <div class="label">Broker</div>
+    ${brokerRow(d.brokerContactId)}
+    ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickDealBroker" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">${d.brokerContactId? 'Change broker':'Attach broker'}</button>` : ''}
+  </div>
   <div class="section-label">Deal Terms</div>
   <div class="type-toggle" id="dealTypeToggle">
     <button class="${d.dealType==='lease'?'active':''}" data-dealtypebtn="lease" ${ro}>Lease</button>
@@ -6433,8 +6433,6 @@ function renderDealModalBody(l,c,d){
   </div>
   <div class="field"><label>Notes</label><textarea id="dtNotes" rows="3" ${ro}>${escapeHtml(d.notes||'')}</textarea></div>
   ${canEdit ? `<button class="btn sm" data-action="saveDealTerms" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}" style="margin-bottom:6px;">Save Deal Terms</button>` : ''}
-  <div class="section-label">To-Do's</div>
-  ${todos.length? renderTodoList(todos, true) : `<div class="tiny" style="color:var(--ink-soft);padding:6px 0;">No to-do's yet — add the first action item for this site.</div>`}
   ${state.currentUser.role==='Admin' ? `
   <div style="margin-top:24px;padding-top:16px;border-top:1px solid var(--line-soft);">
     <button class="btn danger sm" data-action="deleteDeal" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">🗑️ Delete this Deal</button>
@@ -7745,7 +7743,8 @@ function renderNewTodoPickerModal(){
   document.getElementById('app').appendChild(overlay);
 
   overlay.querySelectorAll('[data-action="closeNewTodoPicker"]').forEach(b=>b.onclick=()=>{ state.newTodoPicker=null; render(); });
-  overlay.querySelector('[data-action="ntpBack"]').onclick=()=>{
+  const backBtn = overlay.querySelector('[data-action="ntpBack"]');
+  if(backBtn) backBtn.onclick=()=>{
     if(p.step==='chooseAccount' || p.step==='chooseEntryType') p.step='chooseType';
     else if(p.step==='chooseDealOrStop') p.step='chooseAccount';
     else if(p.step==='chooseEntry') p.step='chooseEntryType';
