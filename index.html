@@ -3341,7 +3341,11 @@ async function fetchMyOutlookEvents(){
     const res = await fetch(url, {
       headers: { 'Authorization': `Bearer ${tokenResult.accessToken}`, 'Prefer': 'outlook.timezone="' + Intl.DateTimeFormat().resolvedOptions().timeZone + '"' },
     });
-    if(!res.ok){ throw new Error(`Microsoft returned an error (${res.status}).`); }
+    if(!res.ok){
+      let detail = '';
+      try{ const errBody = await res.json(); detail = errBody.error ? ` — ${errBody.error.code}: ${errBody.error.message}` : ''; } catch(parseErr){ /* body wasn't JSON — no extra detail available */ }
+      throw new Error(`Microsoft returned an error (${res.status})${detail}.`);
+    }
     const data = await res.json();
     state.myCalendarEvents = (data.value||[]).map(ev=>({
       subject: ev.subject || '(No title)',
