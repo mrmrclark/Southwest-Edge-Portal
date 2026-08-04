@@ -9162,7 +9162,6 @@ function renderMapsImportModal(){
       ${m.step==='mapping' ? `<button class="btn" data-action="mapsToPickOrReview">Continue</button>` : ''}
       ${m.step==='pickSites' ? `<button class="btn" data-action="mapsToReview">Continue</button>` : ''}
       ${m.step==='review' ? `<button class="btn" id="mapsConfirmBtn" data-action="confirmMapsImport">Import</button>` : ''}
-      ${m.step==='upload' ? `<button class="btn" id="mapsContinueUploadBtn" data-action="mapsContinueUpload">Continue</button>` : ''}
     </div>
   </div>`;
   document.getElementById('app').appendChild(overlay);
@@ -9192,17 +9191,14 @@ function renderMapsImportModal(){
     const newNameEl = document.getElementById('mapsNewClientName');
     if(newNameEl) newNameEl.oninput = ()=>{ m.newClientName = newNameEl.value; if(!m.newClientListId) m.newClientListId='clients'; render(); };
     overlay.querySelectorAll('[data-mapsnewlist]').forEach(b=>b.onclick=()=>{ m.newClientListId = b.dataset.mapsnewlist; render(); });
-
-    const processSelectedFile = safeHandler(async (btnToReset)=>{
-      if(!m.pickedClient && !m.newClientName.trim()){ flashToast('Pick or name a Client/Listing first.'); return; }
-      const liveFileInput = document.getElementById('mapsFile');
-      const file = liveFileInput && liveFileInput.files[0];
-      if(!file){ flashToast('Choose a KML/KMZ file first.'); return; }
-      if(btnToReset){ btnToReset.disabled = true; btnToReset.textContent = 'Reading file…'; }
+    const fileInput = document.getElementById('mapsFile');
+    if(fileInput) fileInput.onchange=async ()=>{
+      const file = fileInput.files[0]; if(!file) return;
+      if(!m.pickedClient && !m.newClientName.trim()){ flashToast('Pick or name a Client/Listing first.'); fileInput.value=''; return; }
       try{
         const kmlText = await mapsReadKmlText(file);
         const folders = mapsParseFolders(kmlText);
-        if(!folders.length){ flashToast("Didn't find any pinned sites in that file."); if(btnToReset){ btnToReset.disabled=false; btnToReset.textContent='Continue'; } return; }
+        if(!folders.length){ flashToast("Didn't find any pinned sites in that file."); return; }
         m.folders = folders;
         m.folderStage = folders.map(()=> 'skip');
         m.manualPicks = folders.map(f=>f.placemarks.map(()=>false));
@@ -9210,13 +9206,8 @@ function renderMapsImportModal(){
         render();
       } catch(err){
         flashToast("Couldn't read that file — " + err.message);
-        if(btnToReset){ btnToReset.disabled=false; btnToReset.textContent='Continue'; }
       }
-    });
-    const fileInput = document.getElementById('mapsFile');
-    if(fileInput) fileInput.onchange=()=>{ processSelectedFile(document.getElementById('mapsContinueUploadBtn')); };
-    const continueUploadBtn = document.getElementById('mapsContinueUploadBtn');
-    if(continueUploadBtn) continueUploadBtn.onclick=()=>{ processSelectedFile(continueUploadBtn); };
+    };
   }
   if(m.step==='mapping'){
     overlay.querySelectorAll('[data-mapsfolderstage]').forEach(sel=>sel.onchange=()=>{
