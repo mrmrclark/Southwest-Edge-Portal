@@ -543,7 +543,7 @@ let state = {
   showAllSmartLists:false,      // collapse toggle once there are more than 10 smart lists
   notifSettingsOpen:false,      // whether the notification-preferences modal is open
   pendingUsersModalOpen:false,
-  sidePanelWidgets:{weather:true, news:true, quicklinks:true},
+  sidePanelWidgets:{outlookCalendar:true, weather:true, news:true, quicklinks:true},
   showWidgetPicker:false,
   editContactModal:null,
   editBrokerModal:null,
@@ -3775,11 +3775,11 @@ function wireMarketingListWizard(overlay, listing, allCats){
     };
   }
 }
-const WIDGET_RENDERERS = { weather: renderWeatherWidget, news: renderNewsWidget, quicklinks: renderQuickLinksWidget };
+const WIDGET_RENDERERS = { outlookCalendar: renderOutlookCalendarWidget, weather: renderWeatherWidget, news: renderNewsWidget, quicklinks: renderQuickLinksWidget };
 function renderSidePanel(){
   if(state.isMobile) return ''; // widgets are desktop-only, full stop — no markup, no weather fetch
   const w = state.sidePanelWidgets;
-  const order = (state.widgetOrder||['weather','news','quicklinks']).filter(k=>WIDGET_RENDERERS[k]);
+  const order = (state.widgetOrder||['outlookCalendar','weather','news','quicklinks']).filter(k=>WIDGET_RENDERERS[k]);
   const visibleOrder = order.filter(k=>w[k]);
   const widgetsHtml = visibleOrder.map((key,i)=>`
     <div draggable="true" data-widgetdrag="${key}" style="position:relative;cursor:grab;">
@@ -3787,12 +3787,14 @@ function renderSidePanel(){
       ${WIDGET_RENDERERS[key]()}
     </div>`).join('');
   return `
-  <div class="side-panel-columns">
   <div class="side-panel">
     <div style="display:flex;justify-content:flex-end;position:relative;">
       <button class="widget-picker-toggle" data-action="toggleWidgetPicker" title="Choose widgets">⚙️ Widgets</button>
       ${state.showWidgetPicker ? `
       <div class="nav-context-menu" style="top:26px;">
+        <label style="display:flex;align-items:center;gap:8px;padding:8px 12px;font-size:12.5px;cursor:pointer;">
+          <input type="checkbox" data-widgettoggle="outlookCalendar" ${w.outlookCalendar?'checked':''} style="width:auto;"> My Calendar (Outlook)
+        </label>
         <label style="display:flex;align-items:center;gap:8px;padding:8px 12px;font-size:12.5px;cursor:pointer;">
           <input type="checkbox" data-widgettoggle="weather" ${w.weather?'checked':''} style="width:auto;"> Weather
         </label>
@@ -3806,10 +3808,6 @@ function renderSidePanel(){
     </div>
     ${widgetsHtml}
     ${!visibleOrder.length ? `<div class="widget-card" style="text-align:center;color:var(--ink-soft);font-size:12.5px;">No widgets shown. Click "Widgets" above to add some.</div>` : ''}
-  </div>
-  <div class="side-panel-calendar-col">
-    ${renderOutlookCalendarWidget()}
-  </div>
   </div>`;
 }
 function caOutstandingCount(){
@@ -4677,7 +4675,7 @@ function attachShellHandlers(){
     renderPreservingScroll('.content');
   });
   wireDragReorder('[data-widgetdrag]', 'widgetdrag', (fromKey, toKey)=>{
-    if(!state.widgetOrder) state.widgetOrder = ['weather','news','quicklinks'];
+    if(!state.widgetOrder) state.widgetOrder = ['outlookCalendar','weather','news','quicklinks'];
     const fromIdx = state.widgetOrder.indexOf(fromKey), toIdx = state.widgetOrder.indexOf(toKey);
     if(fromIdx<0 || toIdx<0) return;
     const [moved] = state.widgetOrder.splice(fromIdx, 1);
@@ -9162,7 +9160,7 @@ function renderMapsImportModal(){
       ${m.step==='mapping' ? `<button class="btn" data-action="mapsToPickOrReview">Continue</button>` : ''}
       ${m.step==='pickSites' ? `<button class="btn" data-action="mapsToReview">Continue</button>` : ''}
       ${m.step==='review' ? `<button class="btn" id="mapsConfirmBtn" data-action="confirmMapsImport">Import</button>` : ''}
-      ${m.step==='upload' && m.selectedFile ? `<button class="btn" id="mapsContinueUploadBtn" data-action="mapsContinueUpload">Continue</button>` : ''}
+      ${m.step==='upload' ? `<button class="btn" id="mapsContinueUploadBtn" data-action="mapsContinueUpload">Continue</button>` : ''}
     </div>
   </div>`;
   document.getElementById('app').appendChild(overlay);
@@ -9192,19 +9190,15 @@ function renderMapsImportModal(){
     const newNameEl = document.getElementById('mapsNewClientName');
     if(newNameEl) newNameEl.oninput = ()=>{ m.newClientName = newNameEl.value; if(!m.newClientListId) m.newClientListId='clients'; render(); };
     overlay.querySelectorAll('[data-mapsnewlist]').forEach(b=>b.onclick=()=>{ m.newClientListId = b.dataset.mapsnewlist; render(); });
-    const fileInput = document.getElementById('mapsFile');
-    if(fileInput) fileInput.onchange=()=>{
-      const file = fileInput.files[0];
-      m.selectedFile = file || null;
-      renderPreservingScroll('.modal-body');
-    };
     const continueUploadBtn = document.getElementById('mapsContinueUploadBtn');
     if(continueUploadBtn) continueUploadBtn.onclick=safeHandler(async ()=>{
       if(!m.pickedClient && !m.newClientName.trim()){ flashToast('Pick or name a Client/Listing first.'); return; }
-      if(!m.selectedFile){ flashToast('Choose a KML/KMZ file first.'); return; }
+      const liveFileInput = document.getElementById('mapsFile');
+      const file = liveFileInput && liveFileInput.files[0];
+      if(!file){ flashToast('Choose a KML/KMZ file first.'); return; }
       continueUploadBtn.disabled = true; continueUploadBtn.textContent = 'Reading file…';
       try{
-        const kmlText = await mapsReadKmlText(m.selectedFile);
+        const kmlText = await mapsReadKmlText(file);
         const folders = mapsParseFolders(kmlText);
         if(!folders.length){ flashToast("Didn't find any pinned sites in that file."); continueUploadBtn.disabled=false; continueUploadBtn.textContent='Continue'; return; }
         m.folders = folders;
