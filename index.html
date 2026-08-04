@@ -9039,18 +9039,36 @@ function mapsParseFolders(kmlText){
     for(const child of parent.children){ if(child.tagName===tag || child.localName===tag) out.push(child); }
     return out;
   };
+  const extractPlacemarks = (parent) => directChildrenByTag(parent, 'Placemark')
+    .filter(p=>p.getElementsByTagName('Point').length > 0)
+    .map(p=>{
+      const n = directChildByTag(p, 'name');
+      return {name: n ? n.textContent.trim() : '(unnamed site)'};
+    });
+
   const folderEls = [...xml.getElementsByTagName('Folder')];
-  return folderEls.map(folderEl=>{
+  let results = folderEls.map(folderEl=>{
     const nameEl = directChildByTag(folderEl, 'name');
     const name = nameEl ? nameEl.textContent.trim() : '(unnamed folder)';
-    const placemarks = directChildrenByTag(folderEl, 'Placemark')
-      .filter(p=>p.getElementsByTagName('Point').length > 0)
-      .map(p=>{
-        const n = directChildByTag(p, 'name');
-        return {name: n ? n.textContent.trim() : '(unnamed site)'};
-      });
-    return {name, placemarks};
+    return {name, placemarks: extractPlacemarks(folderEl)};
   }).filter(f=>f.placemarks.length);
+
+  // Google MyMaps skips the Folder wrapper entirely for a map with only one
+  // layer — its Placemarks sit directly under Document instead. If there were
+  // no Folders at all (or none with any real sites in them), check Document
+  // itself for Placemarks before giving up.
+  if(!results.length){
+    const docEl = xml.getElementsByTagName('Document')[0];
+    if(docEl){
+      const directPlacemarks = extractPlacemarks(docEl);
+      if(directPlacemarks.length){
+        const docNameEl = directChildByTag(docEl, 'name');
+        const docName = docNameEl ? docNameEl.textContent.trim() : '(unnamed map)';
+        results = [{name: docName, placemarks: directPlacemarks}];
+      }
+    }
+  }
+  return results;
 }
 function mapsAllClientsFlat(){
   const out = [];
@@ -9133,7 +9151,7 @@ function renderMapsImportModal(){
       <div class="field">
         <label>KML/KMZ file *</label>
         <button class="btn secondary" data-action="mapsChooseFile" type="button">Choose File</button>
-        <div id="mapsFileStatus" class="tiny" style="margin-top:8px;color:var(--ink-soft);"></div>
+        <div id="mapsFileStatus" class="tiny" style="margin-top:8px;color:var(--ink-soft);">${m.selectedFileName ? ('Selected: ' + escapeHtml(m.selectedFileName)) : ''}</div>
       </div>
     `;
   } else if(m.step==='mapping'){
@@ -9750,26 +9768,25 @@ function loadAppState(){
 // render cycle, unlike the file input that used to live inside the MyMaps modal
 // itself, which got rebuilt every time that modal re-rendered.
 function processMapsSelectedFile(){
-  alert('DEBUG: Continue button click registered. Function is running.');
   const staticInput = document.getElementById('mapsFileStatic');
-  alert('DEBUG: staticInput found = ' + !!staticInput + '\nfiles.length = ' + (staticInput ? staticInput.files.length : 'N/A'));
   const file = staticInput.files && staticInput.files[0];
   const m = state.mapsImport;
   if(!m || m.step!=='upload') return;
   const fileStatusEl = document.getElementById('mapsFileStatus');
   if(!file){
-    if(fileStatusEl) fileStatusEl.textContent = 'Choose a KML/KMZ file first.';
+    if(fileStatusEl) fileStatusEl.textContent = m.selectedFileName ? ('Selected: ' + m.selectedFileName + ' — click Continue to process it.') : 'Choose a KML/KMZ file first.';
     return;
   }
+  m.selectedFileName = file.name;
   if(!m.pickedClient && !m.newClientName.trim()){
-    if(fileStatusEl) fileStatusEl.textContent = 'Pick or name a Client/Listing first, then choose the file again.';
+    if(fileStatusEl) fileStatusEl.textContent = 'Pick or name a Client/Listing first, then click Continue again. (Selected: ' + file.name + ')';
     return;
   }
   if(fileStatusEl) fileStatusEl.textContent = 'Reading ' + file.name + '…';
   mapsReadKmlText(file).then(kmlText=>{
     const folders = mapsParseFolders(kmlText);
     if(!folders.length){
-      if(fileStatusEl) fileStatusEl.textContent = "Didn't find any pinned sites in that file.";
+      if(fileStatusEl) fileStatusEl.textContent = "Didn't find any pinned sites in " + file.name + ". (Still selected — no need to re-choose it.)";
       return;
     }
     m.folders = folders;
@@ -9779,7 +9796,7 @@ function processMapsSelectedFile(){
     staticInput.value = ''; // only reset now that we're actually moving on
     render();
   }).catch(err=>{
-    if(fileStatusEl) fileStatusEl.textContent = "Couldn't read that file — " + err.message;
+    if(fileStatusEl) fileStatusEl.textContent = "Couldn't read " + file.name + " — " + err.message;
   });
 }
 document.getElementById('mapsFileStatic').addEventListener('change', processMapsSelectedFile);
