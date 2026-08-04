@@ -3447,7 +3447,11 @@ function getSundayOfWeek(d){
 }
 function calendarEligibleTodos(){
   // Someday (no date) and Completed to-dos never appear on a calendar.
-  return db.todos.filter(td=>td.dueDate && !td.completed && visibleTodo(td));
+  // Scoped narrowly on purpose: only things assigned to you, or things you
+  // personally assigned to someone else — not everything you merely have
+  // visibility into (visibleTodo() is much broader than that).
+  const me = state.currentUser.id;
+  return db.todos.filter(td=>td.dueDate && !td.completed && (td.assignedTo===me || td.createdBy===me));
 }
 function calendarTodosByDateKey(){
   const map = {};
@@ -9005,6 +9009,7 @@ function mapsNormalizeStoreNumber(name){
 function mapsHasStoreNumber(name){
   return /^AZ\s?\d{3,4}\b/i.test(name.trim());
 }
+/* ==================== MYMAPS IMPORT (rebuilt from scratch) ==================== */
 async function mapsReadKmlText(file){
   if(!/\.kmz$/i.test(file.name)) return await file.text();
   const zip = await JSZip.loadAsync(file);
@@ -9019,9 +9024,6 @@ async function mapsReadKmlText(file){
 function mapsParseFolders(kmlText){
   const xml = new DOMParser().parseFromString(kmlText, 'text/xml');
   if(xml.querySelector('parsererror')) throw new Error("That file doesn't look like valid KML.");
-  // Only Point placemarks are real, single sites. MyMaps often also draws a second
-  // shape (a ring/outline) per site under the same folder — same or a near-identical
-  // name, different geometry — which would double-count every site if not filtered out.
   return [...xml.querySelectorAll('Folder')].map(folderEl=>{
     const nameEl = folderEl.querySelector(':scope > name');
     const name = nameEl ? nameEl.textContent.trim() : '(unnamed folder)';
@@ -9035,7 +9037,6 @@ function mapsParseFolders(kmlText){
   }).filter(f=>f.placemarks.length);
 }
 function mapsAllClientsFlat(){
-  // Every real Client/Listing across every "deep" list, for the search/attach picker.
   const out = [];
   db.lists.filter(l=>l.type==='deep').forEach(l=>{
     l.clients.forEach(c=>out.push({id:c.id, name:c.name, listId:l.id, listName:l.name}));
@@ -9044,27 +9045,41 @@ function mapsAllClientsFlat(){
 }
 function mapsComputeResultDeals(m){
   const results = [];
-  m.folders.forEach((folder, fIdx)=>{
-    const stage = m.folderStage[fIdx];
-    if(stage==='skip') return;
-    folder.placemarks.forEach((p, pIdx)=>{
-      const name = mapsNormalizeStoreNumber(p.name);
-      if(stage==='manual'){
-        if(m.manualPicks[fIdx] && m.manualPicks[fIdx][pIdx]){
-          results.push({folderName:folder.name, name, stage:null});
-        }
-        return;
+  m.folders.forEach((f,i)=>{
+    const stageChoice = m.folderStage[i];
+    if(stageChoice==='skip') return;
+    f.placemarks.forEach((p,pIdx)=>{
+      if(stageChoice==='manual' && !(m.manualPicks[i] && m.manualPicks[i][pIdx])) return;
+      let stage = null;
+      if(stageChoice==='auto'){
+        stage = /^AZ\d{4}(?!\d)/i.test(p.name.trim()) ? 'signedLOI' : 'loi';
+      } else if(stageChoice!=='manual'){
+        stage = stageChoice;
       }
-      if(stage==='auto'){
-        results.push({folderName:folder.name, name, stage: mapsHasStoreNumber(p.name) ? 'signedLOI' : 'loi'});
-        return;
-      }
-      results.push({folderName:folder.name, name, stage});
+      results.push({name: p.name, stage});
     });
   });
   return results;
 }
-function renderMapsClientListHtml(matches, m){
+async function commitMapsImport(m, results){
+  let list, clientObj;
+  if(m.pickedClient){
+    list = db.lists.find(l=>l.id===m.pickedClient.listId);
+    clientObj = list.clients.find(c=>c.id===m.pickedClient.id);
+  } else {
+    list = db.lists.find(l=>l.id===(m.newClientListId||'clients'));
+    clientObj = {id:crypto.randomUUID(), name:m.newClientName.trim(), primary:null, secondContactId:null, thirdContactId:null, deals:[], createdBy:state.currentUser.id, authorizedUserIds:[]};
+    if(list.id==='listings'){ clientObj.prospects=[]; clientObj.categoryConfig=newLSRCategoryConfig(); }
+    list.clients.push(clientObj);
+    await supaCreateClient(clientObj, list.id);
+  }
+  for(const r of results){
+    const dealObj = {id:crypto.randomUUID(), name:r.name, complete:false, activeDeal:false, caExecuted:false, dueDate:null, dealType:'lease', stage:r.stage||null};
+    clientObj.deals.push(dealObj);
+    await supaCreateDeal(dealObj, clientObj.id);
+  }
+}
+function mapsClientMatchesHtml(matches, m){
   if(!matches.length) return `<div class="tiny" style="padding:10px;color:var(--ink-soft);">No matches — type a name below to create a new one instead.</div>`;
   return matches.map(c=>`
     <div class="row-card" data-mapspickclient="${c.id}:${c.listId}" style="cursor:pointer;padding:8px 12px;${m.pickedClient&&m.pickedClient.id===c.id?'background:var(--edge-light);':''}">
@@ -9076,18 +9091,19 @@ function renderMapsImportModal(){
   const overlay = document.createElement('div');
   overlay.className='modal-overlay'; overlay.style.zIndex=190;
   let body='';
+
   if(m.step==='upload'){
     const matches = mapsAllClientsFlat().filter(c=>!m.clientQuery || c.name.toLowerCase().includes(m.clientQuery.toLowerCase()));
     body = `
       <p style="font-size:13px;line-height:1.5;color:var(--ink-soft);margin-top:0;">
-        Export a Client's MyMaps as KML or KMZ (Menu → Export to KML/KMZ) and drop it here.
+        Export a Client's MyMaps as KML or KMZ (Menu → Export to KML/KMZ) and pick it below.
         Only pinned sites (points) are imported — outline/ring shapes are skipped automatically.
       </p>
       <div class="field">
         <label>Which Client/Listing do these sites belong to? *</label>
         <input class="searchbox" id="mapsClientSearch" placeholder="🔍 Search existing…" value="${escapeAttr(m.clientQuery)}" style="margin-bottom:6px;">
         <div id="mapsClientList" style="max-height:160px;overflow-y:auto;border:1px solid var(--line);border-radius:8px;margin-bottom:10px;">
-          ${renderMapsClientListHtml(matches, m)}
+          ${mapsClientMatchesHtml(matches, m)}
         </div>
         ${!m.pickedClient ? `
         <label style="margin-top:4px;">…or create a new one:</label>
@@ -9101,58 +9117,50 @@ function renderMapsImportModal(){
       <div class="field">
         <label>KML/KMZ file *</label>
         <input type="file" id="mapsFile" accept=".kml,.kmz">
+        <div id="mapsFileStatus" class="tiny" style="margin-top:8px;color:var(--ink-soft);"></div>
       </div>
     `;
   } else if(m.step==='mapping'){
     body = `
-      <p style="font-size:13px;line-height:1.5;color:var(--ink-soft);margin-top:0;">
-        Found ${m.folders.length} folder${m.folders.length===1?'':'s'} in this map. For each one, choose what it should become in the Portal.
-      </p>
+      <p style="font-size:13px;color:var(--ink-soft);margin-top:0;">Found ${m.folders.length} folder${m.folders.length===1?'':'s'}. Choose what each one becomes:</p>
       ${m.folders.map((f,idx)=>`
-        <div class="field" style="display:flex;align-items:center;gap:10px;justify-content:space-between;">
-          <div style="flex:1;"><b>${escapeHtml(f.name)}</b> <span class="tiny" style="color:var(--ink-soft);">(${f.placemarks.length} site${f.placemarks.length===1?'':'s'})</span></div>
+        <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line-soft);">
+          <div style="flex:1;font-size:13px;"><b>${escapeHtml(f.name)}</b> <span class="tiny" style="color:var(--ink-soft);">(${f.placemarks.length} site${f.placemarks.length===1?'':'s'})</span></div>
           <select data-mapsfolderstage="${idx}" style="flex:1.2;">
-            ${MAPS_STAGE_OPTIONS.map(o=>`<option value="${o.id}" ${m.folderStage[idx]===o.id?'selected':''}>${o.label}</option>`).join('')}
+            <option value="skip" ${m.folderStage[idx]==='skip'?'selected':''}>Skip this folder — don't import</option>
+            <option value="loi" ${m.folderStage[idx]==='loi'?'selected':''}>→ LOI</option>
+            <option value="signedLOI" ${m.folderStage[idx]==='signedLOI'?'selected':''}>→ Signed LOI</option>
+            <option value="negotiating" ${m.folderStage[idx]==='negotiating'?'selected':''}>→ Negotiating Lease / PSA</option>
+            <option value="signedLease" ${m.folderStage[idx]==='signedLease'?'selected':''}>→ Signed Lease</option>
+            <option value="auto" ${m.folderStage[idx]==='auto'?'selected':''}>→ Auto: store number (AZ####) = Signed LOI, else LOI</option>
+            <option value="manual" ${m.folderStage[idx]==='manual'?'selected':''}>→ No stage yet — let me pick individually which sites import</option>
           </select>
         </div>`).join('')}
     `;
   } else if(m.step==='pickSites'){
-    const manualFolders = m.folders.map((f,idx)=>({f,idx})).filter(x=>m.folderStage[x.idx]==='manual');
+    const manualFolders = m.folders.map((f,i)=>({f,i})).filter(x=>m.folderStage[x.i]==='manual');
     body = `
-      <p style="font-size:13px;line-height:1.5;color:var(--ink-soft);margin-top:0;">
-        Pick exactly which sites should come in from each folder below — everything else in these folders is left out.
-      </p>
-      ${manualFolders.map(({f,idx})=>`
-        <div class="section-label">${escapeHtml(f.name)}</div>
-        <div style="border:1px solid var(--line);border-radius:10px;margin-bottom:14px;max-height:220px;overflow-y:auto;">
+      <p style="font-size:13px;color:var(--ink-soft);margin-top:0;">Check the specific sites you want to import from these folders:</p>
+      ${manualFolders.map(({f,i})=>`
+        <div style="margin-bottom:14px;">
+          <div style="font-weight:600;font-size:13px;margin-bottom:6px;">${escapeHtml(f.name)}</div>
           ${f.placemarks.map((p,pIdx)=>`
-            <label style="display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:1px solid var(--line-soft);font-size:13px;">
-              <input type="checkbox" data-mapspick="${idx}:${pIdx}" ${m.manualPicks[idx] && m.manualPicks[idx][pIdx] ? 'checked':''}>
+            <label style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:13px;cursor:pointer;">
+              <input type="checkbox" data-mapspicksite="${i}:${pIdx}" ${m.manualPicks[i][pIdx]?'checked':''} style="width:auto;">
               ${escapeHtml(p.name)}
             </label>`).join('')}
         </div>`).join('')}
     `;
   } else if(m.step==='review'){
     const results = mapsComputeResultDeals(m);
-    const byFolder = {};
-    results.forEach(r=>{ (byFolder[r.folderName]=byFolder[r.folderName]||[]).push(r); });
     body = `
-      <p style="font-size:13px;line-height:1.5;color:var(--ink-soft);margin-top:0;">
-        About to create <b>${results.length}</b> deal${results.length===1?'':'s'} under
-        <b>${escapeHtml(m.pickedClient ? m.pickedClient.name : m.newClientName)}</b>${m.pickedClient?'':' (new)'}.
-      </p>
-      ${Object.keys(byFolder).map(fname=>`
-        <div class="section-label">${escapeHtml(fname)} (${byFolder[fname].length})</div>
-        <div style="border:1px solid var(--line);border-radius:10px;margin-bottom:14px;max-height:200px;overflow-y:auto;">
-          ${byFolder[fname].map(r=>`
-            <div style="display:flex;justify-content:space-between;gap:10px;padding:6px 12px;border-bottom:1px solid var(--line-soft);font-size:12.5px;">
-              <span>${escapeHtml(r.name)}</span>
-              <span class="tiny" style="color:var(--ink-soft);">${r.stage?LSR_STAGE_MAP[r.stage].name:'No stage'}</span>
-            </div>`).join('')}
-        </div>`).join('')}
-      ${!results.length ? `<div class="empty-state"><div class="big">Nothing to import.</div><div class="tiny">Every folder is set to "Skip", or no sites were picked.</div></div>` : ''}
+      <p style="font-size:13px;color:var(--ink-soft);margin-top:0;">Ready to import ${results.length} deal${results.length===1?'':'s'}${m.pickedClient?` under <b>${escapeHtml(m.pickedClient.name)}</b>`:` under a new ${m.newClientListId==='listings'?'listing':'client'} named <b>${escapeHtml(m.newClientName)}</b>`}:</p>
+      <div style="max-height:280px;overflow-y:auto;">
+        ${results.map(r=>`<div class="tiny" style="padding:4px 0;">${escapeHtml(r.name)}${r.stage?` — ${escapeHtml(LSR_STAGE_MAP[r.stage]?LSR_STAGE_MAP[r.stage].name:r.stage)}`:''}</div>`).join('')}
+      </div>
     `;
   }
+
   overlay.innerHTML = `
   <div class="modal-card">
     <div class="modal-head"><div class="modal-title">🗺️ Import from MyMaps</div><button class="modal-close" data-action="closeMapsImport">✕</button></div>
@@ -9174,40 +9182,56 @@ function renderMapsImportModal(){
       const newMatches = mapsAllClientsFlat().filter(c=>!m.clientQuery || c.name.toLowerCase().includes(m.clientQuery.toLowerCase()));
       const listBox = document.getElementById('mapsClientList');
       if(listBox){
-        listBox.innerHTML = renderMapsClientListHtml(newMatches, m);
+        listBox.innerHTML = mapsClientMatchesHtml(newMatches, m);
         listBox.querySelectorAll('[data-mapspickclient]').forEach(el=>el.onclick=()=>{
-          const [id, listId] = el.dataset.mapspickclient.split(':');
-          const c = mapsAllClientsFlat().find(x=>x.id===id);
-          m.pickedClient = c; m.newClientName=''; renderPreservingScroll('.modal-body');
+          const [id] = el.dataset.mapspickclient.split(':');
+          m.pickedClient = mapsAllClientsFlat().find(x=>x.id===id);
+          m.newClientName='';
+          renderPreservingScroll('.modal-body');
         });
       }
     };
     overlay.querySelectorAll('[data-mapspickclient]').forEach(el=>el.onclick=()=>{
-      const [id, listId] = el.dataset.mapspickclient.split(':');
-      const c = mapsAllClientsFlat().find(x=>x.id===id);
-      m.pickedClient = c; m.newClientName=''; render();
+      const [id] = el.dataset.mapspickclient.split(':');
+      m.pickedClient = mapsAllClientsFlat().find(x=>x.id===id);
+      m.newClientName='';
+      render();
     });
-    const clearLink = overlay.querySelector('[data-mapsclearclient]'); if(clearLink) clearLink.onclick=(ev)=>{ ev.preventDefault(); m.pickedClient=null; render(); };
+    const clearLink = overlay.querySelector('[data-mapsclearclient]');
+    if(clearLink) clearLink.onclick=(ev)=>{ ev.preventDefault(); m.pickedClient=null; render(); };
     const newNameEl = document.getElementById('mapsNewClientName');
     if(newNameEl) newNameEl.oninput = ()=>{ m.newClientName = newNameEl.value; if(!m.newClientListId) m.newClientListId='clients'; render(); };
     overlay.querySelectorAll('[data-mapsnewlist]').forEach(b=>b.onclick=()=>{ m.newClientListId = b.dataset.mapsnewlist; render(); });
+
+    // File selection — kept as plain and direct as possible on purpose.
     const fileInput = document.getElementById('mapsFile');
-    if(fileInput) fileInput.onchange=async ()=>{
-      const file = fileInput.files[0]; if(!file) return;
-      if(!m.pickedClient && !m.newClientName.trim()){ flashToast('Pick or name a Client/Listing first.'); fileInput.value=''; return; }
-      try{
-        const kmlText = await mapsReadKmlText(file);
-        const folders = mapsParseFolders(kmlText);
-        if(!folders.length){ flashToast("Didn't find any pinned sites in that file."); return; }
-        m.folders = folders;
-        m.folderStage = folders.map(()=> 'skip');
-        m.manualPicks = folders.map(f=>f.placemarks.map(()=>false));
-        m.step = 'mapping';
-        render();
-      } catch(err){
-        flashToast("Couldn't read that file — " + err.message);
-      }
-    };
+    const fileStatusEl = document.getElementById('mapsFileStatus');
+    if(fileInput){
+      fileInput.addEventListener('change', function handleMapsFileChange(){
+        const file = fileInput.files && fileInput.files[0];
+        if(!file) return;
+        if(!m.pickedClient && !m.newClientName.trim()){
+          if(fileStatusEl) fileStatusEl.textContent = 'Pick or name a Client/Listing first, then choose the file again.';
+          fileInput.value = '';
+          return;
+        }
+        if(fileStatusEl) fileStatusEl.textContent = 'Reading ' + file.name + '…';
+        mapsReadKmlText(file).then(kmlText=>{
+          const folders = mapsParseFolders(kmlText);
+          if(!folders.length){
+            if(fileStatusEl) fileStatusEl.textContent = "Didn't find any pinned sites in that file.";
+            return;
+          }
+          m.folders = folders;
+          m.folderStage = folders.map(()=> 'skip');
+          m.manualPicks = folders.map(f=>f.placemarks.map(()=>false));
+          m.step = 'mapping';
+          render();
+        }).catch(err=>{
+          if(fileStatusEl) fileStatusEl.textContent = "Couldn't read that file — " + err.message;
+        });
+      });
+    }
   }
   if(m.step==='mapping'){
     overlay.querySelectorAll('[data-mapsfolderstage]').forEach(sel=>sel.onchange=()=>{
@@ -9215,19 +9239,21 @@ function renderMapsImportModal(){
     });
   }
   if(m.step==='pickSites'){
-    overlay.querySelectorAll('[data-mapspick]').forEach(cb=>cb.onchange=()=>{
-      const [fIdx,pIdx] = cb.dataset.mapspick.split(':').map(Number);
-      if(!m.manualPicks[fIdx]) m.manualPicks[fIdx]=[];
+    overlay.querySelectorAll('[data-mapspicksite]').forEach(cb=>cb.onchange=()=>{
+      const [fIdx, pIdx] = cb.dataset.mapspicksite.split(':').map(Number);
       m.manualPicks[fIdx][pIdx] = cb.checked;
     });
   }
-  const continueBtn = overlay.querySelector('[data-action="mapsToPickOrReview"]'); if(continueBtn) continueBtn.onclick=()=>{
-    m.step = m.folderStage.includes('manual') ? 'pickSites' : 'review';
+  const continueBtn = overlay.querySelector('[data-action="mapsToPickOrReview"]');
+  if(continueBtn) continueBtn.onclick=()=>{
+    const hasManual = m.folderStage.some(s=>s==='manual');
+    m.step = hasManual ? 'pickSites' : 'review';
     render();
   };
-  const toReviewBtn = overlay.querySelector('[data-action="mapsToReview"]'); if(toReviewBtn) toReviewBtn.onclick=()=>{ m.step='review'; render(); };
+  const toReviewBtn = overlay.querySelector('[data-action="mapsToReview"]');
+  if(toReviewBtn) toReviewBtn.onclick=()=>{ m.step='review'; render(); };
   const confirmBtn = document.getElementById('mapsConfirmBtn');
-  if(confirmBtn) confirmBtn.onclick=async ()=>{
+  if(confirmBtn) confirmBtn.onclick=safeHandler(async ()=>{
     const results = mapsComputeResultDeals(m);
     if(!results.length){ flashToast('Nothing to import.'); return; }
     confirmBtn.disabled=true; confirmBtn.textContent='Importing…';
@@ -9235,25 +9261,7 @@ function renderMapsImportModal(){
     state.mapsImport=null;
     flashToast(`Imported ${results.length} deal${results.length===1?'':'s'}.`);
     render();
-  };
-}
-async function commitMapsImport(m, results){
-  let list, clientObj;
-  if(m.pickedClient){
-    list = db.lists.find(l=>l.id===m.pickedClient.listId);
-    clientObj = list.clients.find(c=>c.id===m.pickedClient.id);
-  } else {
-    list = db.lists.find(l=>l.id===(m.newClientListId||'clients'));
-    clientObj = {id:crypto.randomUUID(), name:m.newClientName.trim(), primary:null, secondContactId:null, thirdContactId:null, deals:[], createdBy:state.currentUser.id, authorizedUserIds:[]};
-    if(list.id==='listings'){ clientObj.prospects=[]; clientObj.categoryConfig=newLSRCategoryConfig(); }
-    list.clients.push(clientObj);
-    await supaCreateClient(clientObj, list.id);
-  }
-  for(const r of results){
-    const dealObj = {id:crypto.randomUUID(), name:r.name, complete:false, activeDeal:false, caExecuted:false, dueDate:null, dealType:'lease', stage:r.stage||null};
-    clientObj.deals.push(dealObj);
-    await supaCreateDeal(dealObj, clientObj.id);
-  }
+  });
 }
 
 function guessColumn(headers, keywords){
@@ -9672,6 +9680,7 @@ document.addEventListener('keydown', (ev)=>{
   if(state.moveDealPicker){ state.moveDealPicker=null; render(); return; }
   if(state.commissionModal){ state.commissionModal=null; render(); return; }
   if(state.myNotesOpen){ state.myNotesOpen=false; render(); return; }
+  if(state.mapsImport){ state.mapsImport=null; render(); return; }
   if(state.editContactModal){ state.editContactModal=null; render(); return; }
   if(state.resetPasswordModalOpen){ state.resetPasswordModalOpen=false; render(); return; }
   if(state.changePasswordModalOpen){ state.changePasswordModalOpen=false; render(); return; }
