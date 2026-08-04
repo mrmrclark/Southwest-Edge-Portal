@@ -2466,7 +2466,7 @@ function renderLogin(){
 }
 const EMAIL_CLIENT_OPTIONS = [
   {id:'outlookWeb', label:'Outlook (web)', hint:'outlook.office.com'},
-  {id:'outlookDesktop', label:'Outlook (desktop)', hint:'opens your mail app'},
+  {id:'outlookDesktop', label:'Outlook (desktop)', hint:"uses your Mac/PC's default mail app — set that to Outlook in your OS settings"},
   {id:'gmail', label:'Gmail', hint:'mail.google.com'},
   {id:'other', label:'Apple Mail / Other', hint:'uses your system default'},
 ];
@@ -4493,7 +4493,7 @@ function attachShellHandlers(){
   const changePwBtn=document.querySelector('[data-action="openChangePassword"]'); if(changePwBtn) changePwBtn.onclick=()=>{ state.changePasswordModalOpen=true; state.showUserMenu=false; render(); };
   const newEmailBtn=document.querySelector('[data-action="openBlankEmail"]'); if(newEmailBtn) newEmailBtn.onclick=()=>{
     openBlankEmailDraft();
-    flashToast('Opening a new email draft…');
+    flashToast("Opening a new email draft… if nothing opens, you may not have a mail app set up on this device yet.");
     render();
   };
   const calBtn=document.querySelector('[data-action="openCalendarView"]'); if(calBtn) calBtn.onclick=()=>{
