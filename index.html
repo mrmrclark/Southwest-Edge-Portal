@@ -3953,7 +3953,7 @@ function renderArchivedMain(){
       <div class="row-body">
         <div class="row-title done">${escapeHtml(td.title)}</div>
         <div class="row-meta">
-          <span class="pill">${contextLabel(td)}</span>
+          ${contextLabel(td) ? `<span class="pill">${contextLabel(td)}</span>` : ''}
           <span>Archived ${td.archivedAt? fmtDate(td.archivedAt) : ''}</span>
         </div>
       </div>
@@ -4054,7 +4054,7 @@ function contextLabel(td){
     const proj = db.todos.find(x=>x.id===td.projectId);
     if(proj) return proj.title;
   }
-  return 'Personal';
+  return td.category || '';
 }
 function contactForClient(c){
   if(!c || !c.primary) return null;
@@ -4086,7 +4086,7 @@ function renderTodoRow(td){
       <div class="row-title ${td.completed?'done':''}">${escapeHtml(td.title)}</div>
       <div class="row-meta">
         <span class="due ${dueCls}">${dueLabel}</span>
-        <span class="pill">${contextLabel(td)}</span>
+        ${contextLabel(td) ? `<span class="pill">${contextLabel(td)}</span>` : ''}
         ${td.private ? `<span class="pill private">Private</span>`:''}
         ${td.type!=='task' ? `<span class="pill gray">${td.type}${(td.type==='checklist'||td.type==='project') && td.checklistItems && td.checklistItems.length? ` ${td.checklistItems.filter(i=>i.done).length}/${td.checklistItems.length}`:''}${td.type==='project' ? ` · ${db.todos.filter(t=>t.projectId===td.id).length} to-do${db.todos.filter(t=>t.projectId===td.id).length===1?'':'s'}` : ''}</span>`:''}
         ${td.isNew && td.assignedTo===state.currentUser.id ? `<span class="pill" style="background:var(--edge);color:#fff;">New</span>`:''}
