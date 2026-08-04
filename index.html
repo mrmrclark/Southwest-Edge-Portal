@@ -136,7 +136,7 @@
   }
 
   /* ---------- CALENDAR VIEW ---------- */
-  .cv-overlay{position:fixed;inset:0;background:rgba(20,14,8,0.5);z-index:150;display:flex;align-items:stretch;justify-content:stretch;overscroll-behavior-y:contain;}
+  .cv-overlay{position:fixed;inset:0;background:rgba(20,14,8,0.5);z-index:150;display:flex;align-items:stretch;justify-content:stretch;}
   .cv-card{background:var(--canvas);width:100vw;height:100vh;border-radius:0;box-shadow:var(--shadow);display:flex;flex-direction:column;overflow:hidden;}
   .cv-head{background:var(--edge);color:#fff;padding:14px 22px;display:flex;align-items:center;gap:14px;}
   .cv-head-title{font-size:19px;font-weight:700;flex:1;}
@@ -259,9 +259,7 @@
   .content-flex{display:flex;gap:24px;align-items:flex-start;max-width:1280px;margin:0 auto;}
   .content-inner{flex:1;min-width:0;max-width:760px;}
   .side-panel{width:300px;flex-shrink:0;display:flex;flex-direction:column;gap:16px;}
-  .side-panel-columns{display:flex;gap:16px;flex-shrink:0;}
-  .side-panel-calendar-col{width:300px;flex-shrink:0;}
-  @media (max-width:1180px){ .side-panel{display:none;} .side-panel-columns{display:none;} }
+  @media (max-width:1180px){ .side-panel{display:none;} }
   .widget-card{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:16px;box-shadow:var(--shadow-sm);}
   .widget-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
   .widget-title{font-size:12.5px;font-weight:700;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.04em;}
@@ -360,7 +358,7 @@
   /* ---------- MODALS ---------- */
   .modal-overlay{
     position:fixed;inset:0;background:rgba(20,14,8,0.42);display:flex;align-items:center;justify-content:center;
-    z-index:100;animation:fadeIn .12s ease-out;overscroll-behavior-y:contain;
+    z-index:100;animation:fadeIn .12s ease-out;
   }
   @keyframes fadeIn{from{opacity:0;}to{opacity:1;}}
   .modal-card{
@@ -377,15 +375,14 @@
   .modal-title{font-size:17px;font-weight:600;flex:1;}
   .modal-close{background:rgba(255,255,255,.18);border:none;color:#fff;width:28px;height:28px;border-radius:8px;font-size:14px;}
   .modal-close:hover{background:rgba(255,255,255,.32);}
-  .modal-body{padding:18px 20px;overflow-y:auto;flex:1;overscroll-behavior-y:contain;}
+  .modal-body{padding:18px 20px;overflow-y:auto;flex:1;}
   .modal-foot{padding:12px 20px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end;}
 
   .contact-card{
     background:var(--edge-lighter);border:1px solid var(--edge-light);border-radius:10px;padding:12px 14px;margin-bottom:14px;
   }
   .contact-card .label{font-size:10px;text-transform:uppercase;color:var(--edge-darker);font-weight:600;letter-spacing:.05em;}
-  .contact-line{display:flex;font-size:13px;margin-top:6px;}
-  .contact-line span{width:80px;flex-shrink:0;color:var(--ink-soft);}
+  .contact-line{display:flex;justify-content:space-between;font-size:13px;margin-top:6px;}
   .contact-line b{font-weight:600;}
 
   .field{margin-bottom:13px;}
@@ -434,7 +431,7 @@
   .admin-item:hover{background:var(--edge-lighter);cursor:pointer;}
   .admin-item:last-child{border-bottom:none;}
 
-  .contacts-table{width:100%;min-width:720px;border-collapse:collapse;font-size:13px;}
+  .contacts-table{width:100%;border-collapse:collapse;font-size:13px;}
   .contacts-table th{
     text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft);
     padding:8px 10px;border-bottom:2px solid var(--line);position:sticky;top:0;background:var(--canvas);
@@ -523,10 +520,7 @@ let state = {
   moveDealPicker:null,           // {dealId, sourceListId, sourceClientId, step:'client'|'createNew', query}
   showArchivedClients:false,
   listsCollapsed:false,
-  otherAccountsOpen:{},          // {listId: bool} — NOT persisted anymore; always starts closed on a fresh load
-  allDealsAccountOpen:{},        // {clientId: bool} — per-account expand/collapse in the All Deals list, not persisted
-  mustRespondTodoId:null,        // set when a to-do was opened via a reminder link — can't close until a real response is given
-  mustRespondSnapshot:null,      // {status, notes, dueDate, completed} captured the moment the gate activates
+  otherAccountsOpen:{},          // {listId: bool} — persisted, remembers last view per Michael's request
   globalSearchQuery:'',
   globalSearchFocused:false,
   quickLinks:null,
@@ -543,7 +537,7 @@ let state = {
   showAllSmartLists:false,      // collapse toggle once there are more than 10 smart lists
   notifSettingsOpen:false,      // whether the notification-preferences modal is open
   pendingUsersModalOpen:false,
-  sidePanelWidgets:{outlookCalendar:true, weather:true, news:true, quicklinks:true},
+  sidePanelWidgets:{calendar:true, weather:true, news:true, quicklinks:true},
   showWidgetPicker:false,
   editContactModal:null,
   editBrokerModal:null,
@@ -557,15 +551,8 @@ let state = {
   dealGroupCollapsed:{},      // per-client deal-stage-group key -> true if collapsed (closed by default)
   lsrSearch:'',
   lsrTrackerFilter:'all',
-  leasingReportMode:null, // temporary override: 'deals'|'prospecting'|'all' while generating a report, then reset
   lsrCategoryManagerOpen:null, // clientId of the listing being managed, or null
   calendarViewOpen:false,
-  msalAccount:null,
-  changePasswordModalOpen:false,
-  newTodoPicker:null,
-  myCalendarEvents:null,
-  myCalendarLoading:false,
-  myCalendarError:null,
   calendarCursor:null,        // {year, month} — used in Month mode
   calendarViewMode:'month',   // 'month' | 'week' | '2week' | '3week' | '4week'
   calendarWeekStart:null,     // Date (always a Sunday) — anchor for Week/2 Week modes
@@ -587,16 +574,6 @@ const USERS = [
   {id:'lkhoudary', name:'Lexi Khoudary', email:'lkhoudary@edge-re.com', role:'User', initials:'LK', emailClient:null, notifPref:null},
   {id:'aruiz', name:'Anthony Ruiz', email:'aruiz@edge-re.com', role:'User', initials:'AR', emailClient:null, notifPref:null},
 ];
-// For any "pick a person" dropdown — puts whoever's currently logged in first,
-// instead of always showing the same static Michael-first order for everyone.
-function usersSortedByMe(){
-  const me = state.currentUser ? state.currentUser.id : null;
-  return [...USERS].sort((a,b)=>{
-    if(a.id===me) return -1;
-    if(b.id===me) return 1;
-    return 0;
-  });
-}
 let pendingUsers = []; // {id, name, email, requestedAt} — awaiting admin approval before they can sign in
 async function fetchPendingUsersFromSupabase(){
   const { data, error } = await supabaseClient.from('pending_users').select('*');
@@ -648,46 +625,6 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   }
 });
 
-// Microsoft sign-in, for the read-only "My Calendar" view. This is completely
-// separate from Supabase's own login — it's a personal choice each user makes to
-// let the Portal read their own Outlook calendar specifically, nothing else.
-// Loaded lazily, on-demand, specifically so a problem with this optional feature
-// (a bad CDN version, a network hiccup) can never take down the entire app the
-// way a top-level failure did once already.
-const msalConfig = {
-  auth: {
-    clientId: '5ab0d33b-a3cb-4b3c-80d8-aa208aa91da3',
-    authority: 'https://login.microsoftonline.com/organizations',
-    redirectUri: 'https://southwestedge.net',
-  },
-  cache: {
-    cacheLocation: 'localStorage', // so signing in once doesn't require doing it again every visit
-  },
-};
-let msalInstance = null;
-let msalInitialized = false;
-let msalScriptPromise = null;
-function loadMsalScript(){
-  if(msalScriptPromise) return msalScriptPromise;
-  msalScriptPromise = new Promise((resolve, reject)=>{
-    if(window.msal){ resolve(); return; }
-    const s = document.createElement('script');
-    s.src = 'https://cdn.jsdelivr.net/npm/@azure/msal-browser@3/lib/msal-browser.min.js';
-    s.onload = ()=>resolve();
-    s.onerror = ()=>reject(new Error('Could not load the Microsoft sign-in library — check your connection and try again.'));
-    document.head.appendChild(s);
-  });
-  return msalScriptPromise;
-}
-async function ensureMsalInitialized(){
-  if(msalInitialized) return;
-  await loadMsalScript();
-  if(!window.msal) throw new Error('The Microsoft sign-in library loaded, but not the way we expected — nothing was changed on your account.');
-  msalInstance = new msal.PublicClientApplication(msalConfig);
-  await msalInstance.initialize();
-  msalInitialized = true;
-}
-
 async function fetchMyProfile(authUserId){
   const { data, error } = await supabaseClient.from('profiles').select('*').eq('id', authUserId).single();
   if(error){ console.error('fetchMyProfile error:', error); return null; }
@@ -709,7 +646,6 @@ async function fetchAllProfilesIntoUsers(){
     u.notifUseDefault = p.notif_use_default !== false; // default true if column is null/undefined
     u.notifPref = (!u.notifUseDefault && p.notif_schedule_type) ? {type:p.notif_schedule_type, days:p.notif_schedule_days||[], time:p.notif_schedule_time||'07:00'} : null;
     u.wantsAssignmentEmails = p.notif_assignment_emails !== false; // default true if column is null/undefined
-    u.wantsAssignerEmails = p.notif_assigner_emails !== false; // default true if column is null/undefined
   });
 }
 
@@ -722,8 +658,7 @@ async function fetchAllProfilesIntoUsers(){
 function contactRowToLocal(r){
   return {id:r.id, first:r.first_name, last:r.last_name, company:r.company||'', website:r.website||'',
           email:r.email||'', mobile:r.mobile||'', phone:r.phone||'', address:r.address||'',
-          city:r.city||'', state:r.state||'', zip:r.zip||'', categories:r.categories||[],
-          createdBy: r.created_by||null, isPrivate: r.is_private!==false};
+          city:r.city||'', state:r.state||'', zip:r.zip||'', categories:r.categories||[]};
 }
 function contactLocalToRow(c){
   return {id:c.id, first_name:c.first, last_name:c.last, company:c.company||null, website:c.website||null,
@@ -732,21 +667,9 @@ function contactLocalToRow(c){
           created_by: (state.currentUser && state.currentUser.authId) || null};
 }
 async function fetchContactsFromSupabase(){
-  // Supabase/PostgREST caps any single request at 1000 rows by default — with several
-  // thousand real contacts, a single .select('*') silently only ever returns the first
-  // 1000. Paging through in batches until a batch comes back with fewer than the page
-  // size guarantees every contact loads, no matter how many exist.
-  const PAGE_SIZE = 1000;
-  let all = [];
-  let from = 0;
-  while(true){
-    const { data, error } = await supabaseClient.from('contacts').select('*').range(from, from + PAGE_SIZE - 1);
-    if(error){ console.error('fetchContactsFromSupabase error:', error); return; }
-    all = all.concat(data);
-    if(data.length < PAGE_SIZE) break;
-    from += PAGE_SIZE;
-  }
-  db.contacts = all.map(contactRowToLocal);
+  const { data, error } = await supabaseClient.from('contacts').select('*');
+  if(error){ console.error('fetchContactsFromSupabase error:', error); return; }
+  db.contacts = data.map(contactRowToLocal);
 }
 async function supaCreateContact(c){
   const { error } = await supabaseClient.from('contacts').insert(contactLocalToRow(c));
@@ -833,7 +756,7 @@ async function supaSaveListingCategorySettings(listingId, categoryConfig){
 
 /* ---------------- LISTS / CLIENTS / DEALS ---------------- */
 function clientRowToLocal(r){
-  return {id:r.id, name:r.name, primary:r.primary_contact_id, secondContactId:null, thirdContactId:null, deals:[],
+  return {id:r.id, name:r.name, primary:r.primary_contact_id, secondary:[], deals:[],
           propertyType:r.property_type, squareFootage:r.square_footage, askingRate:r.asking_rate,
           createdBy: authIdToLocalUserId(r.created_by) || r.created_by, authorizedUserIds:[],
           hashtags: r.hashtags || '',
@@ -891,8 +814,7 @@ async function fetchListsClientsDealsFromSupabase(){
     const list = newLists.find(l=>l.id===cr.list_id);
     if(!list) return;
     const c = clientRowToLocal(cr);
-    c.secondContactId = (secConts.find(sc=>sc.client_id===cr.id && sc.slot==='second')||{}).contact_id || null;
-    c.thirdContactId = (secConts.find(sc=>sc.client_id===cr.id && sc.slot==='third')||{}).contact_id || null;
+    c.secondary = secConts.filter(sc=>sc.client_id===cr.id).map(sc=>sc.contact_id);
     c.deals = deals.filter(d=>d.client_id===cr.id).map(dealRowToLocal);
     if(authUsers) c.authorizedUserIds = authUsers.filter(a=>a.client_id===cr.id).map(a=>authIdToLocalUserId(a.user_id)).filter(Boolean);
     if(list.id==='listings'){
@@ -1141,7 +1063,6 @@ function todoRowToLocal(r){
     listId:r.list_id, clientId:r.client_id, dealId:r.deal_id, entryId:r.entry_id, projectId:r.project_id, attachments:[],
     checklistItems: r.checklist_items || [],
     status: r.status || '',
-    reminderPending: !!r.reminder_pending,
     createdAt: r.created_at ? new Date(r.created_at) : null,
     completedAt: r.completed_at ? new Date(r.completed_at) : null,
     archivedAt: r.archived_at ? new Date(r.archived_at) : undefined};
@@ -1153,9 +1074,7 @@ function todoLocalToRow(t){
     list_id:t.listId||null, client_id:t.clientId||null, deal_id:t.dealId||null, entry_id:t.entryId||null, project_id:t.projectId||null,
     checklist_items: t.checklistItems || [],
     status: t.status || null,
-    reminder_pending: !!t.reminderPending,
     completed_at: t.completedAt ? t.completedAt.toISOString() : null,
-    skip_assignment_notification: !!t.skipAssignmentNotification,
     archived_at: t.archivedAt ? t.archivedAt.toISOString() : null};
 }
 async function fetchTodosFromSupabase(){
@@ -1332,64 +1251,6 @@ function wireDragReorder(selector, dragAttr, onReorder){
       draggedId = null;
     };
   });
-
-  // Touch devices don't fire the HTML5 drag events above at all — this adds an
-  // equivalent long-press-then-drag gesture so reordering also works on mobile,
-  // without hijacking normal tapping (to open a list) or scrolling (to see more
-  // of the sidebar). A press has to hold still for a beat before it's treated as
-  // a drag, exactly like rearranging icons on a phone's home screen.
-  let touchDraggedId = null, touchStartX = 0, touchStartY = 0, touchHoldTimer = null, touchDragActive = false, lastTouchTargetEl = null;
-  const LONG_PRESS_MS = 350, MOVE_CANCEL_PX = 10;
-  document.querySelectorAll(selector).forEach(el=>{
-    el.ontouchstart = (ev)=>{
-      const touch = ev.touches[0];
-      touchStartX = touch.clientX; touchStartY = touch.clientY;
-      touchDraggedId = el.dataset[dragAttr];
-      touchDragActive = false;
-      clearTimeout(touchHoldTimer);
-      touchHoldTimer = setTimeout(()=>{
-        touchDragActive = true;
-        el.style.opacity = '0.4';
-        if(navigator.vibrate) navigator.vibrate(15);
-      }, LONG_PRESS_MS);
-    };
-    el.ontouchmove = (ev)=>{
-      const touch = ev.touches[0];
-      const dx = Math.abs(touch.clientX - touchStartX), dy = Math.abs(touch.clientY - touchStartY);
-      if(!touchDragActive){
-        // Moved too far before the hold timer fired — this is a scroll, not a drag.
-        if(dx > MOVE_CANCEL_PX || dy > MOVE_CANCEL_PX) clearTimeout(touchHoldTimer);
-        return;
-      }
-      // Actively dragging now — stop the page from scrolling underneath the finger.
-      ev.preventDefault();
-      if(lastTouchTargetEl) lastTouchTargetEl.style.background = '';
-      const under = document.elementFromPoint(touch.clientX, touch.clientY);
-      const dropEl = under && under.closest ? under.closest(selector) : null;
-      if(dropEl && dropEl.dataset[dragAttr] !== touchDraggedId){
-        dropEl.style.background = 'var(--edge-light)';
-        lastTouchTargetEl = dropEl;
-      } else {
-        lastTouchTargetEl = null;
-      }
-    };
-    el.ontouchend = ()=>{
-      clearTimeout(touchHoldTimer);
-      el.style.opacity = '';
-      if(lastTouchTargetEl){
-        lastTouchTargetEl.style.background = '';
-        const targetId = lastTouchTargetEl.dataset[dragAttr];
-        if(touchDraggedId && targetId && touchDraggedId!==targetId) onReorder(touchDraggedId, targetId);
-      }
-      touchDraggedId = null; touchDragActive = false; lastTouchTargetEl = null;
-    };
-    el.ontouchcancel = ()=>{
-      clearTimeout(touchHoldTimer);
-      el.style.opacity = '';
-      if(lastTouchTargetEl) lastTouchTargetEl.style.background = '';
-      touchDraggedId = null; touchDragActive = false; lastTouchTargetEl = null;
-    };
-  });
 }
 function dueStatus(d){
   if(!d) return 'none';
@@ -1479,11 +1340,10 @@ const DEFAULT_PROPERTY_CATEGORIES = [
 const LSR_STAGES = [
   {id:'signedLease', name:'Signed Lease', track:'lease', color:'#E8951E'},
   {id:'closedEscrow', name:'Closed Escrow', track:'sale', color:'#E8951E'},
-  {id:'negotiating', name:'Negotiating Lease / PSA', track:'both', color:'#E0469A'},
+  {id:'negotiating', name:'Negotiating Lease', track:'lease', color:'#E0469A'},
   {id:'inEscrow', name:'In Escrow', track:'sale', color:'#E0469A'},
   {id:'signedLOI', name:'Signed LOI', track:'both', color:'#00A65A'},
   {id:'loi', name:'LOI', track:'both', color:'#00A65A'},
-  {id:'prospect', name:'Prospect', track:'both', color:'#8A8378'},
   {id:'dead', name:'Dead', track:'both', color:'#8A7D6E'},
 ];
 const LSR_STAGE_MAP = {}; LSR_STAGES.forEach(s=>LSR_STAGE_MAP[s.id]=s);
@@ -1499,8 +1359,8 @@ function lsrStagesForTrack(dealType){
   // dropdown options once converted, in hierarchy order (lowest to highest for a <select>).
   // Dead sits at the very end on both tracks — it's not part of the natural progression,
   // it's a terminal "this fell through" state a deal can drop into from anywhere.
-  if(dealType==='sale') return ['prospect','loi','signedLOI','negotiating','inEscrow','closedEscrow','dead'];
-  return ['prospect','loi','signedLOI','negotiating','signedLease','dead'];
+  if(dealType==='sale') return ['loi','signedLOI','inEscrow','closedEscrow','dead'];
+  return ['loi','signedLOI','negotiating','signedLease','dead'];
 }
 // Baked-in Phoenix retail tenant roster — a standing reference list, not re-uploaded per listing.
 const TENANT_ROSTER = [
@@ -2113,7 +1973,7 @@ let db = {
       id:'clients', name:'Clients', icon:'💲', type:'deep',
       clients:[
         {
-          id:'cityvet', name:'City Vet', primary:'c5', secondContactId:null, thirdContactId:null,
+          id:'cityvet', name:'City Vet', primary:'c5', secondary:[],
           deals:[
             {id:'d1', name:'Thunderbird & 7th St SEC', complete:false, activeDeal:true, dueDate: addDays(todayDate(),-2), caExecuted:true},
             {id:'d2', name:'Germann & Gilbert SEC', complete:false, activeDeal:true, dueDate: addDays(todayDate(),1), caExecuted:false},
@@ -2123,7 +1983,7 @@ let db = {
           ]
         },
         {
-          id:'dutchbros', name:'Dutch Bros', primary:'c6', secondContactId:null, thirdContactId:null,
+          id:'dutchbros', name:'Dutch Bros', primary:'c6', secondary:[],
           deals:[
             {id:'d6', name:'Bartaco Pad Site', complete:false, activeDeal:true, dueDate: addDays(todayDate(),3), caExecuted:true},
             {id:'d7', name:"Culver's Outparcel", complete:false, activeDeal:false, dueDate: addDays(todayDate(),7), caExecuted:false},
@@ -2134,7 +1994,7 @@ let db = {
     {
       id:'listings', name:'Listings', icon:'🏢', type:'deep',
       clients:[
-        {id:'redriverctr', name:'Red River Center', primary:null, secondContactId:null, thirdContactId:null, deals:[
+        {id:'redriverctr', name:'Red River Center', primary:null, secondary:[], deals:[
           {id:'d8', name:'Suite 140 — Lease Out', complete:false, activeDeal:true, dueDate: addDays(todayDate(),14), caExecuted:true}
         ],
         categoryConfig: newLSRCategoryConfig(),
@@ -2229,8 +2089,7 @@ const SMART_LIST_DEFAULTS = [
   {id:'completed', name:'Completed', icon:'✅'},
   {id:'archived', name:'Archived', icon:'🗄️'},
   {id:'everything', name:'Everything', icon:'📚'},
-  {id:'allDeals', name:'All Deals', icon:'📋'},
-  {id:'archivedDeals', name:'Archived Deals', icon:'🗄️'},
+  {id:'activeDeals', name:'Active Deals', icon:'⭐'},
   {id:'caStatus', name:'CA Status', icon:'📄'},
 ];
 // Single mutable, ordered list of every smart list (defaults + user-created). Reordering,
@@ -2435,9 +2294,6 @@ function render(){
   if(state.notifSettingsOpen) renderNotifSettingsModal();
   if(state.pendingUsersModalOpen) renderPendingUsersModal();
   if(state.manageUsersModalOpen) renderManageUsersModal();
-  if(state.resetPasswordModalOpen) renderResetPasswordModal();
-  if(state.changePasswordModalOpen) renderChangePasswordModal();
-  if(state.newTodoPicker) renderNewTodoPickerModal();
   if(state.pendingDeletionsOpen) renderPendingDeletionsModal();
   if(state.contactImportReview) renderContactImportReviewModal();
   if(state.taskfireImport) renderTaskFireImportModal();
@@ -2629,10 +2485,6 @@ function renderNotifSettingsModal(){
         <input type="checkbox" id="wantsAssignmentEmailsCheck" style="width:auto;" ${u.wantsAssignmentEmails!==false?'checked':''}>
         <label style="margin:0;" for="wantsAssignmentEmailsCheck">Email me when someone assigns me a to-do</label>
       </div>
-      <div class="field" style="display:flex;align-items:center;gap:8px;">
-        <input type="checkbox" id="wantsAssignerEmailsCheck" style="width:auto;" ${u.wantsAssignerEmails!==false?'checked':''}>
-        <label style="margin:0;" for="wantsAssignerEmailsCheck">Email me when someone completes or reschedules a to-do I assigned them</label>
-      </div>
       <div class="field">
         <label>Calendar sync</label>
         <div style="font-size:12px;color:var(--ink-soft);margin-bottom:8px;">Not connected yet.</div>
@@ -2746,15 +2598,6 @@ function renderNotifSettingsModal(){
     }
     flashToast(u.wantsAssignmentEmails ? "You'll get an email when someone assigns you a to-do." : "Assignment emails turned off for you.");
   };
-  const wantsAssignerEmailsCheck = document.getElementById('wantsAssignerEmailsCheck');
-  if(wantsAssignerEmailsCheck) wantsAssignerEmailsCheck.onchange=async ()=>{
-    u.wantsAssignerEmails = wantsAssignerEmailsCheck.checked;
-    if(u.authId){
-      const { error } = await supabaseClient.from('profiles').update({ notif_assigner_emails: u.wantsAssignerEmails }).eq('id', u.authId);
-      if(error){ console.error('Saving notif_assigner_emails failed:', error); flashToast('Saved locally, but syncing to the server failed — try again. (' + error.message + ')'); return; }
-    }
-    flashToast(u.wantsAssignerEmails ? "You'll get an email when your assignees complete or reschedule a to-do." : "Those emails are turned off for you.");
-  };
   const googleBtn = overlay.querySelector('[data-action="connectGoogle"]'); if(googleBtn) googleBtn.onclick=()=>{
     alert("Real Google Calendar sync needs a Google Cloud project registered to your account (or your Google Workspace admin) plus your portal's real, final web address — same idea as Outlook. Once you're on a stable Netlify domain, this is genuinely buildable client-side with no backend server. For now nothing is synced yet.");
   };
@@ -2820,7 +2663,6 @@ function attachLoginHandlers(){
   };
   const submit = document.getElementById('loginSubmitBtn');
   if(submit) submit.onclick=async ()=>{
-   try{
     const u = USERS.find(x=>x.id===state.selectedLoginUser);
     const pw = document.getElementById('loginPw').value;
     state.loginError = null;
@@ -2896,20 +2738,9 @@ function attachLoginHandlers(){
       return;
     }
     state.currentUser=u; state.screen='app'; if(!appStateWasLoaded) seedAll(); state.loginTarget=null;
-    try{
-      await fetchAllAppDataFromSupabase();
-      checkTodoDeepLink();
-    } catch(e){
-      console.error('Post-login data load failed (still letting the user in):', e);
-      flashToast("Signed in, but something went wrong loading your data. Try refreshing — if this keeps happening, tell an admin.");
-    }
+    await fetchAllAppDataFromSupabase();
+    checkTodoDeepLink();
     render();
-   } catch(e){
-    console.error('Sign-in failed unexpectedly:', e);
-    state.loginError = `Something unexpected went wrong signing in: ${e.message}. Try again — if it keeps happening, tell an admin.`;
-    submit.disabled=false;
-    render();
-   }
   };
   const showReg = document.getElementById('showRegisterBtn');
   if(showReg) showReg.onclick=()=>{ state.showRegisterForm=true; render(); };
@@ -2992,7 +2823,6 @@ function renderSidebar(){
         <div class="admin-menu" style="top:100%;left:0;margin-top:6px;min-width:160px;">
           <button class="admin-item" data-action="openMyNotes" style="width:100%;border:none;background:none;text-align:left;">📝 My Notes</button>
           <button class="admin-item" data-action="openNotifSettingsFromMenu" style="width:100%;border:none;background:none;text-align:left;">⚙️ Notification Settings</button>
-          <button class="admin-item" data-action="openChangePassword" style="width:100%;border:none;background:none;text-align:left;">🔑 Change Password</button>
           <button class="admin-item" data-action="logout" style="width:100%;border:none;background:none;text-align:left;">⏻ Sign out</button>
         </div>` : ''}
       </div>
@@ -3006,7 +2836,7 @@ function renderSidebar(){
     <div class="nav-section-label">Smart Lists <button class="nav-add" data-action="addSmartList">+</button></div>
     <div class="nav-list">
       ${visibleSmarts.map(sl=>{
-        let items = sl.id==='allDeals' ? allDealsList().filter(r=>r.client.createdBy===state.currentUser.id || (r.client.authorizedUserIds||[]).includes(state.currentUser.id)) : (sl.id==='archivedDeals' ? archivedDealsList().filter(r=>r.client.createdBy===state.currentUser.id || (r.client.authorizedUserIds||[]).includes(state.currentUser.id)) : (sl.id==='caStatus' ? caOutstandingCount() : (smartListTodos(sl.id) ? smartListTodos(sl.id).filter(visibleTodo) : [])));
+        let items = sl.id==='activeDeals' ? activeDealsClients() : (sl.id==='caStatus' ? caOutstandingCount() : (smartListTodos(sl.id) ? smartListTodos(sl.id).filter(visibleTodo) : []));
         if((sl.id==='week' || sl.id==='month') && state.todoView!=='team'){
           // Match exactly what clicking into this list actually shows: by default that's
           // narrowed to "assigned to me" only, not everything in my broader sphere — the
@@ -3106,7 +2936,6 @@ function renderTopbar(){
   const teamCapableIds = ['week','month'];
   const showTodoToggle = state.mainView.type==='smart' && teamCapableIds.includes(state.mainView.id);
   const showBack = state.isMobile && state.mobileScreen==='main';
-  const showListSearch = state.mainView.type!=='contacts';
   return `
   <div class="topbar">
     ${showBack ? `<button class="icon-btn" data-action="mobileBack" style="color:var(--ink);margin-right:2px;">←</button>` : ''}
@@ -3114,11 +2943,6 @@ function renderTopbar(){
       <div class="topbar-eyebrow">${eyebrow}</div>
       <div class="topbar-title">${title}</div>
     </div>
-    ${showListSearch ? `
-    <div class="autocomplete-box" style="position:relative;width:220px;margin-left:18px;">
-      <input id="listSearchBox" placeholder="🔍 Search this list…" value="${escapeAttr(state.listSearchQuery||'')}"
-        style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px;">
-    </div>` : ''}
     <div class="topbar-spacer"></div>
     <div class="autocomplete-box" style="position:relative;width:280px;">
       <input id="globalSearchBox" placeholder="🔍 Search everything…" value="${escapeAttr(state.globalSearchQuery||'')}"
@@ -3300,64 +3124,7 @@ function renderNewsWidget(){
     <div style="font-size:10px;color:var(--ink-soft);margin-top:8px;">Public headlines from orionprop.com — updated daily.</div>
   </div>`;
 }
-/* ==================== CALENDAR VIEW (desktop only) ==================== */
-async function signInToMicrosoft(){
-  try{
-    await ensureMsalInitialized();
-    const result = await msalInstance.loginPopup({ scopes: ['Calendars.Read', 'User.Read'] });
-    state.msalAccount = result.account;
-    await fetchMyOutlookEvents();
-  } catch(e){
-    if(String(e).includes('popup_window_error') || String(e).includes('user_cancelled')){
-      flashToast("Sign-in didn't complete — if your browser blocked the popup, allow popups for this site and try again.");
-    } else {
-      flashToast('Sign-in failed: ' + e.message);
-    }
-  }
-  render();
-}
-function signOutOfMicrosoft(){
-  state.msalAccount = null;
-  state.myCalendarEvents = null;
-  flashToast('Signed out of Microsoft.');
-  render();
-}
-async function fetchMyOutlookEvents(){
-  state.myCalendarLoading = true;
-  state.myCalendarError = null;
-  render();
-  try{
-    await ensureMsalInitialized();
-    const accounts = msalInstance.getAllAccounts();
-    const account = state.msalAccount || accounts[0];
-    if(!account){ state.myCalendarLoading=false; render(); return; }
-    state.msalAccount = account;
-    const tokenResult = await msalInstance.acquireTokenSilent({ scopes: ['Calendars.Read'], account });
-    const now = new Date();
-    const start = new Date(now); start.setHours(0,0,0,0);
-    const end = new Date(now); end.setDate(end.getDate()+14); end.setHours(23,59,59,999);
-    const url = `https://graph.microsoft.com/v1.0/me/calendarview?startDateTime=${start.toISOString()}&endDateTime=${end.toISOString()}&$orderby=start/dateTime&$top=100`;
-    const res = await fetch(url, {
-      headers: { 'Authorization': `Bearer ${tokenResult.accessToken}`, 'Prefer': 'outlook.timezone="' + Intl.DateTimeFormat().resolvedOptions().timeZone + '"' },
-    });
-    if(!res.ok){ throw new Error(`Microsoft returned an error (${res.status}).`); }
-    const data = await res.json();
-    state.myCalendarEvents = (data.value||[]).map(ev=>({
-      subject: ev.subject || '(No title)',
-      isAllDay: ev.isAllDay,
-      start: new Date(ev.start.dateTime),
-      end: new Date(ev.end.dateTime),
-      location: ev.location && ev.location.displayName || '',
-      isOnline: !!ev.isOnlineMeeting,
-    }));
-  } catch(e){
-    state.myCalendarError = e.message;
-  }
-  state.myCalendarLoading = false;
-  render();
-}
-function renderOutlookCalendarWidget(){
-  const account = state.msalAccount;
+function renderCalendarWidget(){
   const now = new Date();
   const year = now.getFullYear(), month = now.getMonth();
   const firstDay = new Date(year, month, 1).getDay();
@@ -3369,69 +3136,17 @@ function renderOutlookCalendarWidget(){
     const isToday = d===now.getDate();
     cells += `<div class="cal-day ${isToday?'today':''}">${d}</div>`;
   }
-  const monthGridHtml = `
+  return `
+  <div class="widget-card">
     <div class="widget-head"><div class="widget-title">${monthName}</div></div>
     <div class="cal-grid">
       ${['S','M','T','W','T','F','S'].map(d=>`<div class="cal-dow">${d}</div>`).join('')}
       ${cells}
-    </div>`;
-
-  let bodyHtml = '';
-  if(!account){
-    bodyHtml = `<div style="text-align:center;padding:16px 6px;">
-      <div style="font-size:12.5px;color:var(--ink-soft);margin-bottom:4px;">Not connected yet.</div>
-      <div class="tiny" style="color:var(--ink-soft);">An Admin can connect this under Admin → Connect Calendar (Outlook).</div>
-    </div>`;
-  } else if(state.myCalendarLoading){
-    bodyHtml = `<div style="text-align:center;padding:16px 6px;color:var(--ink-soft);font-size:12.5px;">Loading your calendar…</div>`;
-  } else if(state.myCalendarError){
-    bodyHtml = `<div style="text-align:center;padding:16px 6px;">
-      <div style="color:var(--bad,#C0392B);font-size:12.5px;margin-bottom:10px;">Couldn't load: ${escapeHtml(state.myCalendarError)}</div>
-      <button class="btn secondary sm" data-action="msRetry">Try Again</button>
-    </div>`;
-  } else {
-    const events = state.myCalendarEvents || [];
-    const today = new Date(); today.setHours(0,0,0,0);
-    const groups = {};
-    const order = [];
-    events.forEach(ev=>{
-      const d = new Date(ev.start); d.setHours(0,0,0,0);
-      const dayDiff = Math.round((d-today)/86400000);
-      let label;
-      if(dayDiff===0) label='Today';
-      else if(dayDiff===1) label='Tomorrow';
-      else label = d.toLocaleDateString(undefined,{weekday:'long'});
-      const key = d.toISOString();
-      if(!groups[key]){ groups[key]=[]; order.push(key); }
-      groups[key].push({...ev, label});
-    });
-    if(!events.length){
-      bodyHtml = `<div style="text-align:center;padding:16px 6px;color:var(--ink-soft);font-size:12.5px;">Nothing on your calendar the next two weeks.</div>`;
-    } else {
-      bodyHtml = `<div style="max-height:420px;overflow-y:auto;">` + order.map(key=>{
-        const dayEvents = groups[key];
-        return `
-        <div style="font-weight:700;font-size:12.5px;color:var(--ink);margin:12px 0 5px;">${dayEvents[0].label}</div>
-        ${dayEvents.map(ev=>`
-          <div style="display:flex;gap:8px;padding:6px 0;border-bottom:1px solid var(--line-soft);">
-            <div style="width:56px;flex-shrink:0;font-size:11px;color:var(--ink-soft);">${ev.isAllDay?'All day':ev.start.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'})}</div>
-            <div style="width:3px;background:var(--edge);border-radius:2px;flex-shrink:0;"></div>
-            <div>
-              <div style="font-weight:600;font-size:12.5px;">${escapeHtml(ev.subject)}</div>
-              ${ev.isOnline ? `<div class="tiny" style="color:var(--ink-soft);">Microsoft Teams Meeting</div>` : (ev.location ? `<div class="tiny" style="color:var(--ink-soft);">${escapeHtml(ev.location)}</div>` : '')}
-            </div>
-          </div>`).join('')}
-        `;
-      }).join('') + `</div>`;
-    }
-  }
-
-  return `
-  <div class="widget-card">
-    ${monthGridHtml}
-    <div style="border-top:1px solid var(--line-soft);margin-top:12px;padding-top:6px;">${bodyHtml}</div>
+    </div>
+    <button class="btn secondary sm" style="width:100%;margin-top:12px;" data-action="connectOutlook">📅 Connect a Calendar</button>
   </div>`;
 }
+/* ==================== CALENDAR VIEW (desktop only) ==================== */
 function openCalendarView(){
   const now = new Date();
   state.calendarViewMode = 'month';
@@ -3775,13 +3490,11 @@ function wireMarketingListWizard(overlay, listing, allCats){
     };
   }
 }
-const WIDGET_RENDERERS = { outlookCalendar: renderOutlookCalendarWidget, weather: renderWeatherWidget, news: renderNewsWidget, quicklinks: renderQuickLinksWidget };
+const WIDGET_RENDERERS = { calendar: renderCalendarWidget, weather: renderWeatherWidget, news: renderNewsWidget, quicklinks: renderQuickLinksWidget };
 function renderSidePanel(){
   if(state.isMobile) return ''; // widgets are desktop-only, full stop — no markup, no weather fetch
   const w = state.sidePanelWidgets;
-  const savedOrder = (state.widgetOrder||['outlookCalendar','weather','news','quicklinks']).filter(k=>WIDGET_RENDERERS[k]);
-  const missingFromSaved = Object.keys(WIDGET_RENDERERS).filter(k=>!savedOrder.includes(k));
-  const order = [...savedOrder, ...missingFromSaved];
+  const order = (state.widgetOrder||['calendar','weather','news','quicklinks']).filter(k=>WIDGET_RENDERERS[k]);
   const visibleOrder = order.filter(k=>w[k]);
   const widgetsHtml = visibleOrder.map((key,i)=>`
     <div draggable="true" data-widgetdrag="${key}" style="position:relative;cursor:grab;">
@@ -3795,7 +3508,7 @@ function renderSidePanel(){
       ${state.showWidgetPicker ? `
       <div class="nav-context-menu" style="top:26px;">
         <label style="display:flex;align-items:center;gap:8px;padding:8px 12px;font-size:12.5px;cursor:pointer;">
-          <input type="checkbox" data-widgettoggle="outlookCalendar" ${w.outlookCalendar?'checked':''} style="width:auto;"> My Calendar (Outlook)
+          <input type="checkbox" data-widgettoggle="calendar" ${w.calendar?'checked':''} style="width:auto;"> Calendar
         </label>
         <label style="display:flex;align-items:center;gap:8px;padding:8px 12px;font-size:12.5px;cursor:pointer;">
           <input type="checkbox" data-widgettoggle="weather" ${w.weather?'checked':''} style="width:auto;"> Weather
@@ -3837,133 +3550,6 @@ function activeDealsClients(){
   });
   return out;
 }
-function allDealsList(){
-  const out = [];
-  db.lists.filter(l=>l.type==='deep').forEach(l=>{
-    l.clients.forEach(c=>{
-      c.deals.forEach(d=>{
-        if(!d.stage || d.stage==='prospect') return; // Prospects — excluded, this list is deals only
-        const isDone = d.complete || d.stage==='closedEscrow'; // Open for Business or Closed Escrow
-        const fullyPaid = !!(d.commission1Paid && d.commission2Paid);
-        if(isDone && fullyPaid) return; // truly finished, nothing left to track — excluded
-        out.push({deal:d, client:c, listId:l.id});
-      });
-    });
-  });
-  return out;
-}
-function archivedDealsList(){
-  const out = [];
-  db.lists.filter(l=>l.type==='deep').forEach(l=>{
-    l.clients.forEach(c=>{
-      c.deals.forEach(d=>{
-        const isDone = d.complete || d.stage==='closedEscrow';
-        const fullyPaid = !!(d.commission1Paid && d.commission2Paid);
-        if(isDone && fullyPaid) out.push({deal:d, client:c, listId:l.id});
-      });
-    });
-  });
-  return out;
-}
-function renderAllDealsMain(){
-  let rows = allDealsList();
-  const me = state.currentUser.id;
-  const isMine = c => c.createdBy===me || (c.authorizedUserIds||[]).includes(me);
-  // Only your own deals — Admin/Full Access no longer see everyone else's here at all.
-  // Anything else is already visible elsewhere (the Clients/Listings "Other" sections).
-  rows = rows.filter(r=>isMine(r.client));
-
-  const searchQ = (state.listSearchQuery||'').trim();
-  if(searchQ) rows = rows.filter(r=>matchesSearchTokens(`${r.deal.name} ${r.client.name}`, searchQ));
-  if(!rows.length) return searchQ
-    ? `<div class="empty-state"><div class="big">No matches for "${escapeHtml(searchQ)}".</div><div class="tiny">Try a different search, or clear it to see everything.</div></div>`
-    : `<div class="empty-state"><div class="big">No open deals of yours right now.</div><div class="tiny">Closed Escrow and Open for Business deals are left out of this list on purpose.</div></div>`;
-
-  if(!state.allDealsAccountOpen) state.allDealsAccountOpen = {};
-  const renderSection = (listId, sectionTitle)=>{
-    const sectionRows = rows.filter(r=>r.listId===listId);
-    if(!sectionRows.length) return '';
-    const byClient = {};
-    sectionRows.forEach(r=>{ (byClient[r.client.id] = byClient[r.client.id] || {client:r.client, listId, deals:[]}).deals.push(r.deal); });
-    const groups = Object.values(byClient).sort((a,b)=>a.client.name.localeCompare(b.client.name));
-    return `
-    <div class="section-label" style="margin-top:18px;">${sectionTitle} <span style="font-weight:400;color:var(--ink-soft);">(${sectionRows.length})</span></div>
-    ${groups.map(g=>{
-      const isOpen = !!state.allDealsAccountOpen[g.client.id];
-      return `
-      <div class="row-card" data-action="toggleAllDealsAccount" data-accountid="${g.client.id}" style="cursor:pointer;margin-bottom:6px;flex-direction:column;align-items:stretch;">
-        <div style="display:flex;align-items:center;">
-          <div class="nav-icon" style="font-size:16px;">${isOpen?'▾':'▸'}</div>
-          <div class="row-body">
-            <div class="row-title" data-openaccountdirect="${g.client.id}" data-listid="${listId}" style="cursor:pointer;text-decoration:underline;text-decoration-color:transparent;" onmouseover="this.style.textDecorationColor='currentColor'" onmouseout="this.style.textDecorationColor='transparent'">${escapeHtml(g.client.name)}</div>
-            <div class="row-meta"><span>${g.deals.length} deal${g.deals.length===1?'':'s'}</span></div>
-          </div>
-        </div>
-        ${isOpen ? `<div style="margin:8px 0 2px 26px;">
-          ${g.deals.map(d=>{
-            const stageInfo = LSR_STAGE_MAP[d.stage];
-            return `
-            <div class="row-card" data-opendealdirect="${d.id}" data-client="${g.client.id}" data-listid="${listId}" style="margin-bottom:6px;">
-              <div class="row-body">
-                <div class="row-title">${escapeHtml(d.name)}</div>
-                <div class="row-meta">${stageInfo ? `<span class="pill" style="background:${stageInfo.color}22;color:${stageInfo.color};">${stageInfo.name}</span>` : `<span class="pill gray">No stage</span>`}</div>
-              </div>
-            </div>`;
-          }).join('')}
-        </div>` : ''}
-      </div>`;
-    }).join('')}
-    `;
-  };
-  return renderSection('clients', 'Clients') + renderSection('listings', 'Listings');
-}
-function renderArchivedDealsMain(){
-  let rows = archivedDealsList();
-  const me = state.currentUser.id;
-  const isMine = c => c.createdBy===me || (c.authorizedUserIds||[]).includes(me);
-  rows = rows.filter(r=>isMine(r.client));
-
-  const searchQ = (state.listSearchQuery||'').trim();
-  if(searchQ) rows = rows.filter(r=>matchesSearchTokens(`${r.deal.name} ${r.client.name}`, searchQ));
-  if(!rows.length) return searchQ
-    ? `<div class="empty-state"><div class="big">No matches for "${escapeHtml(searchQ)}".</div><div class="tiny">Try a different search, or clear it to see everything.</div></div>`
-    : `<div class="empty-state"><div class="big">Nothing archived yet.</div><div class="tiny">A deal lands here once it's Open for Business (or Closed Escrow) and both commission halves are marked paid.</div></div>`;
-
-  if(!state.archivedDealsAccountOpen) state.archivedDealsAccountOpen = {};
-  const renderSection = (listId, sectionTitle)=>{
-    const sectionRows = rows.filter(r=>r.listId===listId);
-    if(!sectionRows.length) return '';
-    const byClient = {};
-    sectionRows.forEach(r=>{ (byClient[r.client.id] = byClient[r.client.id] || {client:r.client, listId, deals:[]}).deals.push(r.deal); });
-    const groups = Object.values(byClient).sort((a,b)=>a.client.name.localeCompare(b.client.name));
-    return `
-    <div class="section-label" style="margin-top:18px;">${sectionTitle} <span style="font-weight:400;color:var(--ink-soft);">(${sectionRows.length})</span></div>
-    ${groups.map(g=>{
-      const isOpen = !!state.archivedDealsAccountOpen[g.client.id];
-      return `
-      <div class="row-card" data-action="toggleArchivedDealsAccount" data-accountid="${g.client.id}" style="cursor:pointer;margin-bottom:6px;flex-direction:column;align-items:stretch;">
-        <div style="display:flex;align-items:center;">
-          <div class="nav-icon" style="font-size:16px;">${isOpen?'▾':'▸'}</div>
-          <div class="row-body">
-            <div class="row-title" data-openaccountdirect="${g.client.id}" data-listid="${listId}" style="cursor:pointer;text-decoration:underline;text-decoration-color:transparent;" onmouseover="this.style.textDecorationColor='currentColor'" onmouseout="this.style.textDecorationColor='transparent'">${escapeHtml(g.client.name)}</div>
-            <div class="row-meta"><span>${g.deals.length} deal${g.deals.length===1?'':'s'}</span></div>
-          </div>
-        </div>
-        ${isOpen ? `<div style="margin:8px 0 2px 26px;">
-          ${g.deals.map(d=>`
-            <div class="row-card" data-opendealdirect="${d.id}" data-client="${g.client.id}" data-listid="${listId}" style="margin-bottom:6px;">
-              <div class="row-body">
-                <div class="row-title">${escapeHtml(d.name)}</div>
-                <div class="row-meta"><span class="pill" style="background:var(--good,#1E8E5A)22;color:var(--good,#1E8E5A);">✅ Fully Paid</span></div>
-              </div>
-            </div>`).join('')}
-        </div>` : ''}
-      </div>`;
-    }).join('')}
-    `;
-  };
-  return renderSection('clients', 'Clients') + renderSection('listings', 'Listings');
-}
 function renderActiveDealsMain(){
   const rows = activeDealsClients();
   if(!rows.length) return `<div class="empty-state"><div class="big">No active deals right now.</div><div class="tiny">Check "Active Deal" on a site/deal inside a client to have it show up here.</div></div>`;
@@ -3992,8 +3578,7 @@ function renderMainContent(){
   if(state.mainView.type==='list') return renderListMain(state.mainView.id);
   // smart list
   const id = state.mainView.id;
-  if(id==='allDeals') return renderAllDealsMain();
-  if(id==='archivedDeals') return renderArchivedDealsMain();
+  if(id==='activeDeals') return renderActiveDealsMain();
   if(id==='archived') return renderArchivedMain();
   if(id==='caStatus') return renderCAStatusMain();
   const teamCapable = (id==='week' || id==='month');
@@ -4003,18 +3588,13 @@ function renderMainContent(){
     // "Mine" for Due This Week / Due This Month means only to-do's assigned to me.
     list = list.filter(td=>td.assignedTo===state.currentUser.id);
   }
-  const searchQ = (state.listSearchQuery||'').trim();
-  if(searchQ) list = list.filter(td=>matchesSearchTokens(`${td.title} ${td.category||''} ${td.notes||''} ${td.status||''}`, searchQ));
   const archiveBar = id==='completed' && list.length ?
     `<button class="btn secondary sm" data-action="archiveAllCompleted" style="margin-bottom:12px;">🗄️ Archive All Completed (${list.length})</button>` : '';
-  if(!list.length && searchQ) return `<div class="empty-state"><div class="big">No matches for "${escapeHtml(searchQ)}".</div><div class="tiny">Try a different search, or clear it to see everything.</div></div>`;
   return archiveBar + renderBulkBar() + renderTodoList(list);
 }
 function renderArchivedClientsMain(){
-  let archived = db.archivedClients||[];
-  const searchQ = (state.listSearchQuery||'').trim();
-  if(searchQ) archived = archived.filter(c=>matchesSearchTokens(c.name, searchQ));
-  if(!archived.length) return searchQ ? `<div class="empty-state"><div class="big">No matches for "${escapeHtml(searchQ)}".</div><div class="tiny">Try a different search, or clear it to see everything.</div></div>` : `<div class="empty-state"><div class="big">Nothing archived.</div><div class="tiny">Archived Clients and Listings will show up here.</div></div>`;
+  const archived = db.archivedClients||[];
+  if(!archived.length) return `<div class="empty-state"><div class="big">Nothing archived.</div><div class="tiny">Archived Clients and Listings will show up here.</div></div>`;
   const renderRow = (c)=>`
     <div class="row-card" style="opacity:.8;" data-viewarchived="${c.id}" data-listid="${c.archivedListId}">
       <div class="nav-icon" style="font-size:20px;">🗄️</div>
@@ -4031,10 +3611,8 @@ function renderArchivedClientsMain(){
   `;
 }
 function renderProjectsListMain(){
-  let projects = visibleProjectsList();
-  const searchQ = (state.listSearchQuery||'').trim();
-  if(searchQ) projects = projects.filter(p=>matchesSearchTokens(p.title, searchQ));
-  if(!projects.length) return searchQ ? `<div class="empty-state"><div class="big">No matches for "${escapeHtml(searchQ)}".</div><div class="tiny">Try a different search, or clear it to see everything.</div></div>` : `<div class="empty-state"><div class="big">No Projects yet.</div><div class="tiny">Open any to-do and switch it to "Project" to start one — it'll show up here no matter where it lives.</div></div>`;
+  const projects = visibleProjectsList();
+  if(!projects.length) return `<div class="empty-state"><div class="big">No Projects yet.</div><div class="tiny">Open any to-do and switch it to "Project" to start one — it'll show up here no matter where it lives.</div></div>`;
   return projects.map(p=>{
     const childCount = db.todos.filter(t=>t.projectId===p.id).length;
     const doneCount = (p.checklistItems||[]).filter(i=>i.done).length;
@@ -4057,40 +3635,30 @@ function renderProjectsListMain(){
 }
 function renderCAStatusMain(){
   const clientsList = db.lists.find(x=>x.id==='clients');
-  let rows = [];
+  const rows = [];
   clientsList.clients.forEach(c=>{
     c.deals.forEach(d=>{
       const caExecuted = d.caExecuted!==undefined ? d.caExecuted : false;
       rows.push({client:c, deal:d, caExecuted});
     });
   });
-  const searchQ = (state.listSearchQuery||'').trim();
-  if(searchQ) rows = rows.filter(r=>matchesSearchTokens(`${r.client.name} ${r.deal.name}`, searchQ));
-  if(!rows.length) return searchQ
-    ? `<div class="empty-state"><div class="big">No matches for "${escapeHtml(searchQ)}".</div><div class="tiny">Try a different search, or clear it to see everything.</div></div>`
-    : `<div class="empty-state"><div class="big">Nothing here.</div></div>`;
-
-  const byClient = {};
-  rows.forEach(r=>{ (byClient[r.client.id] = byClient[r.client.id] || {client:r.client, rows:[]}).rows.push(r); });
-  const groups = Object.values(byClient).sort((a,b)=>a.client.name.localeCompare(b.client.name));
-  const outstandingTotal = rows.filter(r=>!r.caExecuted).length;
-
+  const outstanding = rows.filter(r=>!r.caExecuted);
+  const executed = rows.filter(r=>r.caExecuted);
+  const renderGroup = (title, items, color)=>{
+    if(!items.length) return `<div class="section-label" style="color:${color};">${title} (0)</div><div class="empty-state" style="padding:14px;"><div class="tiny">Nothing here.</div></div>`;
+    return `<div class="section-label" style="color:${color};">${title} (${items.length})</div>` + items.map(r=>`
+      <div class="row-card" data-opendealdirect="${r.deal.id}" data-client="${r.client.id}">
+        <div class="nav-icon" style="font-size:18px;">📄</div>
+        <div class="row-body">
+          <div class="row-title">${escapeHtml(r.client.name)} — ${escapeHtml(r.deal.name)}</div>
+          <div class="row-meta"><span>${r.deal.dueDate? fmtDate(r.deal.dueDate):'No date'}</span></div>
+        </div>
+      </div>`).join('');
+  };
   return `
-    <p style="font-size:12.5px;color:var(--ink-soft);margin-top:0;">Commission Agreement status across every Client deal, grouped the same way the Clients view is. Listings aren't shown here — they're always covered by the property's Exclusive Listing Agreement instead.</p>
-    <div class="section-label">${outstandingTotal} Outstanding of ${rows.length} total</div>
-    ${groups.map(g=>`
-      <div style="margin:10px 0;">
-        <div style="font-weight:600;font-size:13.5px;color:var(--ink);margin-bottom:4px;">${escapeHtml(g.client.name)}</div>
-        ${g.rows.map(r=>`
-          <div class="row-card" data-opendealdirect="${r.deal.id}" data-client="${r.client.id}" data-listid="clients" style="margin-bottom:6px;">
-            <div class="nav-icon" style="font-size:18px;">📄</div>
-            <div class="row-body">
-              <div class="row-title">${escapeHtml(r.deal.name)}</div>
-              <div class="row-meta"><span>${r.deal.dueDate? fmtDate(r.deal.dueDate):'No date'}</span></div>
-            </div>
-            <span class="pill" style="background:${r.caExecuted?'var(--good)':'var(--bad)'}22;color:${r.caExecuted?'var(--good)':'var(--bad)'};flex-shrink:0;">${r.caExecuted?'Executed':'Outstanding'}</span>
-          </div>`).join('')}
-      </div>`).join('')}
+    <p style="font-size:12.5px;color:var(--ink-soft);margin-top:0;">Commission Agreement status across every Client deal. Listings aren't shown here — they're always covered by the property's Exclusive Listing Agreement.</p>
+    ${renderGroup('CA Outstanding', outstanding, 'var(--bad)')}
+    ${renderGroup('CA Executed', executed, 'var(--good)')}
   `;
 }
 function renderArchivedMain(){
@@ -4176,33 +3744,13 @@ function renderTodoList(list){
   return html;
 }
 function contextLabel(td){
-  if(td.clientId){
-    for(const l of db.lists){
-      if(l.type==='deep'){
-        const c = l.clients.find(x=>x.id===td.clientId);
-        if(c){
-          if(td.dealId){
-            const d = c.deals.find(x=>x.id===td.dealId);
-            if(d) return `${c.name} → ${d.name}`;
-          }
-          return c.name;
-        }
-      }
-    }
+  const parts=[];
+  if(td.listId){
+    const l = db.lists.find(x=>x.id===td.listId);
+    if(l) parts.push(l.name);
   }
-  if(td.entryId){
-    for(const l of db.lists){
-      if(l.type==='flat'){
-        const e = l.entries.find(x=>x.id===td.entryId);
-        if(e) return e.name;
-      }
-    }
-  }
-  if(td.projectId){
-    const proj = db.todos.find(x=>x.id===td.projectId);
-    if(proj) return proj.title;
-  }
-  return 'Personal';
+  if(td.category) parts.push(td.category);
+  return parts.join(' · ') || 'Personal';
 }
 function contactForClient(c){
   if(!c || !c.primary) return null;
@@ -4282,17 +3830,12 @@ function renderTeamTodos(smartId){
 }
 
 function renderListMain(listId){
-  let l = db.lists.find(x=>x.id===listId);
+  const l = db.lists.find(x=>x.id===listId);
   if(!l) return '';
-  const searchQ = (state.listSearchQuery||'').trim();
-  if(searchQ){
-    if(l.type==='deep') l = {...l, clients: l.clients.filter(c=>matchesSearchTokens(c.name, searchQ))};
-    else l = {...l, entries: l.entries.filter(e=>matchesSearchTokens(e.name, searchQ))};
-  }
   const singular = l.name.endsWith('s') ? l.name.slice(0,-1) : l.name;
   if(l.type==='deep'){
     const addBtn = `<button class="btn sm" data-action="addClient" data-listid="${l.id}" style="margin-bottom:14px;">+ New ${singular}</button>`;
-    if(!l.clients.length) return addBtn + (searchQ ? `<div class="empty-state"><div class="big">No matches for "${escapeHtml(searchQ)}".</div><div class="tiny">Try a different search, or clear it to see everything.</div></div>` : `<div class="empty-state"><div class="big">No ${l.name.toLowerCase()} yet.</div><div class="tiny">Add your first one to get moving.</div></div>`);
+    if(!l.clients.length) return addBtn + `<div class="empty-state"><div class="big">No ${l.name.toLowerCase()} yet.</div><div class="tiny">Add your first one to get moving.</div></div>`;
     const renderRow = (c)=>{
       const dealCount = c.deals.length;
       const openDeals = c.deals.filter(d=>!d.complete).length;
@@ -4351,7 +3894,7 @@ function renderListMain(listId){
       const mine = l.entries.filter(hasAccess);
       const others = l.entries.filter(e=>!hasAccess(e));
       const otherOpen = !!(state.otherAccountsOpen && state.otherAccountsOpen[l.id]);
-      if(!l.entries.length) return addBtn + (searchQ ? `<div class="empty-state"><div class="big">No matches for "${escapeHtml(searchQ)}".</div><div class="tiny">Try a different search, or clear it to see everything.</div></div>` : `<div class="empty-state"><div class="big">Nothing here yet.</div><div class="tiny">Add a prospect to start tracking outreach.</div></div>`);
+      if(!l.entries.length) return addBtn + `<div class="empty-state"><div class="big">Nothing here yet.</div><div class="tiny">Add a prospect to start tracking outreach.</div></div>`;
       return addBtn + mine.map(renderEntryRow).join('') +
         (others.length ? `
         <div class="nav-section-label" style="cursor:pointer;margin-top:10px;" data-action="toggleOtherAccounts" data-listid="${l.id}">
@@ -4361,7 +3904,7 @@ function renderListMain(listId){
         ` : '');
     }
     const visibleEntries = l.entries.filter(hasAccess);
-    if(!visibleEntries.length) return addBtn + (searchQ ? `<div class="empty-state"><div class="big">No matches for "${escapeHtml(searchQ)}".</div><div class="tiny">Try a different search, or clear it to see everything.</div></div>` : `<div class="empty-state"><div class="big">Nothing here yet.</div><div class="tiny">Add a prospect to start tracking outreach.</div></div>`);
+    if(!visibleEntries.length) return addBtn + `<div class="empty-state"><div class="big">Nothing here yet.</div><div class="tiny">Add a prospect to start tracking outreach.</div></div>`;
     return addBtn + visibleEntries.map(renderEntryRow).join('');
   }
 }
@@ -4377,7 +3920,7 @@ function renderShell(){
     <div style="${hideSidebar?'display:none;':''}">${renderSidebar()}</div>
     <div class="main" style="${hideMain?'display:none;':''}position:relative;">
       ${renderTopbar()}
-      <div class="content"><div class="content-flex"><div class="content-inner" id="mainContentInner">${renderMainContent()}</div>${renderSidePanel()}</div></div>
+      <div class="content"><div class="content-flex"><div class="content-inner">${renderMainContent()}</div>${renderSidePanel()}</div></div>
     </div>
   </div>
   <button class="fab" data-action="newTodo" title="New To-Do">+</button>
@@ -4403,7 +3946,6 @@ function renderAdminMenu(){
     ${!state.isMobile ? `<div class="admin-item" data-action="adminImportTodos">⬆️ Import To-Do's (CSV)</div>` : ''}
     ${!state.isMobile ? `<div class="admin-item" data-action="adminImportTaskFire">⬆️ Import from TaskFire</div>` : ''}
     ${!state.isMobile ? `<div class="admin-item" data-action="adminImportMaps">🗺️ Import from MyMaps</div>` : ''}
-    ${!state.isMobile ? `<div class="admin-item" data-action="adminConnectCalendar">🗓️ ${state.msalAccount ? 'Disconnect Calendar (Outlook)' : 'Connect Calendar (Outlook)'}</div>` : ''}
     <div class="admin-item" data-action="adminDigest">📨 Compose Weekly Digest</div>
     <div class="admin-item" data-action="adminUsers">👥 Manage Users</div>
     <div class="admin-item" data-action="adminTimes">⏱️ Email Send Times</div>
@@ -4423,7 +3965,6 @@ function wireGlobalSearchResultHandlers(){
 }
 function attachShellHandlers(){
   document.querySelectorAll('[data-nav]').forEach(el=>el.onclick=()=>{
-    state.listSearchQuery = '';
     const [type,id]=el.dataset.nav.split(':');
     if(type==='smart'){ state.mainView={type:'smart',id}; }
     else if(type==='list'){ state.mainView={type:'list',id}; }
@@ -4468,28 +4009,6 @@ function attachShellHandlers(){
     globalSearchBox.onblur=()=>{ setTimeout(()=>{ state.globalSearchFocused=false; },150); };
   }
   wireGlobalSearchResultHandlers();
-  const listSearchBox = document.getElementById('listSearchBox');
-  if(listSearchBox){
-    listSearchBox.oninput=()=>{
-      state.listSearchQuery = listSearchBox.value;
-      // Same fix as the global search box: never call render() here, or this very
-      // input gets torn down and rebuilt mid-keystroke and loses focus. Only the
-      // main content region refreshes; the search field itself is never touched.
-      const mainContentInner = document.getElementById('mainContentInner');
-      if(mainContentInner){
-        mainContentInner.innerHTML = renderMainContent();
-        attachShellHandlers();
-        wireTodoRowHandlers(document.getElementById('app'));
-      }
-    };
-    listSearchBox.onfocus=()=>{ state.listSearchFocused=true; };
-    listSearchBox.onblur=()=>{ setTimeout(()=>{ state.listSearchFocused=false; },150); };
-    if(state.listSearchFocused){
-      listSearchBox.focus();
-      const len = listSearchBox.value.length;
-      listSearchBox.setSelectionRange(len,len);
-    }
-  }
   const toggleListsBtn = document.querySelector('[data-action="toggleListsCollapsed"]'); if(toggleListsBtn) toggleListsBtn.onclick=()=>{
     state.listsCollapsed = !state.listsCollapsed;
     renderPreservingScroll('.sidebar');
@@ -4524,30 +4043,11 @@ function attachShellHandlers(){
     openTodoDetail(el.dataset.openproject);
     render();
   });
-  document.querySelectorAll('[data-opendealdirect]').forEach(el=>el.onclick=(ev)=>{
-    ev.stopPropagation();
-    const listId = el.dataset.listid || 'clients';
+  document.querySelectorAll('[data-opendealdirect]').forEach(el=>el.onclick=()=>{
     state.modalStack = [
-      {kind:'client', listId, clientId:el.dataset.client, viewMode:'all'},
-      {kind:'deal', listId, clientId:el.dataset.client, dealId:el.dataset.opendealdirect}
+      {kind:'client', listId:'clients', clientId:el.dataset.client, viewMode:'all'},
+      {kind:'deal', listId:'clients', clientId:el.dataset.client, dealId:el.dataset.opendealdirect}
     ];
-    render();
-  });
-  document.querySelectorAll('[data-action="toggleAllDealsAccount"]').forEach(el=>el.onclick=()=>{
-    const id = el.dataset.accountid;
-    if(!state.allDealsAccountOpen) state.allDealsAccountOpen = {};
-    state.allDealsAccountOpen[id] = !state.allDealsAccountOpen[id];
-    renderPreservingScroll('.content');
-  });
-  document.querySelectorAll('[data-action="toggleArchivedDealsAccount"]').forEach(el=>el.onclick=()=>{
-    const id = el.dataset.accountid;
-    if(!state.archivedDealsAccountOpen) state.archivedDealsAccountOpen = {};
-    state.archivedDealsAccountOpen[id] = !state.archivedDealsAccountOpen[id];
-    renderPreservingScroll('.content');
-  });
-  document.querySelectorAll('[data-openaccountdirect]').forEach(el=>el.onclick=(ev)=>{
-    ev.stopPropagation();
-    openClientModal(el.dataset.listid, el.dataset.openaccountdirect, 'all');
     render();
   });
   document.querySelectorAll('[data-openentry]').forEach(el=>el.onclick=()=>{
@@ -4559,7 +4059,7 @@ function attachShellHandlers(){
   const back=document.querySelector('[data-action="collapseTeam"]'); if(back) back.onclick=()=>{state.expandedTeamUser=null; render();};
   const mine=document.querySelector('[data-action="todoViewMine"]'); if(mine) mine.onclick=()=>{state.todoView='mine'; render();};
   const team=document.querySelector('[data-action="todoViewTeam"]'); if(team) team.onclick=()=>{state.todoView='team'; render();};
-  const fab=document.querySelector('[data-action="newTodo"]'); if(fab) fab.onclick=()=>{ state.newTodoPicker={step:'chooseType'}; render(); };
+  const fab=document.querySelector('[data-action="newTodo"]'); if(fab) fab.onclick=()=>{ openNewTodoModal({}); render(); };
   const admin=document.querySelector('[data-action="toggleAdmin"]'); if(admin) admin.onclick=(ev)=>{ ev.stopPropagation(); state.showUserMenu=false; state.showAdminMenu=!state.showAdminMenu; render(); };
   const userMenuBtn=document.querySelector('[data-action="toggleUserMenu"]'); if(userMenuBtn) userMenuBtn.onclick=(ev)=>{ ev.stopPropagation(); state.showAdminMenu=false; state.showUserMenu=!state.showUserMenu; render(); };
   const logout=document.querySelector('[data-action="logout"]'); if(logout) logout.onclick=async ()=>{
@@ -4626,7 +4126,6 @@ function attachShellHandlers(){
   const refreshBtn=document.querySelector('[data-action="refreshApp"]'); if(refreshBtn) refreshBtn.onclick=()=>{ doAppRefresh(); };
   const myNotesBtn=document.querySelector('[data-action="openMyNotes"]'); if(myNotesBtn) myNotesBtn.onclick=()=>{ state.myNotesOpen=true; state.showUserMenu=false; render(); };
   const notifFromMenuBtn=document.querySelector('[data-action="openNotifSettingsFromMenu"]'); if(notifFromMenuBtn) notifFromMenuBtn.onclick=()=>{ state.notifSettingsOpen=true; state.showUserMenu=false; render(); };
-  const changePwBtn=document.querySelector('[data-action="openChangePassword"]'); if(changePwBtn) changePwBtn.onclick=()=>{ state.changePasswordModalOpen=true; state.showUserMenu=false; render(); };
   const newEmailBtn=document.querySelector('[data-action="openBlankEmail"]'); if(newEmailBtn) newEmailBtn.onclick=()=>{
     openBlankEmailDraft();
     flashToast('Opening a new email draft…');
@@ -4635,7 +4134,6 @@ function attachShellHandlers(){
   const calBtn=document.querySelector('[data-action="openCalendarView"]'); if(calBtn) calBtn.onclick=()=>{
     openCalendarView(); render();
   };
-  const msRetryBtn=document.querySelector('[data-action="msRetry"]'); if(msRetryBtn) msRetryBtn.onclick=safeHandler(fetchMyOutlookEvents);
   const importBtn=document.querySelector('[data-action="openImportTodos"]'); if(importBtn) importBtn.onclick=()=>{
     state.importTodosModal = {step:'upload'};
     render();
@@ -4677,7 +4175,7 @@ function attachShellHandlers(){
     renderPreservingScroll('.content');
   });
   wireDragReorder('[data-widgetdrag]', 'widgetdrag', (fromKey, toKey)=>{
-    if(!state.widgetOrder) state.widgetOrder = ['outlookCalendar','weather','news','quicklinks'];
+    if(!state.widgetOrder) state.widgetOrder = ['calendar','weather','news','quicklinks'];
     const fromIdx = state.widgetOrder.indexOf(fromKey), toIdx = state.widgetOrder.indexOf(toKey);
     if(fromIdx<0 || toIdx<0) return;
     const [moved] = state.widgetOrder.splice(fromIdx, 1);
@@ -4688,35 +4186,29 @@ function attachShellHandlers(){
   document.querySelectorAll('[data-action="connectOutlook"]').forEach(outlookBtn=>outlookBtn.onclick=()=>{
     alert("Real Outlook Calendar sync needs a Microsoft-registered app (one-time setup by whoever admins your Microsoft 365) plus your portal's real, final web address — that can't be wired up from a plain preview URL. Once you're on a stable Netlify domain, this is genuinely buildable with no backend server required. For now nothing is synced yet.");
   });
-  const addClientBtn=document.querySelector('[data-action="addClient"]'); if(addClientBtn) addClientBtn.onclick=safeHandler(async ()=>{
+  const addClientBtn=document.querySelector('[data-action="addClient"]'); if(addClientBtn) addClientBtn.onclick=()=>{
     const l = db.lists.find(x=>x.id===addClientBtn.dataset.listid);
     const name = prompt(`Name this ${l.id==='listings'?'listing':'client'}:`);
     if(!name) return;
-    const newClient = {id:crypto.randomUUID(), name, primary:null, secondContactId:null, thirdContactId:null, deals:[], createdBy:state.currentUser.id, authorizedUserIds:[]};
+    const newClient = {id:crypto.randomUUID(), name, primary:null, secondary:[], deals:[], createdBy:state.currentUser.id, authorizedUserIds:[]};
     if(l.id==='listings'){ newClient.prospects=[]; newClient.categoryConfig=newLSRCategoryConfig(); }
     l.clients.push(newClient);
-    render();
-    // Wait for the actual server-side insert to finish before anything else can
-    // reference this client — otherwise a to-do (or anything else) added against
-    // it right away can arrive at the server before the client itself has, and
-    // silently fail to save since client_id is a real, enforced foreign key.
-    await supaCreateClient(newClient, l.id);
+    supaCreateClient(newClient, l.id);
     flashToast(`${name} added. Open it to attach a contact and add sites.`);
     state.addUsersPrompt = {listId:l.id, clientId:newClient.id};
     render();
-  });
-  const addEntryBtn=document.querySelector('[data-action="addEntry"]'); if(addEntryBtn) addEntryBtn.onclick=safeHandler(async ()=>{
+  };
+  const addEntryBtn=document.querySelector('[data-action="addEntry"]'); if(addEntryBtn) addEntryBtn.onclick=()=>{
     const name = prompt('Name this prospect:');
     if(!name) return;
     const l = db.lists.find(x=>x.id===addEntryBtn.dataset.listid);
     const newEntry = {id:crypto.randomUUID(), name, lastCall:null, feedback:'', contactId:null, ownerId:state.currentUser.id};
     l.entries.push(newEntry);
-    render();
-    await supaCreateEntry(newEntry, l.id);
+    supaCreateEntry(newEntry, l.id);
     flashToast(`${name} added to ${l.name}.`);
     render();
-  });
-  ['adminPending','adminFullTeam','adminImportTodos','adminImportTaskFire','adminImportMaps','adminConnectCalendar','adminDigest','adminUsers','adminTimes','adminReset'].forEach(a=>{
+  };
+  ['adminPending','adminFullTeam','adminImportTodos','adminImportTaskFire','adminImportMaps','adminDigest','adminUsers','adminTimes','adminReset'].forEach(a=>{
     const e=document.querySelector(`[data-action="${a}"]`);
     if(e) e.onclick=()=>{ state.showAdminMenu=false; handleAdminAction(a); };
   });
@@ -4820,167 +4312,6 @@ async function supaUpdateUserRole(u, newRole){
   if(error){ console.error('supaUpdateUserRole error:', error); flashToast(`Saved here, but syncing ${u.name}'s role failed. (${error.message})`); return false; }
   return true;
 }
-function renderTestCalendarModal(){
-  const overlay = document.createElement('div');
-  overlay.className='modal-overlay'; overlay.style.zIndex=175;
-  overlay.innerHTML = `
-  <div class="modal-card">
-    <div class="modal-head"><div class="modal-title">🗓️ Test Calendar Connection (Temporary)</div><button class="modal-close" data-action="closeTestCalendar">✕</button></div>
-    <div class="modal-body">
-      <div style="font-size:12.5px;color:var(--ink-soft);line-height:1.5;margin-bottom:14px;">
-        This is a one-time test, not a real feature yet. Your email and password go straight from this browser to a temporary test function and then to Microsoft's own servers — they are never logged, stored, or saved anywhere, and this whole test screen gets removed after we're done with it.
-      </div>
-      <div class="field">
-        <label>Email (e.g. you@mrcdevpartners.com)</label>
-        <input type="email" id="testCalEmail" autocomplete="off">
-      </div>
-      <div class="field">
-        <label>Password</label>
-        <input type="password" id="testCalPassword" autocomplete="off">
-      </div>
-      <div id="testCalResult" style="margin-top:10px;"></div>
-    </div>
-    <div class="modal-foot">
-      <button class="btn secondary" data-action="closeTestCalendar">Close</button>
-      <button class="btn" data-action="runTestCalendar">Test Connection</button>
-    </div>
-  </div>`;
-  document.getElementById('app').appendChild(overlay);
-  overlay.querySelectorAll('[data-action="closeTestCalendar"]').forEach(b=>b.onclick=()=>{ state.testCalendarModalOpen=false; render(); });
-  overlay.querySelector('[data-action="runTestCalendar"]').onclick=safeHandler(async ()=>{
-    const email = document.getElementById('testCalEmail').value.trim();
-    const password = document.getElementById('testCalPassword').value;
-    if(!email || !password){ flashToast('Enter both an email and a password.'); return; }
-    const resultBox = document.getElementById('testCalResult');
-    resultBox.innerHTML = `<span class="tiny" style="color:var(--ink-soft);">Testing…</span>`;
-    const { data, error } = await supabaseClient.functions.invoke('temp-test-ews-connection', { body: { email, password } });
-    if(error){
-      resultBox.innerHTML = `<div style="background:#fdecea;border:1px solid var(--bad,#C0392B);border-radius:8px;padding:10px 12px;font-size:13px;">❌ Request failed: ${escapeHtml(error.message)}</div>`;
-      return;
-    }
-    if(data && data.success){
-      resultBox.innerHTML = `<div style="background:var(--edge-lighter);border:1px solid var(--good,#1E8E5A);border-radius:8px;padding:10px 12px;font-size:13px;">✅ ${escapeHtml(data.meaning)}</div>`;
-    } else {
-      resultBox.innerHTML = `<div style="background:#fdecea;border:1px solid var(--bad,#C0392B);border-radius:8px;padding:10px 12px;font-size:13px;">
-        ❌ ${escapeHtml((data && data.meaning) || (data && data.error) || 'Unknown failure.')}
-        ${data && data.rawResponseSnippet ? `<div class="tiny" style="margin-top:6px;font-family:monospace;white-space:pre-wrap;color:var(--ink-soft);">${escapeHtml(data.rawResponseSnippet)}</div>` : ''}
-      </div>`;
-    }
-  });
-}
-function renderChangePasswordModal(){
-  const overlay = document.createElement('div');
-  overlay.className='modal-overlay'; overlay.style.zIndex=175;
-  overlay.innerHTML = `
-  <div class="modal-card">
-    <div class="modal-head"><div class="modal-title">🔑 Change Your Password</div><button class="modal-close" data-action="closeChangePassword">✕</button></div>
-    <div class="modal-body">
-      <div class="field">
-        <label>New Password</label>
-        <input type="password" id="cpNewPassword" autocomplete="new-password">
-      </div>
-      <div class="field">
-        <label>Confirm New Password</label>
-        <input type="password" id="cpConfirmPassword" autocomplete="new-password">
-      </div>
-      <div class="tiny" style="color:var(--ink-soft);margin-bottom:6px;">At least 8 characters.</div>
-      <div id="cpResult" style="margin-top:6px;"></div>
-    </div>
-    <div class="modal-foot">
-      <button class="btn secondary" data-action="closeChangePassword">Cancel</button>
-      <button class="btn" data-action="submitChangePassword">Change Password</button>
-    </div>
-  </div>`;
-  document.getElementById('app').appendChild(overlay);
-  overlay.querySelectorAll('[data-action="closeChangePassword"]').forEach(b=>b.onclick=()=>{ state.changePasswordModalOpen=false; render(); });
-  overlay.querySelector('[data-action="submitChangePassword"]').onclick=safeHandler(async ()=>{
-    const pw1 = document.getElementById('cpNewPassword').value;
-    const pw2 = document.getElementById('cpConfirmPassword').value;
-    const resultBox = document.getElementById('cpResult');
-    if(pw1.length < 8){ resultBox.innerHTML = `<span class="tiny" style="color:var(--bad,#C0392B);">Password must be at least 8 characters.</span>`; return; }
-    if(pw1 !== pw2){ resultBox.innerHTML = `<span class="tiny" style="color:var(--bad,#C0392B);">Those two passwords don't match.</span>`; return; }
-    resultBox.innerHTML = `<span class="tiny" style="color:var(--ink-soft);">Updating…</span>`;
-    const { error } = await supabaseClient.auth.updateUser({ password: pw1 });
-    if(error){
-      resultBox.innerHTML = `<span class="tiny" style="color:var(--bad,#C0392B);">Couldn't change your password: ${escapeHtml(error.message)}</span>`;
-      return;
-    }
-    flashToast('Password changed.');
-    state.changePasswordModalOpen=false;
-    render();
-  });
-}
-function renderResetPasswordModal(){
-  const overlay = document.createElement('div');
-  overlay.className='modal-overlay'; overlay.style.zIndex=175;
-  overlay.innerHTML = `
-  <div class="modal-card">
-    <div class="modal-head"><div class="modal-title">Reset a Password</div><button class="modal-close" data-action="closeResetPassword">✕</button></div>
-    <div class="modal-body">
-      <div class="field">
-        <label>Who needs help logging in?</label>
-        <select id="resetPasswordUserSelect">
-          ${usersSortedByMe().map(u=>`<option value="${u.id}">${escapeHtml(u.name)} (${escapeHtml(u.email)})</option>`).join('')}
-        </select>
-      </div>
-      <div style="font-size:12px;color:var(--ink-soft);line-height:1.5;margin-bottom:14px;">
-        Emailed link — they set a brand-new password themselves, you never see or set it for them.
-      </div>
-      <button class="btn secondary sm" data-action="sendResetEmail" style="margin-bottom:18px;">Send Reset Email</button>
-      <div style="border-top:1px solid var(--line-soft);padding-top:14px;">
-        <div style="font-size:12px;color:var(--ink-soft);line-height:1.5;margin-bottom:8px;">
-          Or set a temporary password directly, right now — no email involved. Give it to them so they can log in immediately, and let them know to change it once they're in.
-        </div>
-        <button class="btn secondary sm" data-action="setPasswordDirectly">Set a Temporary Password</button>
-        <div id="tempPasswordResult" style="margin-top:10px;"></div>
-      </div>
-    </div>
-    <div class="modal-foot">
-      <button class="btn secondary" data-action="closeResetPassword">Close</button>
-    </div>
-  </div>`;
-  document.getElementById('app').appendChild(overlay);
-  overlay.querySelectorAll('[data-action="closeResetPassword"]').forEach(b=>b.onclick=()=>{ state.resetPasswordModalOpen=false; render(); });
-  overlay.querySelector('[data-action="sendResetEmail"]').onclick=safeHandler(async ()=>{
-    const sel = document.getElementById('resetPasswordUserSelect');
-    const u = USERS.find(x=>x.id===sel.value);
-    if(!u) return;
-    const { error } = await supabaseClient.auth.resetPasswordForEmail(u.email, { redirectTo: portalUrl() });
-    if(error){ console.error('resetPasswordForEmail error:', error); flashToast(`Couldn't send the reset email. (${error.message})`); return; }
-    flashToast(`Reset email sent to ${u.name} (if they have an account yet — Supabase won't confirm either way, for security).`);
-  });
-  overlay.querySelector('[data-action="setPasswordDirectly"]').onclick=safeHandler(async ()=>{
-    const sel = document.getElementById('resetPasswordUserSelect');
-    const u = USERS.find(x=>x.id===sel.value);
-    if(!u) return;
-    if(!u.authId){ flashToast(`${u.name} needs to sign in to the Portal at least once before a password can be set for them.`); return; }
-    // Random, readable temporary password — plenty strong for a one-time handoff.
-    const words = ['Cactus','Sunset','Falcon','Desert','Copper','Canyon','Rocket','Maple','Tiger','Compass'];
-    const tempPassword = words[Math.floor(Math.random()*words.length)] + Math.floor(1000+Math.random()*9000) + '!';
-    const resultBox = document.getElementById('tempPasswordResult');
-    resultBox.innerHTML = `<span class="tiny" style="color:var(--ink-soft);">Setting password…</span>`;
-    const { data, error } = await supabaseClient.functions.invoke('admin-set-password', {
-      body: { targetUserId: u.authId, newPassword: tempPassword }
-    });
-    if(error || (data && data.error)){
-      let msg = (data && data.error) || error.message;
-      // The generic "non-2xx status code" message hides the actual reason the
-      // function gave — try to pull the real detail out of the response body.
-      if(error && error.context && typeof error.context.json === 'function'){
-        try{ const body = await error.context.json(); if(body && body.error) msg = body.error; } catch(e){ /* body wasn't JSON or already consumed — fall back to the generic message */ }
-      }
-      const resultBox2 = document.getElementById('tempPasswordResult');
-      resultBox2.innerHTML = `<span class="tiny" style="color:var(--bad, #C0392B);">Couldn't set the password: ${escapeHtml(msg)}</span>`;
-      return;
-    }
-    resultBox.innerHTML = `
-      <div style="background:var(--edge-lighter);border:1px solid var(--edge-light);border-radius:8px;padding:10px 12px;">
-        <div class="tiny" style="color:var(--ink-soft);margin-bottom:4px;">Give ${escapeHtml(u.name)} this password:</div>
-        <div style="font-size:16px;font-weight:700;font-family:monospace;">${escapeHtml(tempPassword)}</div>
-      </div>`;
-    flashToast(`Password set for ${u.name}.`);
-  });
-}
 function renderPendingUsersModal(){
   const overlay = document.createElement('div');
   overlay.className='modal-overlay'; overlay.style.zIndex=175;
@@ -5030,10 +4361,6 @@ async function handleAdminAction(a){
   if(a==='adminImportTodos'){ state.importTodosModal = {step:'upload'}; }
   if(a==='adminImportTaskFire'){ state.taskfireImport = {step:'upload'}; }
   if(a==='adminImportMaps'){ state.mapsImport = {step:'upload', clientQuery:'', pickedClient:null, newClientName:''}; }
-  if(a==='adminConnectCalendar'){
-    if(state.msalAccount){ signOutOfMicrosoft(); }
-    else { await signInToMicrosoft(); }
-  }
   if(a==='adminDigest'){ state.notifSettingsOpen=true; }
   if(a==='adminUsers'){
     // Refresh every profile fresh from the server first — without this, anyone who
@@ -5044,13 +4371,7 @@ async function handleAdminAction(a){
     state.manageUsersModalOpen=true;
   }
   if(a==='adminTimes'){ state.notifSettingsOpen=true; }
-  if(a==='adminReset'){
-    // Same fix as adminUsers above — refresh profiles fresh first, so someone who
-    // logged in for the first time after this browser session started doesn't
-    // silently fail here with a stale/missing authId.
-    await fetchAllProfilesIntoUsers();
-    state.resetPasswordModalOpen=true;
-  }
+  if(a==='adminReset'){ flashToast('Password reset flow would open here.'); }
   render();
 }
 function promptAddSmartList(editingId){
@@ -5177,7 +4498,7 @@ function renderNewSmartListModal(){
           <option value="me" ${m.assignee==='me'?'selected':''}>Just me</option>
           <option value="meByOthers" ${m.assignee==='meByOthers'?'selected':''}>Assigned to me (by someone else)</option>
           <option value="unassigned" ${m.assignee==='unassigned'?'selected':''}>Unassigned</option>
-          ${usersSortedByMe().map(u=>`<option value="${u.id}" ${m.assignee===u.id?'selected':''}>${u.name}</option>`).join('')}
+          ${USERS.map(u=>`<option value="${u.id}" ${m.assignee===u.id?'selected':''}>${u.name}</option>`).join('')}
         </select>
       </div>
       <div class="field">
@@ -5194,9 +4515,9 @@ function renderNewSmartListModal(){
           ${(m.categories||[]).map(c=>`<div class="pill" style="display:flex;align-items:center;gap:6px;">${escapeHtml(c)}<button data-removeslcat="${escapeAttr(c)}" style="border:none;background:none;cursor:pointer;color:var(--ink-soft);">✕</button></div>`).join('')}
         </div>` : ''}
         <input id="slCategoryInput" placeholder="Start typing to add a category…" value="${escapeAttr(m.categoryInput||'')}">
-        <div id="slCategorySuggestions">${catMatches.length? `<div class="suggest-list">${catMatches.map(c=>`
+        ${catMatches.length? `<div class="suggest-list">${catMatches.map(c=>`
           <div class="suggest-item" data-addslcat="${escapeAttr(c)}">${escapeHtml(c)}</div>
-        `).join('')}</div>` : ''}</div>
+        `).join('')}</div>` : ''}
       </div>
       <div class="field autocomplete-box">
         <label>Client (optional — pick any that apply)</label>
@@ -5204,9 +4525,9 @@ function renderNewSmartListModal(){
           ${selectedClients.map(c=>`<div class="pill" style="display:flex;align-items:center;gap:6px;">${escapeHtml(c.name)}<button data-removeslclient="${c.id}" style="border:none;background:none;cursor:pointer;color:var(--ink-soft);">✕</button></div>`).join('')}
         </div>` : ''}
         <input id="slClientQuery" placeholder="Start typing a client name…" value="${escapeAttr(m.clientQuery)}">
-        <div id="slClientSuggestions">${clientMatches.length? `<div class="suggest-list">${clientMatches.map(c=>`
+        ${clientMatches.length? `<div class="suggest-list">${clientMatches.map(c=>`
           <div class="suggest-item" data-selectslclient="${c.id}"><b>${escapeHtml(c.name)}</b><div class="sub">${escapeHtml(c.listName)}</div></div>
-        `).join('')}</div>` : ''}</div>
+        `).join('')}</div>` : ''}
       </div>
       <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-soft);font-weight:600;margin-top:4px;">
         <input type="checkbox" id="slPersonalOnly" ${m.personalOnly?'checked':''} style="width:auto;accent-color:var(--good);">
@@ -5225,23 +4546,7 @@ function renderNewSmartListModal(){
   if(dateSel) dateSel.onchange=()=>{ m.dateRule=dateSel.value; renderPreservingScroll('.modal-body'); };
   const clientQueryInput = document.getElementById('slClientQuery');
   if(clientQueryInput){
-    clientQueryInput.oninput=()=>{
-      m.clientQuery=clientQueryInput.value;
-      const selectedIds = new Set(m.clientIds||[]);
-      const matches = m.clientQuery ? allClientsFlat().filter(c=>c.name.toLowerCase().includes(m.clientQuery.toLowerCase()) && !selectedIds.has(c.id)) : [];
-      const box = document.getElementById('slClientSuggestions');
-      if(box){
-        box.innerHTML = matches.length? `<div class="suggest-list">${matches.map(c=>`
-          <div class="suggest-item" data-selectslclient="${c.id}"><b>${escapeHtml(c.name)}</b><div class="sub">${escapeHtml(c.listName)}</div></div>
-        `).join('')}</div>` : '';
-        box.querySelectorAll('[data-selectslclient]').forEach(el=>el.onclick=()=>{
-          if(!m.clientIds) m.clientIds=[];
-          m.clientIds.push(el.dataset.selectslclient);
-          m.clientQuery='';
-          renderPreservingScroll('.modal-body');
-        });
-      }
-    };
+    clientQueryInput.oninput=()=>{ m.clientQuery=clientQueryInput.value; render(); };
   }
   overlay.querySelectorAll('[data-selectslclient]').forEach(el=>el.onclick=()=>{
     if(!m.clientIds) m.clientIds=[];
@@ -5255,23 +4560,7 @@ function renderNewSmartListModal(){
   });
   const categoryInput = document.getElementById('slCategoryInput');
   if(categoryInput){
-    categoryInput.oninput=()=>{
-      m.categoryInput=categoryInput.value;
-      const allCatsNow = allCategories();
-      const matches = m.categoryInput ? allCatsNow.filter(c=>c.toLowerCase().includes(m.categoryInput.toLowerCase()) && !(m.categories||[]).some(x=>x.toLowerCase()===c.toLowerCase())) : [];
-      const box = document.getElementById('slCategorySuggestions');
-      if(box){
-        box.innerHTML = matches.length? `<div class="suggest-list">${matches.map(c=>`
-          <div class="suggest-item" data-addslcat="${escapeAttr(c)}">${escapeHtml(c)}</div>
-        `).join('')}</div>` : '';
-        box.querySelectorAll('[data-addslcat]').forEach(el=>el.onclick=()=>{
-          if(!m.categories) m.categories=[];
-          if(!m.categories.some(c=>c.toLowerCase()===el.dataset.addslcat.toLowerCase())) m.categories.push(el.dataset.addslcat);
-          m.categoryInput='';
-          renderPreservingScroll('.modal-body');
-        });
-      }
-    };
+    categoryInput.oninput=()=>{ m.categoryInput=categoryInput.value; render(); };
     categoryInput.onkeydown=(e)=>{
       if(e.key==='Enter' && categoryInput.value.trim()){
         e.preventDefault();
@@ -5438,46 +4727,21 @@ function bulkCompleteSelected(){
 
 /* ---------------- TODO DETAIL / EDIT MODAL ---------------- */
 function openTodoDetail(id){
+  state.todoDetailModal = {id};
   const td = db.todos.find(x=>x.id===id);
-  state.todoDetailModal = {id, originalAssignedTo: td ? td.assignedTo : null};
   if(td && td.isNew && td.assignedTo===state.currentUser.id) td.isNew=false;
 }
 // Deep-link support: digest emails link to a specific to-do via ?todo=<id>. Call this
 // once, right after app data has actually loaded (db.todos populated), so the to-do
 // exists to be found. Cleans the URL either way so a refresh doesn't repeat this.
-function attemptCloseTodoDetail(td){
-  if(state.mustRespondTodoId === td.id){
-    const snap = state.mustRespondSnapshot;
-    const changed = td.status !== snap.status || td.notes !== snap.notes || td.completed !== snap.completed ||
-      (td.dueDate ? +td.dueDate : null) !== snap.dueDate;
-    if(!changed){
-      flashToast("Before closing this, please update the status, add a note, mark it complete, or change the due date — whoever sent this reminder is waiting on an update.");
-      return false;
-    }
-    td.reminderPending = false;
-    supaUpdateTodo(td);
-    state.mustRespondTodoId = null;
-    state.mustRespondSnapshot = null;
-  }
-  state.todoDetailModal = null;
-  return true;
-}
 function checkTodoDeepLink(){
   const params = new URLSearchParams(window.location.search);
   const todoId = params.get('todo');
   if(!todoId) return;
-  const isReminder = params.get('reminder')==='1';
   history.replaceState(null, '', window.location.pathname);
   const td = db.todos.find(x=>x.id===todoId);
   if(td){
     openTodoDetail(todoId);
-    if(isReminder && td.reminderPending && td.assignedTo===state.currentUser.id){
-      state.mustRespondTodoId = td.id;
-      state.mustRespondSnapshot = {
-        status: td.status, notes: td.notes, completed: td.completed,
-        dueDate: td.dueDate ? +td.dueDate : null,
-      };
-    }
   } else {
     flashToast("That to-do couldn't be found — it may have been completed, moved, or removed since the email was sent.");
   }
@@ -5577,7 +4841,7 @@ function renderMoveDealPicker(){
     if(!name){ flashToast('Give the new account a name first.'); return; }
     const targetListId = m.newType || 'clients';
     const targetList = db.lists.find(x=>x.id===targetListId);
-    const newClient = {id:crypto.randomUUID(), name, primary:null, secondContactId:null, thirdContactId:null, deals:[], createdBy:state.currentUser.id, authorizedUserIds:[]};
+    const newClient = {id:crypto.randomUUID(), name, primary:null, secondary:[], deals:[], createdBy:state.currentUser.id, authorizedUserIds:[]};
     if(targetListId==='listings'){ newClient.prospects=[]; newClient.categoryConfig=newLSRCategoryConfig(); }
     targetList.clients.push(newClient);
     await supaCreateClient(newClient, targetListId);
@@ -5650,7 +4914,7 @@ function renderMoveTodoPicker(){
     supaUpdateTodo(td);
     state.moveTodoPicker=null;
     flashToast('Moved.');
-    renderPreservingScroll('.modal-body');
+    render();
   });
 }
 // A Checklist is a series of free-form checkable boxes that live only inside this one
@@ -5732,7 +4996,6 @@ function renderTodoDetailModal(){
       </div>
     </div>
     <div class="modal-body">
-      ${(state.mustRespondTodoId===td.id) ? `<div style="background:#fffbe6;border:1px solid #e0c040;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:13px;">⏰ <b>${USERS.find(u=>u.id===td.createdBy).name}</b> asked for a quick update on this. Change the Status, add a Note, mark it complete, or change the due date — then you're all set.</div>` : ''}
       <div class="type-toggle">
         <button class="${td.type==='task'?'active':''}" data-dettype="task">Task</button>
         <button class="${td.type==='project'?'active':''}" data-dettype="project">Project</button>
@@ -5741,12 +5004,13 @@ function renderTodoDetailModal(){
       <div class="field"><label>What needs to happen?</label><input id="detTitle" value="${escapeAttr(td.title)}"></div>
       <div class="field autocomplete-box">
         <label>Category</label>
-        <input id="detCategory" value="${escapeAttr(td.category)}" list="detCategoryList" autocomplete="off">
+        <input id="detCategory" value="${escapeAttr(td.category)}" list="detCategoryList">
         <datalist id="detCategoryList">${cats.map(c=>`<option value="${escapeAttr(c)}">`).join('')}</datalist>
       </div>
       <div class="field autocomplete-box">
         <label>Status</label>
-        <select id="detStatus">${STATUS_PRESETS.map(s=>`<option value="${escapeAttr(s)}" ${(td.status||'Not Started')===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}</select>
+        <input id="detStatus" value="${escapeAttr(td.status||'')}" list="detStatusList" placeholder="e.g., In Progress">
+        <datalist id="detStatusList">${STATUS_PRESETS.map(s=>`<option value="${escapeAttr(s)}">`).join('')}</datalist>
       </div>
       <div class="field">
         <label>Due date</label>
@@ -5760,7 +5024,7 @@ function renderTodoDetailModal(){
       </div>
       <div class="field">
         <label>Assigned to</label>
-        <select id="detAssign">${usersSortedByMe().map(u=>`<option value="${u.id}" ${td.assignedTo===u.id?'selected':''}>${u.name}${u.id===state.currentUser.id?' (me)':''}</option>`).join('')}</select>
+        <select id="detAssign">${USERS.map(u=>`<option value="${u.id}" ${td.assignedTo===u.id?'selected':''}>${u.name}${u.id===state.currentUser.id?' (me)':''}</option>`).join('')}</select>
       </div>
       <div class="field" style="display:flex;align-items:center;gap:8px;">
         <input type="checkbox" id="detPrivate" style="width:auto;" ${td.private?'checked':''}>
@@ -5792,11 +5056,7 @@ function renderTodoDetailModal(){
     </div>
     <div class="modal-foot" style="justify-content:space-between;">
       <button class="btn danger" data-action="detDelete">🗑️ Delete</button>
-      <div style="display:flex;gap:8px;align-items:center;">
-        ${(td.createdBy===state.currentUser.id && td.assignedTo && td.assignedTo!==td.createdBy) ? `
-          ${td.reminderPending ? `<span class="tiny" style="color:var(--ink-soft);">⏰ Reminder sent — waiting on a response</span>` : ''}
-          <button class="btn secondary" data-action="detSendReminder" ${td.reminderPending?'disabled':''}>🔔 ${td.reminderPending?'Reminder Sent':'Send Reminder'}</button>
-        ` : ''}
+      <div style="display:flex;gap:8px;">
         <button class="btn secondary" data-action="detToggleComplete">${td.completed? 'Mark Incomplete':'✓ Mark Complete'}</button>
         <button class="btn" data-action="detSave" id="detSaveBtn">${isForMe? 'Save & Close' : 'Save & Assign'}</button>
       </div>
@@ -5808,7 +5068,7 @@ function renderTodoDetailModal(){
     if((td.type==='checklist' || td.type==='project') && td.checklistItems.length===0){
       for(let i=0;i<5;i++) td.checklistItems.push({id:crypto.randomUUID(), text:'', done:false});
     }
-    renderPreservingScroll('.modal-body');
+    render();
   });
   overlay.querySelectorAll('[data-detquickdate]').forEach(b=>b.onclick=()=>{
     const val = b.dataset.detquickdate;
@@ -5818,20 +5078,11 @@ function renderTodoDetailModal(){
     else if(val==='next week') d = addDays(todayDate(), 7);
     document.getElementById('detDue').value = d ? toLocalDateStr(d) : '';
   });
-  overlay.querySelector('[data-action="closeTodoDetail"]').onclick=()=>{ if(attemptCloseTodoDetail(td)) render(); };
+  overlay.querySelector('[data-action="closeTodoDetail"]').onclick=()=>{ state.todoDetailModal=null; render(); };
   overlay.querySelectorAll('[data-action="addChecklistItem"]').forEach(btn=>btn.onclick=()=>{
-    const newItem = {id:crypto.randomUUID(), text:'', done:false};
-    td.checklistItems.push(newItem);
+    td.checklistItems.push({id:crypto.randomUUID(), text:'', done:false});
     supaUpdateTodo(td);
     renderPreservingScroll('.modal-body');
-    // render() inside renderPreservingScroll runs synchronously, so the new input
-    // already exists in the DOM by the time we get here — focusing it immediately,
-    // in the same tick as the tap, is what makes mobile Safari actually raise the
-    // keyboard. Wrapping this in requestAnimationFrame (as scroll-restore needs)
-    // breaks that connection to the original tap and silently fails on mobile.
-    const els = document.querySelectorAll(`[data-checklistitemtext="${newItem.id}"]`);
-    const newInput = els[els.length-1];
-    if(newInput) newInput.focus();
   });
   overlay.querySelectorAll('[data-checklistitemtext]').forEach(el=>el.onchange=()=>{
     const item = td.checklistItems.find(i=>i.id===el.dataset.checklistitemtext);
@@ -5873,54 +5124,43 @@ function renderTodoDetailModal(){
   };
   const detAssign = document.getElementById('detAssign');
   detAssign.onchange = ()=>{
-    td.assignedTo = detAssign.value;
     const forMe = detAssign.value===state.currentUser.id;
     document.getElementById('detSaveBtn').textContent = forMe? 'Save & Close' : 'Save & Assign';
     document.getElementById('detSaveBtnTop').textContent = forMe? 'Save & Close' : 'Save & Assign';
   };
-  const detPrivateEl = document.getElementById('detPrivate'); if(detPrivateEl) detPrivateEl.onchange=()=>{ td.private = detPrivateEl.checked; };
   wireAttachmentZone(overlay, 'detDropZone', 'detFileInput', ()=>td.attachments, 'det');
   overlay.querySelector('[data-action="detDelete"]').onclick=()=>{
     if(confirm(`Delete "${td.title}"? This can't be undone.`)){ deleteTodo(td.id); render(); }
   };
   overlay.querySelector('[data-action="detToggleComplete"]').onclick=()=>{ td.completed=!td.completed; td.completedAt = td.completed ? new Date() : null; supaUpdateTodo(td); render(); };
-  const sendReminderBtn = overlay.querySelector('[data-action="detSendReminder"]');
-  if(sendReminderBtn) sendReminderBtn.onclick=()=>{
-    if(!confirm(`Send ${USERS.find(u=>u.id===td.assignedTo).name} a reminder to update this to-do? They'll get an email and won't be able to close it without responding.`)) return;
-    td.reminderPending = true;
-    supaUpdateTodo(td);
-    flashToast('Reminder sent.');
-    render();
-  };
-  // Live-commit these fields as they're typed, so the checklist add/remove/edit
-  // handlers below (which do trigger a full re-render) can never wipe them out.
-  const detTitleEl = document.getElementById('detTitle'); if(detTitleEl) detTitleEl.oninput=()=>{ td.title = detTitleEl.value; };
-  const detCategoryEl = document.getElementById('detCategory'); if(detCategoryEl) detCategoryEl.oninput=()=>{ td.category = detCategoryEl.value; };
-  const detStatusEl = document.getElementById('detStatus'); if(detStatusEl) detStatusEl.oninput=()=>{ td.status = detStatusEl.value; };
-  const detNotesEl = document.getElementById('detNotes'); if(detNotesEl) detNotesEl.oninput=()=>{ td.notes = detNotesEl.value; };
-  const detDueEl = document.getElementById('detDue'); if(detDueEl) detDueEl.onchange=()=>{ td.dueDate = detDueEl.value ? new Date(detDueEl.value+'T00:00:00') : null; };
   overlay.querySelectorAll('[data-action="detSave"]').forEach(btn=>btn.onclick=()=>{
     td.title=document.getElementById('detTitle').value.trim()||td.title;
     td.category=document.getElementById('detCategory').value.trim();
     td.status=document.getElementById('detStatus').value.trim();
     td.dueDate=parseNaturalDate(document.getElementById('detDue').value.trim());
     td.notes=document.getElementById('detNotes').value.trim();
-    const newAssign=td.assignedTo;
-    const originalAssign=state.todoDetailModal.originalAssignedTo;
-    if(newAssign!==originalAssign){
+    const newAssign=document.getElementById('detAssign').value;
+    if(newAssign!==td.assignedTo){
       const targetClientId = td.clientId || (td.dealId ? clientIdForDeal(td.dealId) : null);
       if(newAssign!==state.currentUser.id && targetClientId && !userHasClientAccess(newAssign, targetClientId)){
         const nu = USERS.find(x=>x.id===newAssign);
         const ok = confirm(`${nu.name} doesn't have access to this client yet, so they'll only be able to see this specific to-do — not the rest of the client's deals or info. Assign it to them anyway?`);
-        if(!ok){ td.assignedTo = originalAssign; return; }
+        if(!ok) return;
       }
-      if(newAssign!==state.currentUser.id){
+      td.assignedTo=newAssign;
+      const u=USERS.find(x=>x.id===newAssign);
+      if(newAssign!==state.currentUser.id && u.wantsAssignmentEmails!==false){
         td.isNew=true;
-        flashToast(`Assigned to ${USERS.find(x=>x.id===newAssign).name}.`);
+        const subject = 'You Have a New To Do on Southwest Edge';
+        const body = `Hi ${u.name.split(' ')[0]},\n\n${state.currentUser.name} assigned you a to-do:\n\n"${td.title}"${td.category?` (${td.category})`:''}${td.dueDate?`\nDue: ${fmtDate(td.dueDate)}`:''}\n\nLog in to Southwest Edge Portal to view it: ${portalUrl(td.id)}\n\n— Sent from Southwest Edge Portal`;
+        openEmailDraft(u, subject, body);
+        flashToast(`Email draft opened for ${u.name}.`);
+      } else if(newAssign!==state.currentUser.id){
+        td.isNew=true;
       }
     }
     td.private=document.getElementById('detPrivate').checked;
-    if(!attemptCloseTodoDetail(td)){ render(); return; }
+    state.todoDetailModal=null;
     supaUpdateTodo(td);
     flashToast('Changes saved.');
     render();
@@ -5993,8 +5233,7 @@ function openDealModal(listId, clientId, dealId){
     alert('You are not listed as a user on the account.');
     return;
   }
-  const parentScroller = document.querySelector('.modal-body');
-  state.modalStack.push({kind:'deal', listId, clientId, dealId, parentScrollTop: parentScroller ? parentScroller.scrollTop : null});
+  state.modalStack.push({kind:'deal', listId, clientId, dealId});
 }
 function openEntryModal(listId, entryId){
   state.modalStack=[{kind:'entry', listId, entryId}];
@@ -6100,18 +5339,10 @@ function renderTopModalCard(){
         <div class="modal-title-row">${brandLogoImg(brandName)}<div class="modal-title">${escapeHtml(titleText)}</div></div>
       </div>
       ${frame.kind==='deal' && dealCanEdit ? `<button class="btn sm" data-action="saveAndCloseDeal" style="background:#fff;color:var(--edge);">Save &amp; Close</button>` : ''}
-      <button class="modal-close" data-action="closeModal">${(frame.kind==='client' || frame.kind==='entry') ? '✓ Save & Close' : '✕ Done'}</button>
+      <button class="modal-close" data-action="closeModal">${frame.kind==='client' ? '✓ Save & Close' : '✕ Done'}</button>
     </div>
     <div class="modal-body">${bodyHtml}</div>
   </div>`;
-}
-function contactRowCompact(contactId){
-  const c = db.contacts.find(x=>x.id===contactId);
-  if(!c) return `<div class="tiny" style="color:var(--ink-soft);font-size:12px;">No contact attached.</div>`;
-  return `
-  <div class="contact-line"><span>Name</span><b>${c.first} ${c.last}</b></div>
-  <div class="contact-line"><span>Email</span><b>${c.email? `<a href="mailto:${escapeAttr(c.email)}" style="color:var(--edge);text-decoration:none;">${escapeHtml(c.email)}</a>` : '—'}</b></div>
-  <div class="contact-line"><span>Mobile</span><b>${c.mobile||'—'}</b></div>`;
 }
 function contactRow(contactId){
   const c = db.contacts.find(x=>x.id===contactId);
@@ -6170,32 +5401,20 @@ function renderClientModalBody(l,c,viewMode,pendingDel){
   <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
     ${canEdit ? `<button class="btn sm" data-action="addDeal" data-client="${c.id}">+ Add site / deal</button>` : ''}
   </div>
-  <div style="display:flex;gap:14px;margin-bottom:14px;flex-wrap:wrap;">
-    <div class="contact-card" style="flex:1;min-width:220px;">
-      <div class="label">Primary Contact</div>
-      ${contactRowCompact(c.primary)}
-      ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickContact" data-client="${c.id}" data-slot="primary">${c.primary? 'Change contact':'Add Contact / Create New Contact'}</button>` : ''}
-    </div>
-    ${(c.primary && !state.isMobile) ? `
-    <div class="contact-card" style="flex:1;min-width:220px;">
-      <div class="label">Second Contact</div>
-      ${contactRowCompact(c.secondContactId)}
-      ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickContact" data-client="${c.id}" data-slot="second">${c.secondContactId? 'Change contact':'Add Contact / Create New Contact'}</button>` : ''}
-    </div>` : ''}
-    ${(c.primary && c.secondContactId && !state.isMobile) ? `
-    <div class="contact-card" style="flex:1;min-width:220px;">
-      <div class="label">Third Contact</div>
-      ${contactRowCompact(c.thirdContactId)}
-      ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickContact" data-client="${c.id}" data-slot="third">${c.thirdContactId? 'Change contact':'Add Contact / Create New Contact'}</button>` : ''}
-    </div>` : ''}
+  <div class="contact-card">
+    <div class="label">Primary Contact</div>
+    ${contactRow(c.primary)}
+    ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickContact" data-client="${c.id}" data-slot="primary">${c.primary? 'Change contact':'Attach contact'}</button>` : ''}
   </div>
+  <div class="section-label">Sites / Deals</div>
+  ${renderDealGroupsInClient(l,c)}
+  ` : ''}
+  ${showProspecting ? renderLSRInline(c, viewMode) : ''}
+  ${showDeals ? `
   <div class="section-label">General To-Do's <span style="font-weight:400;color:var(--ink-soft);">(not tied to a specific site)</span></div>
   ${canEdit ? `<button class="btn secondary sm" data-action="newAccountTodo" data-listid="${l.id}" data-client="${c.id}" style="margin-bottom:10px;">+ New To-Do</button>` : ''}
   ${renderTodoList(db.todos.filter(t=>t.clientId===c.id && !t.dealId).filter(visibleTodo))}
-  <div class="section-label" style="margin-top:18px;">Sites / Deals</div>
-  ${renderDealGroupsInClient(l,c)}
   ` : ''}
-  ${showProspecting ? renderLSRInline(c, state.leasingReportMode || viewMode) : ''}
   ${showDeals ? accessHtml : ''}
   ${l.id==='listings' ? renderElaCard(c, canEdit) : ''}
   <div class="contact-card" style="margin-top:20px;">
@@ -6245,6 +5464,7 @@ function renderDealRowInClient(l,c,d){
   const moneyVal = d.dealType==='sale' ? d.price : d.rent;
   return `
   <div class="row-card" data-opendeal="${d.id}" data-client="${c.id}" data-listid="${l.id}">
+    <div class="row-check ${d.complete?'done':''}" data-toggledeal="${d.id}" title="Mark complete">${d.complete?'✓':''}</div>
     <div class="row-body">
       <div class="row-title ${d.complete?'done':''}">${escapeHtml(d.name)}</div>
       <div class="row-meta">
@@ -6274,10 +5494,10 @@ function renderDealRowInClient(l,c,d){
 const DEAL_GROUPS = {
   openForBusiness: {title:'Open for Business', color:'#00A65A', match:d=>!!d.complete},
   signedLease:     {title:'Signed Lease',      color:'#E8951E', match:d=>!d.complete && d.stage==='signedLease'},
-  negotiating:     {title:'Negotiating Lease / PSA', color:'#E0469A', match:d=>!d.complete && d.stage==='negotiating'},
+  negotiating:     {title:'Negotiating Lease', color:'#E0469A', match:d=>!d.complete && d.stage==='negotiating'},
   signedLOI:       {title:'Signed LOI',        color:'#00A65A', match:d=>!d.complete && d.stage==='signedLOI'},
   loi:             {title:'LOI',               color:'#00A65A', match:d=>!d.complete && d.stage==='loi'},
-  prospects:       {title:'Prospects',         color:'#8A8378', match:d=>!d.complete && (!d.stage || d.stage==='prospect')},
+  prospects:       {title:'Prospects',         color:'#8A8378', match:d=>!d.complete && !d.stage},
   inEscrow:        {title:'In Escrow',         color:'#E0469A', match:d=>!d.complete && d.stage==='inEscrow'},
   closedEscrow:    {title:'Closed Escrow',     color:'#E8951E', match:d=>!d.complete && d.stage==='closedEscrow'},
   dead:            {title:'Dead',              color:'#8A7D6E', match:d=>!d.complete && d.stage==='dead'},
@@ -6285,11 +5505,15 @@ const DEAL_GROUPS = {
 function renderDealGroupsInClient(l,c){
   const rowsByKey = {};
   Object.keys(DEAL_GROUPS).forEach(k=>{ rowsByKey[k] = c.deals.filter(DEAL_GROUPS[k].match); });
-  // In Escrow always sits directly below Signed Lease, whether or not anything is
-  // currently in that stage — a fixed position, not one that shifts around based on
-  // what's in it. Dead stays last — it's a terminal, out-of-the-running state, not
-  // part of the normal progression.
-  const order = ['signedLease','inEscrow','negotiating','signedLOI','loi','prospects','closedEscrow','openForBusiness','dead'];
+  // Base order (lease-only clients, or a sale client with nothing currently in escrow):
+  // In Escrow sits near the bottom, right before Closed Escrow. Dead is always last —
+  // it's a terminal, out-of-the-running state, not part of the normal progression.
+  let order = ['signedLease','negotiating','signedLOI','loi','prospects','inEscrow','closedEscrow','openForBusiness','dead'];
+  // But if this client actually has a deal sitting in escrow right now, promote In Escrow
+  // up next to Signed Lease so an active sale doesn't get buried near the bottom.
+  if(rowsByKey.inEscrow.length){
+    order = ['signedLease','inEscrow','negotiating','signedLOI','loi','prospects','closedEscrow','openForBusiness','dead'];
+  }
   return order.map(k=>renderDealGroupSection(l, c, {key:k, ...DEAL_GROUPS[k]}, rowsByKey[k])).join('');
 }
 function renderDealGroupSection(l, c, g, rows){
@@ -6388,17 +5612,6 @@ function renderMyNotesModal(){
     render();
   };
 }
-function renderSplitRowHtml(row,i){
-  return `
-    <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">
-      <select data-splituser="${i}" style="flex:1;">
-        ${usersSortedByMe().map(u=>`<option value="${u.id}" ${row.userId===u.id?'selected':''}>${u.name}</option>`).join('')}
-      </select>
-      <input type="number" step="0.01" data-splitpct="${i}" value="${row.pct!=null?row.pct:''}" placeholder="%" style="width:80px;">
-      <span style="font-size:12.5px;color:var(--ink-soft);">%</span>
-      <button class="row-trash" data-removesplitrow="${i}">✕</button>
-    </div>`;
-}
 function renderCommissionModal(){
   const m = state.commissionModal;
   let obj, saveFn;
@@ -6431,10 +5644,18 @@ function renderCommissionModal(){
       <div class="field">
         <label>Splits</label>
         <div id="splitsRows">
-          ${draft.map((row,i)=>renderSplitRowHtml(row,i)).join('')}
+          ${draft.map((row,i)=>`
+            <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">
+              <select data-splituser="${i}" style="flex:1;">
+                ${USERS.map(u=>`<option value="${u.id}" ${row.userId===u.id?'selected':''}>${u.name}</option>`).join('')}
+              </select>
+              <input type="number" step="0.01" data-splitpct="${i}" value="${row.pct!=null?row.pct:''}" placeholder="%" style="width:80px;">
+              <span style="font-size:12.5px;color:var(--ink-soft);">%</span>
+              <button class="row-trash" data-removesplitrow="${i}">✕</button>
+            </div>`).join('')}
         </div>
         <button class="btn secondary sm" data-action="addSplitRow" style="margin-top:4px;">+ Add person</button>
-        <div id="splitsTotalLine" style="margin-top:8px;font-size:12.5px;font-weight:600;color:${totalOk?'var(--good)':'var(--bad)'};">
+        <div style="margin-top:8px;font-size:12.5px;font-weight:600;color:${totalOk?'var(--good)':'var(--bad)'};">
           Total: ${total.toFixed(2)}%${totalOk?' ✓':' — must equal 100%'}
         </div>
       </div>
@@ -6455,10 +5676,6 @@ function renderCommissionModal(){
   </div>`;
   document.getElementById('app').appendChild(overlay);
   overlay.querySelector('[data-action="closeCommission"]').onclick=()=>{ state.commissionModal=null; render(); };
-  const commStructureEl = document.getElementById('commStructure');
-  if(commStructureEl) commStructureEl.oninput=()=>{ obj.commissionStructure = commStructureEl.value; };
-  const commTotalFeeEl = document.getElementById('commTotalFee');
-  if(commTotalFeeEl) commTotalFeeEl.oninput=()=>{ obj.totalFee = commTotalFeeEl.value; };
   overlay.querySelector('[data-action="addSplitRow"]').onclick=()=>{
     draft.push({userId: USERS[0].id, pct: ''});
     renderPreservingScroll('.modal-body');
@@ -6472,13 +5689,7 @@ function renderCommissionModal(){
   });
   overlay.querySelectorAll('[data-splitpct]').forEach(el=>el.oninput=()=>{
     draft[parseInt(el.dataset.splitpct)].pct = el.value;
-    const newTotal = draft.reduce((s,row)=>s + (parseFloat(row.pct)||0), 0);
-    const newTotalOk = Math.abs(newTotal-100) < 0.02;
-    const totalLine = document.getElementById('splitsTotalLine');
-    if(totalLine){
-      totalLine.style.color = newTotalOk ? 'var(--good)' : 'var(--bad)';
-      totalLine.textContent = `Total: ${newTotal.toFixed(2)}%${newTotalOk?' ✓':' — must equal 100%'}`;
-    }
+    renderPreservingScroll('.modal-body');
   });
   overlay.querySelector('[data-action="saveCommission"]').onclick=()=>{
     const currentTotal = draft.reduce((s,row)=>s + (parseFloat(row.pct)||0), 0);
@@ -6521,7 +5732,7 @@ function renderDealModalBody(l,c,d){
   <div class="contact-card">
     <div class="label">Primary Site Contact</div>
     ${contactRow(d.contactId)}
-    ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickDealContact" data-slot="primary" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">${d.contactId? 'Change contact':'Add Contact / Create New Contact'}</button>` : ''}
+    ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickDealContact" data-slot="primary" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">${d.contactId? 'Change contact':'Attach contact'}</button>` : ''}
   </div>
   ${d.contactId ? `
   <div class="contact-card">
@@ -6533,24 +5744,19 @@ function renderDealModalBody(l,c,d){
   <div class="contact-card">
     <div class="label">Second Site Contact</div>
     ${contactRow(d.secondContactId)}
-    ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickDealContact" data-slot="second" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">${d.secondContactId? 'Change contact':'Add Contact / Create New Contact'}</button>` : ''}
+    ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickDealContact" data-slot="second" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">${d.secondContactId? 'Change contact':'Attach contact'}</button>` : ''}
   </div>` : ''}
   ${d.secondContactId ? `
   <div class="contact-card">
     <div class="label">Third Site Contact</div>
     ${contactRow(d.thirdContactId)}
-    ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickDealContact" data-slot="third" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">${d.thirdContactId? 'Change contact':'Add Contact / Create New Contact'}</button>` : ''}
+    ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickDealContact" data-slot="third" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">${d.thirdContactId? 'Change contact':'Attach contact'}</button>` : ''}
   </div>` : ''}
   <div class="section-label">Deal Terms</div>
   <div class="type-toggle" id="dealTypeToggle">
     <button class="${d.dealType==='lease'?'active':''}" data-dealtypebtn="lease" ${ro}>Lease</button>
     <button class="${d.dealType==='sale'?'active':''}" data-dealtypebtn="sale" ${ro}>Sale</button>
   </div>
-  ${canEdit ? `
-  <label style="display:flex;align-items:center;gap:8px;margin:10px 0;cursor:pointer;font-size:13px;">
-    <input type="checkbox" id="dtOpenForBusiness" ${d.complete?'checked':''} style="width:auto;">
-    ✅ Open for Business — this deal is fully done
-  </label>` : (d.complete ? `<div class="tiny" style="color:var(--good);margin:10px 0;">✅ Open for Business</div>` : '')}
   <div class="field-row">
     <div class="field">
       <label style="font-size:14px;">Stage *</label>
@@ -6646,14 +5852,12 @@ function renderLSRInline(listing, mode){
         style="flex:1;min-width:180px;padding:8px 11px;border:1px solid var(--line);border-radius:8px;font-size:12.5px;">
       <select id="lsrTrackerSelect" style="padding:8px 11px;border:1px solid var(--line);border-radius:8px;font-size:12.5px;">
         <option value="all" ${state.lsrTrackerFilter==='all'?'selected':''}>All Edge Trackers</option>
-        ${usersSortedByMe().map(u=>`<option value="${u.id}" ${state.lsrTrackerFilter===u.id?'selected':''}>${u.name}</option>`).join('')}
+        ${USERS.map(u=>`<option value="${u.id}" ${state.lsrTrackerFilter===u.id?'selected':''}>${u.name}</option>`).join('')}
       </select>
       <button class="btn secondary sm" data-action="lsrManageCategories" data-client="${listing.id}">⚙️ Categories</button>
       <button class="btn secondary sm" data-action="lsrCreateMarketingList" data-client="${listing.id}">📋 Create Marketing List</button>
       <button class="btn sm" data-action="lsrNewDeal" data-client="${listing.id}">+ New Deal (direct to LOI)</button>
-      <button class="btn secondary sm" data-action="lsrCreateReport" data-client="${listing.id}" data-reportmode="deals">📄 Report: Deals</button>
-      <button class="btn secondary sm" data-action="lsrCreateReport" data-client="${listing.id}" data-reportmode="prospecting">📄 Report: Prospects</button>
-      <button class="btn" data-action="lsrCreateReport" data-client="${listing.id}" data-reportmode="all">📄 Report: All</button>
+      <button class="btn" data-action="lsrExportPdf">📄 Create Leasing Report</button>
     </div>
     <div class="no-print" style="font-size:11px;color:var(--ink-soft);margin-bottom:14px;">Opens your browser's print dialog, pre-set to landscape — choose "Save as PDF" to generate the report. The report itself is clean — no search bars or buttons — ready to hand to a client.</div>`;
   } else if(mode==='deals'){
@@ -6782,7 +5986,7 @@ function renderLSRProspectBody(l, listing, p){
   <div class="contact-card">
     <div class="label">Contact</div>
     ${contactRow(p.contactId)}
-    <button class="btn secondary sm" style="margin-top:10px;" data-action="lsrPickContact">${p.contactId?'Change contact':'Add Contact / Create New Contact'}</button>
+    <button class="btn secondary sm" style="margin-top:10px;" data-action="lsrPickContact">${p.contactId?'Change contact':'Attach contact'}</button>
   </div>
   <div class="contact-card" style="background:#F3F0FB;border-color:#DCD3F5;">
     <div class="label" style="color:#6B46C1;">Broker</div>
@@ -6797,7 +6001,7 @@ function renderLSRProspectBody(l, listing, p){
   <div class="field"><label>Notes / Next Steps</label><textarea id="lpNotes" rows="3">${escapeHtml(p.notes||'')}</textarea></div>
   <div class="field">
     <label>Edge Tracker</label>
-    <select id="lpTracker">${usersSortedByMe().map(u=>`<option value="${u.id}" ${p.edgeTracker===u.id?'selected':''}>${u.name}</option>`).join('')}</select>
+    <select id="lpTracker">${USERS.map(u=>`<option value="${u.id}" ${p.edgeTracker===u.id?'selected':''}>${u.name}</option>`).join('')}</select>
   </div>
   ${isConverted ? `
   <div class="section-label">Deal Terms (${p.dealType==='sale'?'Sale':'Lease'})</div>
@@ -6875,7 +6079,7 @@ function renderLSRNewProspectModal(){
       <div class="field"><label>Notes</label><textarea id="npNotes" rows="2">${escapeHtml(m.notes)}</textarea></div>
       <div class="field">
         <label>Edge Tracker</label>
-        <select id="npTracker">${usersSortedByMe().map(u=>`<option value="${u.id}" ${m.edgeTracker===u.id?'selected':''}>${u.name}</option>`).join('')}</select>
+        <select id="npTracker">${USERS.map(u=>`<option value="${u.id}" ${m.edgeTracker===u.id?'selected':''}>${u.name}</option>`).join('')}</select>
       </div>
       ${otherListings.length? `
       <div class="field">
@@ -7143,13 +6347,7 @@ function wireLSRInlineHandlers(root){
   const mktBtn = root.querySelector('[data-action="lsrCreateMarketingList"]'); if(mktBtn) mktBtn.onclick=()=>{
     openMarketingListWizard(mktBtn.dataset.client); render();
   };
-  root.querySelectorAll('[data-action="lsrCreateReport"]').forEach(pdfBtn=>pdfBtn.onclick=()=>{
-    state.leasingReportMode = pdfBtn.dataset.reportmode;
-    render();
-    window.print();
-    const resetMode = ()=>{ state.leasingReportMode=null; render(); window.removeEventListener('afterprint', resetMode); };
-    window.addEventListener('afterprint', resetMode);
-  });
+  const pdfBtn = root.querySelector('[data-action="lsrExportPdf"]'); if(pdfBtn) pdfBtn.onclick=()=>{ window.print(); };
 }
 function notifyNewLSRTracker(newTrackerId, p, listing){
   if(newTrackerId===state.currentUser.id) return;
@@ -7166,7 +6364,14 @@ function notifyNewLSRTracker(newTrackerId, p, listing){
   };
   db.todos.push(newTodo);
   supaCreateTodo(newTodo);
-  flashToast(`${u.name} is now the Edge Tracker — a new to-do is waiting for them.`);
+  if(u.wantsAssignmentEmails!==false){
+    const subject = 'You Have a New Lead Assigned on Southwest Edge';
+    const body = `Hi ${u.name.split(' ')[0]},\n\n${state.currentUser.name} made you the Edge Tracker for:\n\n"${p.tenantName}" — ${listing.name}\n\nA to-do has been added to your list to follow up — it'll be marked New until you open it.\n\nLog in to view it: ${portalUrl(newTodo.id)}\n\n— Sent from Southwest Edge Portal`;
+    openEmailDraft(u, subject, body);
+    flashToast(`Email draft opened for ${u.name} — they'll also see a new to-do waiting for them.`);
+  } else {
+    flashToast(`${u.name} has a new to-do waiting for them (they've opted out of assignment emails).`);
+  }
 }
 function wireLSRProspectBodyHandlers(root, l, listing, p){
   const isConverted = p.stage!=='contacted' && p.stage!=='interested' && p.stage!=='dead' && p.stage!=='notInterested';
@@ -7255,17 +6460,17 @@ function renderEntryModalBody(l,e){
   <div class="contact-card">
     <div class="label">Contact</div>
     ${contactRow(e.contactId)}
-    <button class="btn secondary sm" style="margin-top:10px;" data-action="pickEntryContact" data-entry="${e.id}" data-listid="${l.id}">${e.contactId? 'Change contact':'Add Contact / Create New Contact'}</button>
+    <button class="btn secondary sm" style="margin-top:10px;" data-action="pickEntryContact" data-entry="${e.id}" data-listid="${l.id}">${e.contactId? 'Change contact':'Attach contact'}</button>
   </div>
-  <div class="section-label">To-Do's</div>
-  ${todos.length? renderTodoList(todos) : `<div class="empty-state" style="padding:26px;"><div class="big">No follow-up set.</div><div class="tiny">Add a to-do to keep this prospect moving.</div></div>`}
-  <div class="contact-card" style="margin-top:18px;">
+  <div class="contact-card">
     <div class="label">Prospect Details${owner?` · Owner: ${escapeHtml(owner.name)}`:''}</div>
     <div class="field" style="margin-top:8px;"><label>Client Name</label><input value="${escapeAttr(e.name)}" data-edit="name" data-entry="${e.id}" data-listid="${l.id}"></div>
     <div class="field"><label>Last Call</label><input value="${e.lastCall?toLocalDateStr(e.lastCall):''}" placeholder="e.g. today" data-edit="lastCall" data-entry="${e.id}" data-listid="${l.id}"></div>
     <div class="field"><label>Latest Feedback / Notes</label><textarea rows="2" data-edit="feedback" data-entry="${e.id}" data-listid="${l.id}">${escapeHtml(e.feedback||'')}</textarea></div>
   </div>
   ${accessHtml}
+  <div class="section-label">To-Do's</div>
+  ${todos.length? renderTodoList(todos) : `<div class="empty-state" style="padding:26px;"><div class="big">No follow-up set.</div><div class="tiny">Add a to-do to keep this prospect moving.</div></div>`}
   `;
 }
 
@@ -7298,7 +6503,7 @@ function attachModalHandlers(root){
       const closingFrame = state.modalStack[state.modalStack.length-1];
       state.modalStack.pop();
       render();
-      if(typeof closingFrame.parentScrollTop==='number'){
+      if(closingFrame.kind==='lsrProspect' && typeof closingFrame.parentScrollTop==='number'){
         requestAnimationFrame(()=>{
           const scroller = document.querySelector('.modal-body');
           if(scroller) scroller.scrollTop = closingFrame.parentScrollTop;
@@ -7315,12 +6520,6 @@ function attachModalHandlers(root){
     saveDealTermsFromForm(l, c, d);
     state.modalStack.pop();
     render();
-    if(typeof frame.parentScrollTop==='number'){
-      requestAnimationFrame(()=>{
-        const scroller = document.querySelector('.modal-body');
-        if(scroller) scroller.scrollTop = frame.parentScrollTop;
-      });
-    }
   });
   const archiveClientBtn = root.querySelector('[data-action="archiveClient"]'); if(archiveClientBtn) archiveClientBtn.onclick=safeHandler(()=>{
     const l=db.lists.find(x=>x.id===archiveClientBtn.dataset.listid); const c=l && l.clients.find(x=>x.id===archiveClientBtn.dataset.client);
@@ -7367,6 +6566,14 @@ function attachModalHandlers(root){
     state.dealGroupCollapsed[k]=!currentlyCollapsed;
     renderPreservingScroll('.modal-body');
   });
+  root.querySelectorAll('[data-toggledeal]').forEach(el=>el.onclick=safeHandler((ev)=>{
+    ev.stopPropagation();
+    const frame = state.modalStack[0];
+    const l=db.lists.find(x=>x.id===frame.listId); const c=l && l.clients.find(x=>x.id===frame.clientId);
+    const d=c && c.deals.find(x=>x.id===el.dataset.toggledeal);
+    if(!d){ flashToast("Couldn't find this deal."); render(); return; }
+    d.complete=!d.complete; supaUpdateDeal(d, c.id); render();
+  }));
   root.querySelectorAll('[data-toggleactive]').forEach(el=>el.onclick=safeHandler((ev)=>{
     ev.stopPropagation();
     const frame = state.modalStack[0];
@@ -7388,9 +6595,9 @@ function attachModalHandlers(root){
     flashToast(d.caExecuted ? `CA marked executed for ${d.name}.` : `CA marked outstanding for ${d.name}.`);
     render();
   }));
-  root.querySelectorAll('[data-action="pickContact"]').forEach(pick=>pick.onclick=()=>{
+  const pick = root.querySelector('[data-action="pickContact"]'); if(pick) pick.onclick=()=>{
     openContactPicker({clientId: pick.dataset.client, slot: pick.dataset.slot}); render();
-  });
+  };
   root.querySelectorAll('[data-action="pickDealContact"]').forEach(pickDeal=>pickDeal.onclick=()=>{
     openContactPicker({listId: pickDeal.dataset.listid, clientId: pickDeal.dataset.client, dealId: pickDeal.dataset.deal, slot: pickDeal.dataset.slot}); render();
   });
@@ -7446,7 +6653,7 @@ function attachModalHandlers(root){
   const pickEntry = root.querySelector('[data-action="pickEntryContact"]'); if(pickEntry) pickEntry.onclick=()=>{
     openContactPicker({listId: pickEntry.dataset.listid, entryId: pickEntry.dataset.entry}); render();
   };
-  const addDeal = root.querySelector('[data-action="addDeal"]'); if(addDeal) addDeal.onclick=safeHandler(async ()=>{
+  const addDeal = root.querySelector('[data-action="addDeal"]'); if(addDeal) addDeal.onclick=safeHandler(()=>{
     const name = prompt('Site / deal name (e.g. an intersection or address):');
     if(!name) return;
     const frame = state.modalStack[state.modalStack.length-1];
@@ -7454,7 +6661,7 @@ function attachModalHandlers(root){
     if(!c){ flashToast("Couldn't find this client."); render(); return; }
     const newDeal = {id:crypto.randomUUID(), name, complete:false, activeDeal:false, dueDate:null, caExecuted: list.id==='listings'};
     c.deals.push(newDeal);
-    await supaCreateDeal(newDeal, c.id);
+    supaCreateDeal(newDeal, c.id);
     openDealModal(frame.listId, c.id, newDeal.id);
     render();
   });
@@ -7466,14 +6673,7 @@ function attachModalHandlers(root){
     const l=db.lists.find(x=>x.id===frame.listId); const c=l && l.clients.find(x=>x.id===frame.clientId);
     const d=c && c.deals.find(x=>x.id===frame.dealId);
     if(!d){ flashToast("Couldn't find this deal."); render(); return; }
-    const newType = btn.dataset.dealtypebtn;
-    if(d.stage && !lsrStagesForTrack(newType).includes(d.stage)){
-      // Only clear the stage if it genuinely doesn't exist on the new track —
-      // e.g. "Negotiating Lease / PSA" or "In Escrow" don't both apply to both
-      // tracks. Anything valid on both (LOI, Signed LOI, Prospect, Dead) stays put.
-      d.stage = '';
-    }
-    d.dealType = newType;
+    d.dealType = btn.dataset.dealtypebtn;
     render();
   }));
   const saveHashtagsBtn = root.querySelector('[data-action="saveHashtags"]'); if(saveHashtagsBtn) saveHashtagsBtn.onclick=safeHandler(()=>{
@@ -7517,30 +6717,6 @@ function attachModalHandlers(root){
     flashToast('Deal terms saved.');
     render();
   });
-  // Live-commit every Deal Terms field as it's typed, so it's never lost to a full
-  // re-render triggered by something else on this same screen (a checkbox, opening
-  // Commission) before "Save Deal Terms" is ever clicked.
-  (function wireDealTermsLiveCommit(){
-    const frame = state.modalStack[state.modalStack.length-1];
-    if(!frame || frame.kind!=='deal') return;
-    const l=db.lists.find(x=>x.id===frame.listId); const c=l && l.clients.find(x=>x.id===frame.clientId);
-    const d=c && c.deals.find(x=>x.id===frame.dealId);
-    if(!d) return;
-    const buildingEl = document.getElementById('dtBuilding'); if(buildingEl) buildingEl.oninput=()=>{ d.building = buildingEl.value; };
-    const spaceNumEl = document.getElementById('dtSpaceNum'); if(spaceNumEl) spaceNumEl.oninput=()=>{ d.spaceNum = spaceNumEl.value; };
-    const sizeEl = document.getElementById('dtSize'); if(sizeEl) sizeEl.oninput=()=>{ d.size = sizeEl.value; };
-    const moneyEl = document.getElementById('dtMoney'); if(moneyEl) moneyEl.oninput=()=>{ if(d.dealType==='sale') d.price = moneyEl.value; else d.rent = moneyEl.value; };
-    const termEl = document.getElementById('dtTerm'); if(termEl) termEl.oninput=()=>{ d.term = termEl.value; };
-    const tiEl = document.getElementById('dtTI'); if(tiEl) tiEl.oninput=()=>{ d.tiAllowance = tiEl.value; };
-    const notesEl = document.getElementById('dtNotes'); if(notesEl) notesEl.oninput=()=>{ d.notes = notesEl.value; };
-    const stageEl = document.getElementById('dtStage'); if(stageEl) stageEl.onchange=()=>{ d.stage = stageEl.value; };
-    const openForBizEl = document.getElementById('dtOpenForBusiness'); if(openForBizEl) openForBizEl.onchange=()=>{
-      d.complete = openForBizEl.checked;
-      supaUpdateDeal(d, c.id);
-      renderPreservingScroll('.modal-body');
-    };
-    const categoryEl = document.getElementById('dtCategory'); if(categoryEl) categoryEl.onchange=()=>{ d.categoryId = categoryEl.value; };
-  })();
   const openCommBtn = root.querySelector('[data-action="openCommission"]'); if(openCommBtn) openCommBtn.onclick=()=>{
     if(openCommBtn.dataset.kind==='deal'){
       state.commissionModal = {kind:'deal', listId:openCommBtn.dataset.listid, clientId:openCommBtn.dataset.client, dealId:openCommBtn.dataset.deal};
@@ -7601,7 +6777,7 @@ function convertEntryToDeal(listId, entryId){
   const flatList = db.lists.find(x=>x.id===listId);
   const entry = flatList.entries.find(x=>x.id===entryId);
   let clientsList = db.lists.find(x=>x.id==='clients');
-  const newClient = {id:crypto.randomUUID(), name:entry.name, primary:entry.contactId||null, secondContactId:null, thirdContactId:null, deals:[], createdBy:state.currentUser.id, authorizedUserIds:[]};
+  const newClient = {id:crypto.randomUUID(), name:entry.name, primary:entry.contactId||null, secondary:[], deals:[], createdBy:state.currentUser.id, authorizedUserIds:[]};
   clientsList.clients.push(newClient);
   supaCreateClient(newClient, 'clients');
   // move todos
@@ -7672,19 +6848,11 @@ function finishBrokerPick(brokerId){
 function attachContactPickerHandlers(root){
   // rendered separately as an overlay panel appended after modal renders; handled in renderContactPickerPanel
 }
-function renderContactSearchSuggestions(matches){
-  if(!matches.length) return '';
-  return `<div class="suggest-list">${matches.map(c=>`
-    <div class="suggest-item" data-selectcontact="${c.id}">
-      <b>${c.last}, ${c.first}</b>
-      <div class="sub">${c.company||'No company'} · ${c.mobile||c.phone||'No number'}</div>
-    </div>`).join('')}</div>`;
-}
 function renderContactPickerPanel(){
   if(!state.contactPickerOpen) return '';
   const standalone = !!state.contactPickerOpen.standalone;
   const q = state.contactPickerQuery.toLowerCase();
-  const matches = q ? db.contacts.filter(c=>matchesSearchTokens(`${c.last} ${c.first}`, q)) : [];
+  const matches = q ? db.contacts.filter(c=>(`${c.last} ${c.first}`).toLowerCase().includes(q) || (`${c.first} ${c.last}`).toLowerCase().includes(q)) : [];
   return `
   <div class="modal-overlay" style="z-index:600;" id="contactPickerOverlay">
     <div class="modal-card">
@@ -7694,7 +6862,11 @@ function renderContactPickerPanel(){
         <div class="field autocomplete-box">
           <label>Search by name</label>
           <input id="contactSearchInput" placeholder="Start typing a last or first name…" value="${escapeAttr(state.contactPickerQuery)}">
-          <div id="contactSearchSuggestions">${renderContactSearchSuggestions(matches)}</div>
+          ${matches.length? `<div class="suggest-list">${matches.map(c=>`
+            <div class="suggest-item" data-selectcontact="${c.id}">
+              <b>${c.last}, ${c.first}</b>
+              <div class="sub">${c.company||'No company'} · ${c.mobile||c.phone||'No number'}</div>
+            </div>`).join('')}</div>` : ''}
         </div>`}
         <div style="${standalone?'':'margin-top:14px;border-top:1px solid var(--line);padding-top:14px;'}max-height:52vh;overflow-y:auto;">
           ${standalone? '' : `<div style="font-size:12px;font-weight:600;color:var(--ink-soft);margin-bottom:8px;">Or create a new contact</div>`}
@@ -7791,10 +6963,9 @@ function finishContactPick(contactId){
     if(slot==='primary'){
       client.primary=contactId;
       supaUpdateClientContact(client, clientsList.id);
-    } else if(slot==='second' || slot==='third'){
-      if(slot==='second') client.secondContactId=contactId; else client.thirdContactId=contactId;
-      supabaseClient.from('client_secondary_contacts').delete().eq('client_id', client.id).eq('slot', slot)
-        .then(()=>supabaseClient.from('client_secondary_contacts').insert({client_id:client.id, contact_id:contactId, slot}))
+    } else {
+      client.secondary.push(contactId);
+      supabaseClient.from('client_secondary_contacts').insert({client_id:client.id, contact_id:contactId})
         .then(({error})=>{ if(error) console.error('secondary contact sync error:', error); });
     }
   } else if(state.contactPickerOpen && state.contactPickerOpen.entryId){
@@ -7817,167 +6988,6 @@ function finishContactPick(contactId){
 }
 
 /* ---------------- NEW TODO MODAL ---------------- */
-function accountsFlatForPicker(){
-  const out = [];
-  db.lists.filter(l=>l.type==='deep').forEach(l=>{
-    l.clients.forEach(c=>out.push({id:c.id, name:c.name, listId:l.id, listName:l.name, deals:c.deals}));
-  });
-  return out;
-}
-function renderNtpAccountListHtml(matches){
-  if(!matches.length) return `<div class="tiny" style="padding:10px;color:var(--ink-soft);">No matches.</div>`;
-  return matches.map(a=>`
-    <div class="row-card" data-action="ntpPickAccount" data-accountid="${a.id}" style="cursor:pointer;margin-bottom:6px;">
-      <div class="row-body"><div class="row-title">${escapeHtml(a.name)}</div><div class="row-meta"><span>${escapeHtml(a.listName)}</span></div></div>
-    </div>`).join('');
-}
-function renderNewTodoPickerModal(){
-  const p = state.newTodoPicker;
-  const overlay = document.createElement('div');
-  overlay.className='modal-overlay'; overlay.style.zIndex=185;
-  let title = 'New To-Do — where does this belong?';
-  let body = '';
-
-  if(p.step==='chooseType'){
-    body = `
-    <div style="display:flex;flex-direction:column;gap:10px;">
-      <button class="btn secondary" data-action="ntpChooseAccountStep" style="text-align:left;padding:16px;font-size:14px;">🏢 Client / Listing</button>
-      <button class="btn secondary" data-action="ntpChooseEntryTypeStep" style="text-align:left;padding:16px;font-size:14px;">🎯 Hit List / Hot List</button>
-      <button class="btn secondary" data-action="ntpChooseOpen" style="text-align:left;padding:16px;font-size:14px;">📋 Open To-Do — not tied to anything</button>
-    </div>`;
-  } else if(p.step==='chooseAccount'){
-    title = 'Which Client or Listing?';
-    const query = (p.accountQuery||'').trim().toLowerCase();
-    const matches = accountsFlatForPicker().filter(a=>!query || a.name.toLowerCase().includes(query)).slice(0,50);
-    body = `
-      <input id="ntpAccountSearch" placeholder="🔍 Search clients and listings…" value="${escapeAttr(p.accountQuery||'')}" style="margin-bottom:10px;">
-      <div id="ntpAccountList" style="max-height:320px;overflow-y:auto;">${renderNtpAccountListHtml(matches)}</div>`;
-  } else if(p.step==='chooseDealOrStop'){
-    const acct = p.pickedAccount;
-    title = acct.name;
-    body = `
-      <button class="btn" data-action="ntpStopAtAccount" style="width:100%;margin-bottom:16px;">Not associated with a Deal — create it under ${escapeHtml(acct.name)}</button>
-      <div class="section-label">Or pick a specific deal:</div>
-      <div style="max-height:280px;overflow-y:auto;">
-        ${acct.deals.length ? acct.deals.map(d=>`
-          <div class="row-card" data-action="ntpPickDeal" data-dealid="${d.id}" style="cursor:pointer;margin-bottom:6px;">
-            <div class="row-body"><div class="row-title">${escapeHtml(d.name)}</div></div>
-          </div>`).join('') : `<div class="tiny" style="color:var(--ink-soft);padding:10px 0;">No deals yet on this account.</div>`}
-      </div>`;
-  } else if(p.step==='chooseEntryType'){
-    title = 'Hit List or Hot List?';
-    body = `
-      <div style="display:flex;flex-direction:column;gap:10px;">
-        <button class="btn secondary" data-action="ntpChooseEntryListStep" data-listid="hitlist" style="text-align:left;padding:16px;font-size:14px;">📋 Hit List</button>
-        <button class="btn secondary" data-action="ntpChooseEntryListStep" data-listid="hotlist" style="text-align:left;padding:16px;font-size:14px;">🎯 Hot List</button>
-      </div>`;
-  } else if(p.step==='chooseEntry'){
-    const l = db.lists.find(x=>x.id===p.entryListId);
-    title = l.name;
-    const query = (p.entryQuery||'').trim().toLowerCase();
-    const matches = l.entries.filter(e=>!query || e.name.toLowerCase().includes(query)).slice(0,50);
-    body = `
-      <input id="ntpEntrySearch" placeholder="🔍 Search ${escapeAttr(l.name.toLowerCase())}…" value="${escapeAttr(p.entryQuery||'')}" style="margin-bottom:10px;">
-      <div id="ntpEntryList" style="max-height:320px;overflow-y:auto;">
-        ${matches.length ? matches.map(e=>`
-          <div class="row-card" data-action="ntpPickEntry" data-entryid="${e.id}" style="cursor:pointer;margin-bottom:6px;">
-            <div class="row-body"><div class="row-title">${escapeHtml(e.name)}</div></div>
-          </div>`).join('') : `<div class="tiny" style="color:var(--ink-soft);padding:10px;">No matches.</div>`}
-      </div>`;
-  }
-
-  overlay.innerHTML = `
-  <div class="modal-card">
-    <div class="modal-head"><div class="modal-title">${escapeHtml(title)}</div><button class="modal-close" data-action="closeNewTodoPicker">✕</button></div>
-    <div class="modal-body">${body}</div>
-    <div class="modal-foot">
-      ${p.step!=='chooseType' ? `<button class="btn secondary" data-action="ntpBack">← Back</button>` : ''}
-      <button class="btn secondary" data-action="closeNewTodoPicker">Cancel</button>
-    </div>
-  </div>`;
-  document.getElementById('app').appendChild(overlay);
-
-  overlay.querySelectorAll('[data-action="closeNewTodoPicker"]').forEach(b=>b.onclick=()=>{ state.newTodoPicker=null; render(); });
-  overlay.querySelector('[data-action="ntpBack"]').onclick=()=>{
-    if(p.step==='chooseAccount' || p.step==='chooseEntryType') p.step='chooseType';
-    else if(p.step==='chooseDealOrStop') p.step='chooseAccount';
-    else if(p.step==='chooseEntry') p.step='chooseEntryType';
-    render();
-  };
-  const openBtn = overlay.querySelector('[data-action="ntpChooseOpen"]'); if(openBtn) openBtn.onclick=()=>{
-    state.newTodoPicker=null;
-    openNewTodoModal({});
-    render();
-  };
-  const acctStepBtn = overlay.querySelector('[data-action="ntpChooseAccountStep"]'); if(acctStepBtn) acctStepBtn.onclick=()=>{ p.step='chooseAccount'; p.accountQuery=''; render(); };
-  const entryTypeStepBtn = overlay.querySelector('[data-action="ntpChooseEntryTypeStep"]'); if(entryTypeStepBtn) entryTypeStepBtn.onclick=()=>{ p.step='chooseEntryType'; render(); };
-  overlay.querySelectorAll('[data-action="ntpChooseEntryListStep"]').forEach(b=>b.onclick=()=>{ p.step='chooseEntry'; p.entryListId=b.dataset.listid; p.entryQuery=''; render(); });
-
-  const acctSearchEl = document.getElementById('ntpAccountSearch');
-  if(acctSearchEl) acctSearchEl.oninput=()=>{
-    p.accountQuery = acctSearchEl.value;
-    const q = p.accountQuery.trim().toLowerCase();
-    const newMatches = accountsFlatForPicker().filter(a=>!q || a.name.toLowerCase().includes(q)).slice(0,50);
-    const listBox = document.getElementById('ntpAccountList');
-    if(listBox){
-      listBox.innerHTML = renderNtpAccountListHtml(newMatches);
-      listBox.querySelectorAll('[data-action="ntpPickAccount"]').forEach(b=>b.onclick=()=>{
-        p.pickedAccount = accountsFlatForPicker().find(a=>a.id===b.dataset.accountid);
-        p.step='chooseDealOrStop';
-        render();
-      });
-    }
-  };
-  overlay.querySelectorAll('[data-action="ntpPickAccount"]').forEach(b=>b.onclick=()=>{
-    p.pickedAccount = accountsFlatForPicker().find(a=>a.id===b.dataset.accountid);
-    p.step='chooseDealOrStop';
-    render();
-  });
-  const stopBtn = overlay.querySelector('[data-action="ntpStopAtAccount"]'); if(stopBtn) stopBtn.onclick=()=>{
-    const acct = p.pickedAccount;
-    state.newTodoPicker=null;
-    openNewTodoModal({listId:acct.listId, clientId:acct.id});
-    state.newTodoModal.navigateAfterSave = {kind:'client', listId:acct.listId, clientId:acct.id};
-    render();
-  };
-  overlay.querySelectorAll('[data-action="ntpPickDeal"]').forEach(b=>b.onclick=()=>{
-    const acct = p.pickedAccount;
-    const d = acct.deals.find(x=>x.id===b.dataset.dealid);
-    state.newTodoPicker=null;
-    openNewTodoModal({listId:acct.listId, clientId:acct.id, dealId:d.id});
-    state.newTodoModal.navigateAfterSave = {kind:'deal', listId:acct.listId, clientId:acct.id, dealId:d.id};
-    render();
-  });
-
-  const entrySearchEl = document.getElementById('ntpEntrySearch');
-  if(entrySearchEl) entrySearchEl.oninput=()=>{
-    p.entryQuery = entrySearchEl.value;
-    const q = p.entryQuery.trim().toLowerCase();
-    const l = db.lists.find(x=>x.id===p.entryListId);
-    const newMatches = l.entries.filter(e=>!q || e.name.toLowerCase().includes(q)).slice(0,50);
-    const listBox = document.getElementById('ntpEntryList');
-    if(listBox){
-      listBox.innerHTML = newMatches.length ? newMatches.map(e=>`
-        <div class="row-card" data-action="ntpPickEntry" data-entryid="${e.id}" style="cursor:pointer;margin-bottom:6px;">
-          <div class="row-body"><div class="row-title">${escapeHtml(e.name)}</div></div>
-        </div>`).join('') : `<div class="tiny" style="color:var(--ink-soft);padding:10px;">No matches.</div>`;
-      listBox.querySelectorAll('[data-action="ntpPickEntry"]').forEach(b=>b.onclick=()=>{
-        const listId = p.entryListId;
-        state.newTodoPicker=null;
-        openNewTodoModal({listId, entryId:b.dataset.entryid});
-        state.newTodoModal.navigateAfterSave = {kind:'entry', listId, entryId:b.dataset.entryid};
-        render();
-      });
-    }
-  };
-  overlay.querySelectorAll('[data-action="ntpPickEntry"]').forEach(b=>b.onclick=()=>{
-    const listId = p.entryListId;
-    state.newTodoPicker=null;
-    openNewTodoModal({listId, entryId:b.dataset.entryid});
-    state.newTodoModal.navigateAfterSave = {kind:'entry', listId, entryId:b.dataset.entryid};
-    render();
-  });
-}
 function openNewTodoModal(context){
   state.newTodoModal={ context, title:'', category: context.category||'', status:'Not Started', dueInput:'', notes:'', type:'task', assignTo:state.currentUser.id, attachments:[], checklistItems:[] };
 }
@@ -8047,12 +7057,13 @@ function renderNewTodoModal(){
       </div>
       <div class="field autocomplete-box">
         <label>Category</label>
-        <input id="ntCategory" placeholder="e.g., Freddy's, Personal, Dutch Bros" value="${escapeAttr(m.category)}" list="categoryList" autocomplete="off">
+        <input id="ntCategory" placeholder="e.g., Freddy's, Personal, Dutch Bros" value="${escapeAttr(m.category)}" list="categoryList">
         <datalist id="categoryList">${cats.map(c=>`<option value="${escapeAttr(c)}">`).join('')}</datalist>
       </div>
       <div class="field autocomplete-box">
         <label>Status</label>
-        <select id="ntStatus">${STATUS_PRESETS.map(s=>`<option value="${escapeAttr(s)}" ${(m.status||'Not Started')===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}</select>
+        <input id="ntStatus" value="${escapeAttr(m.status||'Not Started')}" list="ntStatusList">
+        <datalist id="ntStatusList">${STATUS_PRESETS.map(s=>`<option value="${escapeAttr(s)}">`).join('')}</datalist>
       </div>
       <div class="field">
         <label>Due date</label>
@@ -8067,7 +7078,7 @@ function renderNewTodoModal(){
       <div class="field">
         <label>Assign to</label>
         <select id="ntAssignSelect">
-          ${usersSortedByMe().map(u=>`<option value="${u.id}" ${m.assignTo===u.id?'selected':''}>${u.name}${u.id===state.currentUser.id?' (me)':''}</option>`).join('')}
+          ${USERS.map(u=>`<option value="${u.id}" ${m.assignTo===u.id?'selected':''}>${u.name}${u.id===state.currentUser.id?' (me)':''}</option>`).join('')}
         </select>
       </div>
       <div class="field" style="display:flex;align-items:center;gap:8px;">
@@ -8126,12 +7137,8 @@ function renderNewTodoModal(){
   overlay.querySelectorAll('[data-action="closeNewTodo"]').forEach(btn=>btn.onclick=()=>{ state.newTodoModal=null; render(); });
   overlay.querySelectorAll('[data-action="addNtChecklistItem"]').forEach(btn=>btn.onclick=()=>{
     if(!m.checklistItems) m.checklistItems=[];
-    const newItem = {id:crypto.randomUUID(), text:'', done:false};
-    m.checklistItems.push(newItem);
+    m.checklistItems.push({id:crypto.randomUUID(), text:'', done:false});
     renderPreservingScroll('.modal-body');
-    const els = document.querySelectorAll(`[data-ntchecklistitemtext="${newItem.id}"]`);
-    const newInput = els[els.length-1];
-    if(newInput) newInput.focus();
   });
   overlay.querySelectorAll('[data-ntchecklistitemtext]').forEach(el=>el.onchange=()=>{
     const item = (m.checklistItems||[]).find(i=>i.id===el.dataset.ntchecklistitemtext);
@@ -8151,12 +7158,6 @@ function renderNewTodoModal(){
     document.getElementById('ntSaveBtn').textContent = forMe? 'Save & Close' : 'Save & Assign';
   };
   wireAttachmentZone(overlay, 'ntDropZone', 'ntFileInput', ()=>m.attachments, 'new');
-  // Live-commit these fields as they're typed, so the checklist add/remove/edit
-  // handlers below (which do trigger a full re-render) can never wipe them out.
-  const ntTitleLiveEl = document.getElementById('ntTitle'); if(ntTitleLiveEl) ntTitleLiveEl.oninput=()=>{ m.title = ntTitleLiveEl.value; };
-  const ntCategoryLiveEl = document.getElementById('ntCategory'); if(ntCategoryLiveEl) ntCategoryLiveEl.oninput=()=>{ m.category = ntCategoryLiveEl.value; };
-  const ntStatusLiveEl = document.getElementById('ntStatus'); if(ntStatusLiveEl) ntStatusLiveEl.oninput=()=>{ m.status = ntStatusLiveEl.value; };
-  const ntNotesLiveEl = document.getElementById('ntNotes'); if(ntNotesLiveEl) ntNotesLiveEl.oninput=()=>{ m.notes = ntNotesLiveEl.value; };
   overlay.querySelector('[data-action="saveTodo"]').onclick=()=>{
     const title=document.getElementById('ntTitle').value.trim();
     if(!title){ flashToast('Give the to-do a title first.'); return; }
@@ -8183,17 +7184,19 @@ function renderNewTodoModal(){
     state.newTodoModal=null;
     if(assignTo!==state.currentUser.id){
       newTd.isNew = true;
-      flashToast(`Assigned to ${USERS.find(x=>x.id===assignTo).name}.`);
+      const u=USERS.find(x=>x.id===assignTo);
+      if(u.wantsAssignmentEmails!==false){
+        const subject = 'You Have a New To Do on Southwest Edge';
+        const body = `Hi ${u.name.split(' ')[0]},\n\n${state.currentUser.name} assigned you a new to-do:\n\n"${title}"${category?` (${category})`:''}${newTd.dueDate?`\nDue: ${fmtDate(newTd.dueDate)}`:''}\n\nLog in to Southwest Edge Portal to view it: ${portalUrl(newTd.id)}\n\n— Sent from Southwest Edge Portal`;
+        openEmailDraft(u, subject, body);
+        flashToast(`Email draft opened for ${u.name}.`);
+      } else {
+        flashToast(`To-do assigned to ${u.name} (they've opted out of assignment emails).`);
+      }
     } else {
       flashToast('To-do saved.');
     }
     supaCreateTodo(newTd);
-    if(m.navigateAfterSave){
-      const nav = m.navigateAfterSave;
-      if(nav.kind==='deal') openDealModal(nav.listId, nav.clientId, nav.dealId);
-      else if(nav.kind==='client') openClientModal(nav.listId, nav.clientId, 'all');
-      else if(nav.kind==='entry') openEntryModal(nav.listId, nav.entryId);
-    }
     render();
   };
 }
@@ -8265,98 +7268,47 @@ function renderEditContactModal(){
     }
   };
 }
-// Splits the search text into individual words and requires every one of them to
-// appear somewhere in the contact's info — not as one continuous phrase. This means
-// "Smith John" and "John Smith" both match the same person, commas don't matter, and
-// each additional word typed only ever narrows the results further, never changes
-// the matching logic.
-function matchesSearchTokens(hayString, query){
-  const tokens = query.toLowerCase().replace(/,/g, ' ').split(/\s+/).filter(Boolean);
-  if(!tokens.length) return true;
-  const hay = hayString.toLowerCase();
-  return tokens.every(t => hay.includes(t));
-}
-function renderContactsTableRows(filtered){
-  return filtered.slice().sort((a,b)=>a.last.localeCompare(b.last)||a.first.localeCompare(b.first)).slice(0,300).map(c=>`
-        <tr>
-          <td class="checkbox-cell"><input type="checkbox" data-contactcheck="${c.id}" ${state.selectedContactIds.includes(c.id)?'checked':''}></td>
-          <td style="cursor:pointer;" data-contactnameclick="${c.id}">${c.isPrivate ? `<span title="Private — only visible to you until it's attached to a shared Client, Deal, Entry, or Prospect" style="margin-right:4px;">🔒</span>`:''}${escapeHtml(c.last)}</td><td style="cursor:pointer;" data-contactnameclick="${c.id}">${escapeHtml(c.first)}</td><td>${escapeHtml(c.company||'')}</td>
-          <td style="${c.email?'cursor:pointer;color:var(--edge);':''}" ${c.email?`data-contactemailclick="${escapeAttr(c.email)}"`:''}>${escapeHtml(c.email||'')}</td><td>${escapeHtml(c.mobile||'')}</td><td>${escapeHtml(c.phone||'')}</td>
-          <td><button class="row-trash" style="opacity:.7;" data-editcontact="${c.id}" title="Edit">✏️</button></td>
-        </tr>`).join('');
-}
 function renderContactsMain(){
   const q = (state.contactSearchQuery||'').toLowerCase().trim();
   const filtered = q ? db.contacts.filter(c=>{
-    return matchesSearchTokens(`${c.last} ${c.first} ${c.company||''} ${c.email||''}`, q);
+    const hay = `${c.last} ${c.first} ${c.company||''} ${c.email||''}`.toLowerCase();
+    return hay.includes(q);
   }) : db.contacts;
   return `
-  <div style="font-size:12px;color:var(--ink-soft);margin-bottom:8px;">🔒 New contacts you add or import are private to you until attached to a shared Client, Deal, Entry, or Prospect — then whoever can see that record can see the contact too.</div>
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:12px;flex-wrap:wrap;">
     <input id="contactSearchBox" placeholder="🔍 Search by name, company, or email…" value="${escapeAttr(state.contactSearchQuery||'')}"
       style="flex:1;min-width:220px;padding:9px 12px;border:1px solid var(--line);border-radius:8px;font-size:13.5px;">
-    <div id="contactsCountLabel" style="font-size:12.5px;color:var(--ink-soft);white-space:nowrap;">${filtered.length} of ${db.contacts.length} contacts</div>
+    <div style="font-size:12.5px;color:var(--ink-soft);white-space:nowrap;">${filtered.length} of ${db.contacts.length} contacts</div>
     <div style="display:flex;gap:8px;">
       <button class="btn sm" id="newContactBtn">+ New Contact</button>
       ${!state.isMobile ? `<label class="btn secondary sm" style="display:inline-block;">Import CSV<input type="file" id="csvImportInput" accept=".csv" style="display:none;"></label>` : ''}
-      <button class="btn sm" id="exportVcardBtn" ${state.selectedContactIds.length? '' : 'disabled'} style="${state.selectedContactIds.length>5?'background:var(--bad,#C0392B);':''}">Export vCard (${state.selectedContactIds.length}${state.selectedContactIds.length>5?' — max 5':''})</button>
+      <button class="btn sm" id="exportVcardBtn" ${state.selectedContactIds.length? '' : 'disabled'}>Export vCard (${state.selectedContactIds.length})</button>
       <button class="btn danger sm" id="deleteContactsBtn" ${state.selectedContactIds.length? '' : 'disabled'}>🗑️ Delete (${state.selectedContactIds.length})</button>
     </div>
   </div>
-  <div style="max-height:calc(100vh - 200px);overflow-y:auto;overflow-x:auto;border:1px solid var(--line);border-radius:10px;">
+  <div style="max-height:calc(100vh - 200px);overflow-y:auto;border:1px solid var(--line);border-radius:10px;">
   <table class="contacts-table">
     <thead><tr>
       <th class="checkbox-cell"><input type="checkbox" id="selectAllContacts"></th>
       <th>Last Name</th><th>First Name</th><th>Company</th><th>Email</th><th>Mobile</th><th>Phone</th><th></th>
     </tr></thead>
-    <tbody id="contactsTableBody">
-      ${renderContactsTableRows(filtered)}
+    <tbody>
+      ${filtered.slice().sort((a,b)=>a.last.localeCompare(b.last)||a.first.localeCompare(b.first)).slice(0,300).map(c=>`
+        <tr data-contactrow="${c.id}">
+          <td class="checkbox-cell"><input type="checkbox" data-contactcheck="${c.id}" ${state.selectedContactIds.includes(c.id)?'checked':''}></td>
+          <td>${escapeHtml(c.last)}</td><td>${escapeHtml(c.first)}</td><td>${escapeHtml(c.company||'')}</td>
+          <td>${escapeHtml(c.email||'')}</td><td>${escapeHtml(c.mobile||'')}</td><td>${escapeHtml(c.phone||'')}</td>
+          <td><button class="row-trash" style="opacity:.7;" data-editcontact="${c.id}" title="Edit">✏️</button></td>
+        </tr>`).join('')}
     </tbody>
   </table>
-  <div id="contactsOverflowNote">${filtered.length>300 ? `<div style="padding:10px 14px;font-size:12px;color:var(--ink-soft);">Showing first 300 matches — narrow your search to see more precisely.</div>` : ''}</div>
+  ${filtered.length>300 ? `<div style="padding:10px 14px;font-size:12px;color:var(--ink-soft);">Showing first 300 matches — narrow your search to see more precisely.</div>` : ''}
   </div>`;
-}
-function wireContactsTableRowHandlers(){
-  document.querySelectorAll('[data-contactcheck]').forEach(el=>el.onclick=(ev)=>{
-    ev.stopPropagation();
-    const id=el.dataset.contactcheck;
-    if(state.selectedContactIds.includes(id)) state.selectedContactIds=state.selectedContactIds.filter(x=>x!==id);
-    else state.selectedContactIds.push(id);
-    render();
-  });
-  document.querySelectorAll('[data-editcontact]').forEach(el=>el.onclick=(ev)=>{
-    ev.stopPropagation();
-    state.editContactModal = {id: el.dataset.editcontact};
-    render();
-  });
-  document.querySelectorAll('[data-contactnameclick]').forEach(el=>el.onclick=()=>{
-    state.editContactModal = {id: el.dataset.contactnameclick};
-    render();
-  });
-  document.querySelectorAll('[data-contactemailclick]').forEach(el=>el.onclick=()=>{
-    window.location.href = 'mailto:' + el.dataset.contactemailclick;
-  });
 }
 function attachContactsHandlers(){
   const searchBox = document.getElementById('contactSearchBox');
   if(searchBox){
-    // Never call the full render() here — that would rebuild this very input on
-    // every keystroke and reset the cursor to the start, same bug that hit the
-    // Commission fields. Only the results table/count below get refreshed.
-    searchBox.oninput = ()=>{
-      state.contactSearchQuery = searchBox.value;
-      const q = state.contactSearchQuery.toLowerCase().trim();
-      const filtered = q ? db.contacts.filter(c=>{
-        return matchesSearchTokens(`${c.last} ${c.first} ${c.company||''} ${c.email||''}`, q);
-      }) : db.contacts;
-      const countLabel = document.getElementById('contactsCountLabel');
-      if(countLabel) countLabel.textContent = `${filtered.length} of ${db.contacts.length} contacts`;
-      const tbody = document.getElementById('contactsTableBody');
-      if(tbody) tbody.innerHTML = renderContactsTableRows(filtered);
-      const overflowNote = document.getElementById('contactsOverflowNote');
-      if(overflowNote) overflowNote.innerHTML = filtered.length>300 ? `<div style="padding:10px 14px;font-size:12px;color:var(--ink-soft);">Showing first 300 matches — narrow your search to see more precisely.</div>` : '';
-      wireContactsTableRowHandlers();
-    };
+    searchBox.oninput = ()=>{ state.contactSearchQuery = searchBox.value; render(); };
     if(state.contactSearchFocused){
       searchBox.focus();
       const len = searchBox.value.length;
@@ -8369,7 +7321,18 @@ function attachContactsHandlers(){
   if(csvInput) csvInput.onchange=(e)=>{ if(e.target.files[0]) importCSV(e.target.files[0]); };
   const newContactBtn = document.getElementById('newContactBtn');
   if(newContactBtn) newContactBtn.onclick=()=>{ state.contactPickerOpen={standalone:true}; state.contactPickerQuery=''; render(); };
-  wireContactsTableRowHandlers();
+  document.querySelectorAll('[data-contactcheck]').forEach(el=>el.onclick=(ev)=>{
+    ev.stopPropagation();
+    const id=el.dataset.contactcheck;
+    if(state.selectedContactIds.includes(id)) state.selectedContactIds=state.selectedContactIds.filter(x=>x!==id);
+    else state.selectedContactIds.push(id);
+    render();
+  });
+  document.querySelectorAll('[data-editcontact]').forEach(el=>el.onclick=(ev)=>{
+    ev.stopPropagation();
+    state.editContactModal = {id: el.dataset.editcontact};
+    render();
+  });
   const selAll = document.getElementById('selectAllContacts');
   if(selAll) selAll.onclick=()=>{
     if(selAll.checked) state.selectedContactIds = db.contacts.map(c=>c.id);
@@ -8377,13 +7340,7 @@ function attachContactsHandlers(){
     render();
   };
   const exportBtn = document.getElementById('exportVcardBtn');
-  if(exportBtn) exportBtn.onclick=()=>{
-    if(state.selectedContactIds.length > 5){
-      flashToast(`You can only export 5 contacts at a time — you have ${state.selectedContactIds.length} selected. Narrow it down to 5 or fewer, export, then select the next batch.`);
-      return;
-    }
-    exportVCards(state.selectedContactIds);
-  };
+  if(exportBtn) exportBtn.onclick=()=>exportVCards(state.selectedContactIds);
   const deleteBtn = document.getElementById('deleteContactsBtn');
   if(deleteBtn) deleteBtn.onclick=()=>{
     const n = state.selectedContactIds.length;
@@ -8414,7 +7371,7 @@ function renderBrokerListMain(){
   ${!PHOENIX_BROKER_LIST.length ? `
     <div class="empty-state"><div class="big">No brokers yet.</div><div class="tiny">Add brokers here, or attach one from any prospect's detail view — either way, they land in this same shared list.</div></div>
   ` : `
-  <div style="max-height:calc(100vh - 200px);overflow-y:auto;overflow-x:auto;border:1px solid var(--line);border-radius:10px;">
+  <div style="max-height:calc(100vh - 200px);overflow-y:auto;border:1px solid var(--line);border-radius:10px;">
   <table class="contacts-table">
     <thead><tr><th>Name</th><th>Company</th><th>Email</th><th>Mobile</th><th>Phone</th><th></th></tr></thead>
     <tbody>
@@ -8791,7 +7748,7 @@ function renderTaskFireImportModal(){
         <label>Whose TaskFire account is this from? *</label>
         <select id="tfOwner">
           <option value="">— choose —</option>
-          ${usersSortedByMe().map(u=>`<option value="${u.id}" ${m.ownerUserId===u.id?'selected':''}>${u.name}</option>`).join('')}
+          ${USERS.map(u=>`<option value="${u.id}" ${m.ownerUserId===u.id?'selected':''}>${u.name}</option>`).join('')}
         </select>
       </div>
       <div class="stats" style="display:flex;gap:14px;margin:14px 0;">
@@ -8948,7 +7905,7 @@ async function runTaskFireImport(parsed, ownerUserId){
     if(existingId){
       clientObj = targetList.clients.find(x=>x.id===existingId);
     } else {
-      clientObj = {id:crypto.randomUUID(), name:c.name, primary:null, secondContactId:null, thirdContactId:null, deals:[], createdBy:ownerUserId, authorizedUserIds:[]};
+      clientObj = {id:crypto.randomUUID(), name:c.name, primary:null, secondary:[], deals:[], createdBy:ownerUserId, authorizedUserIds:[]};
       if(destListId==='listings'){ clientObj.prospects=[]; clientObj.categoryConfig=newLSRCategoryConfig(); }
       targetList.clients.push(clientObj);
       await supaCreateClient(clientObj, destListId);
@@ -8992,7 +7949,7 @@ const MAPS_STAGE_OPTIONS = [
   {id:'skip', label:'Skip this folder — don\'t import'},
   {id:'loi', label:'→ LOI'},
   {id:'signedLOI', label:'→ Signed LOI'},
-  {id:'negotiating', label:'→ Negotiating Lease / PSA'},
+  {id:'negotiating', label:'→ Negotiating Lease'},
   {id:'signedLease', label:'→ Signed Lease'},
   {id:'auto', label:'→ Auto: store number (AZ####) = Signed LOI, else LOI'},
   {id:'manual', label:'→ No stage yet — let me pick individually which sites import'},
@@ -9064,13 +8021,6 @@ function mapsComputeResultDeals(m){
   });
   return results;
 }
-function renderMapsClientListHtml(matches, m){
-  if(!matches.length) return `<div class="tiny" style="padding:10px;color:var(--ink-soft);">No matches — type a name below to create a new one instead.</div>`;
-  return matches.map(c=>`
-    <div class="row-card" data-mapspickclient="${c.id}:${c.listId}" style="cursor:pointer;padding:8px 12px;${m.pickedClient&&m.pickedClient.id===c.id?'background:var(--edge-light);':''}">
-      <div class="row-body"><div class="row-title" style="font-size:13px;">${escapeHtml(c.name)}</div><div class="row-meta"><span>${escapeHtml(c.listName)}</span></div></div>
-    </div>`).join('');
-}
 function renderMapsImportModal(){
   const m = state.mapsImport;
   const overlay = document.createElement('div');
@@ -9087,7 +8037,10 @@ function renderMapsImportModal(){
         <label>Which Client/Listing do these sites belong to? *</label>
         <input class="searchbox" id="mapsClientSearch" placeholder="🔍 Search existing…" value="${escapeAttr(m.clientQuery)}" style="margin-bottom:6px;">
         <div id="mapsClientList" style="max-height:160px;overflow-y:auto;border:1px solid var(--line);border-radius:8px;margin-bottom:10px;">
-          ${renderMapsClientListHtml(matches, m)}
+          ${matches.length ? matches.map(c=>`
+            <div class="row-card" data-mapspickclient="${c.id}:${c.listId}" style="cursor:pointer;padding:8px 12px;${m.pickedClient&&m.pickedClient.id===c.id?'background:var(--edge-light);':''}">
+              <div class="row-body"><div class="row-title" style="font-size:13px;">${escapeHtml(c.name)}</div><div class="row-meta"><span>${escapeHtml(c.listName)}</span></div></div>
+            </div>`).join('') : `<div class="tiny" style="padding:10px;color:var(--ink-soft);">No matches — type a name below to create a new one instead.</div>`}
         </div>
         ${!m.pickedClient ? `
         <label style="margin-top:4px;">…or create a new one:</label>
@@ -9169,19 +8122,7 @@ function renderMapsImportModal(){
 
   if(m.step==='upload'){
     const searchEl = document.getElementById('mapsClientSearch');
-    if(searchEl) searchEl.oninput = ()=>{
-      m.clientQuery = searchEl.value;
-      const newMatches = mapsAllClientsFlat().filter(c=>!m.clientQuery || c.name.toLowerCase().includes(m.clientQuery.toLowerCase()));
-      const listBox = document.getElementById('mapsClientList');
-      if(listBox){
-        listBox.innerHTML = renderMapsClientListHtml(newMatches, m);
-        listBox.querySelectorAll('[data-mapspickclient]').forEach(el=>el.onclick=()=>{
-          const [id, listId] = el.dataset.mapspickclient.split(':');
-          const c = mapsAllClientsFlat().find(x=>x.id===id);
-          m.pickedClient = c; m.newClientName=''; renderPreservingScroll('.modal-body');
-        });
-      }
-    };
+    if(searchEl) searchEl.oninput = ()=>{ m.clientQuery = searchEl.value; render(); };
     overlay.querySelectorAll('[data-mapspickclient]').forEach(el=>el.onclick=()=>{
       const [id, listId] = el.dataset.mapspickclient.split(':');
       const c = mapsAllClientsFlat().find(x=>x.id===id);
@@ -9244,7 +8185,7 @@ async function commitMapsImport(m, results){
     clientObj = list.clients.find(c=>c.id===m.pickedClient.id);
   } else {
     list = db.lists.find(l=>l.id===(m.newClientListId||'clients'));
-    clientObj = {id:crypto.randomUUID(), name:m.newClientName.trim(), primary:null, secondContactId:null, thirdContactId:null, deals:[], createdBy:state.currentUser.id, authorizedUserIds:[]};
+    clientObj = {id:crypto.randomUUID(), name:m.newClientName.trim(), primary:null, secondary:[], deals:[], createdBy:state.currentUser.id, authorizedUserIds:[]};
     if(list.id==='listings'){ clientObj.prospects=[]; clientObj.categoryConfig=newLSRCategoryConfig(); }
     list.clients.push(clientObj);
     await supaCreateClient(clientObj, list.id);
@@ -9352,8 +8293,7 @@ function renderImportTodosModal(){
       newTodos.push({
         id:crypto.randomUUID(), title, category: iCat>=0?(row[iCat]||'').trim():'', dueDate: iDue>=0?parseNaturalDate((row[iDue]||'').trim()):null,
         assignedTo, createdBy:state.currentUser.id, type:'task', private:false, completed, isNew:false,
-        notes: iNotes>=0?(row[iNotes]||'').trim():'', listId:null, clientId:null, dealId:null, entryId:null,
-        skipAssignmentNotification:true
+        notes: iNotes>=0?(row[iNotes]||'').trim():'', listId:null, clientId:null, dealId:null, entryId:null
       });
     });
     db.todos.push(...newTodos);
@@ -9425,19 +8365,12 @@ function flashToast(msg){ state.toast = msg; }
 // position to the top — this saves it beforehand and restores it right after, so opening
 // or closing a section simply reveals/hides content in place instead of jumping the screen.
 function renderPreservingScroll(containerSelector){
-  // querySelectorAll + take the LAST match, not querySelector's first match — when a
-  // modal is nested inside another (e.g. a Project opened from within a Client page),
-  // multiple elements can match the same selector at once. The one the user is
-  // actually scrolled within is always the topmost/innermost one, added to the DOM
-  // most recently — never the outer one underneath it.
-  const matches = document.querySelectorAll(containerSelector);
-  const scroller = matches.length ? matches[matches.length-1] : null;
+  const scroller = document.querySelector(containerSelector);
   const savedScrollTop = scroller ? scroller.scrollTop : null;
   render();
   if(savedScrollTop!==null){
     requestAnimationFrame(()=>{
-      const s2 = document.querySelectorAll(containerSelector);
-      const s = s2.length ? s2[s2.length-1] : null;
+      const s = document.querySelector(containerSelector);
       if(s) s.scrollTop = savedScrollTop;
     });
   }
@@ -9498,18 +8431,7 @@ render = function(){
     const input = document.getElementById('contactSearchInput');
     if(input){
       input.focus();
-      input.oninput=()=>{
-        state.contactPickerQuery=input.value;
-        const q = state.contactPickerQuery.toLowerCase();
-        const matches = q ? db.contacts.filter(c=>matchesSearchTokens(`${c.last} ${c.first}`, q)) : [];
-        const box = document.getElementById('contactSearchSuggestions');
-        if(box){
-          box.innerHTML = renderContactSearchSuggestions(matches);
-          box.querySelectorAll('[data-selectcontact]').forEach(el=>el.onclick=()=>{
-            finishContactPick(el.dataset.selectcontact);
-          });
-        }
-      };
+      input.oninput=()=>{ state.contactPickerQuery=input.value; render(); };
     }
     document.querySelectorAll('[data-selectcontact]').forEach(el=>el.onclick=()=>{
       finishContactPick(el.dataset.selectcontact);
@@ -9673,11 +8595,8 @@ document.addEventListener('keydown', (ev)=>{
   if(state.commissionModal){ state.commissionModal=null; render(); return; }
   if(state.myNotesOpen){ state.myNotesOpen=false; render(); return; }
   if(state.editContactModal){ state.editContactModal=null; render(); return; }
-  if(state.resetPasswordModalOpen){ state.resetPasswordModalOpen=false; render(); return; }
-  if(state.changePasswordModalOpen){ state.changePasswordModalOpen=false; render(); return; }
-  if(state.newTodoPicker){ state.newTodoPicker=null; render(); return; }
   if(state.editBrokerModal){ state.editBrokerModal=null; render(); return; }
-  if(state.todoDetailModal){ const td = db.todos.find(x=>x.id===state.todoDetailModal.id); if(!td || attemptCloseTodoDetail(td)) render(); return; }
+  if(state.todoDetailModal){ state.todoDetailModal=null; render(); return; }
   if(state.newTodoModal){ state.newTodoModal=null; render(); return; }
   if(state.newSmartListModal){ state.newSmartListModal=null; render(); return; }
   if(state.importTodosModal){ state.importTodosModal=null; render(); return; }
@@ -9725,7 +8644,7 @@ function dateAwareReviver(key, value){
 function saveAppState(){
   try{
     const snapshot = {
-      mainView: state.mainView,
+      otherAccountsOpen: state.otherAccountsOpen,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot, dateAwareReplacer));
   } catch(e){ /* private-browsing mode, storage full, etc. — fail quietly, app still works */ }
@@ -9741,7 +8660,7 @@ function loadAppState(){
     // (Phase 2+). Restoring them from this old local cache was actively harmful:
     // it could overwrite fresh data with a stale snapshot from before this app had
     // a real backend. Only things Supabase doesn't manage yet stay local.
-    if(saved.mainView) state.mainView = saved.mainView;
+    if(saved.otherAccountsOpen) state.otherAccountsOpen = saved.otherAccountsOpen;
     appStateWasLoaded = true;
   } catch(e){ /* corrupted/old save shape — just fall back to the seed data */ }
 }
@@ -9758,43 +8677,29 @@ render();
     // Directory additions must land BEFORE the session check below — otherwise
     // someone admitted since this code was last deployed, opening the app on a
     // device that's never seen them, would fail to match against USERS here.
-    // Wrapped separately: if this one thing fails (e.g. a flaky connection),
-    // it must never prevent the actual session restore below from running.
-    try{ if(await fetchDirectoryAdditions()) render(); }
-    catch(e){ console.error('Directory additions check failed (continuing anyway):', e); }
-
+    if(await fetchDirectoryAdditions()) render();
     const { data: { session } } = await supabaseClient.auth.getSession();
-    if(!session || !session.user) return;
-
-    const profile = await fetchMyProfile(session.user.id);
-    if(!profile) return;
-
-    await fetchAllProfilesIntoUsers();
-    const u = USERS.find(x=>x.email.toLowerCase()===profile.email.toLowerCase());
-    if(!u) return;
-
-    u.authId = profile.id;
-    if(!u.emailClient) u.emailClient = profile.email_client;
-    if(profile.widget_order) state.widgetOrder = profile.widget_order;
+    if(session && session.user){
+      const profile = await fetchMyProfile(session.user.id);
+      if(profile){
+        await fetchAllProfilesIntoUsers();
+        const u = USERS.find(x=>x.email.toLowerCase()===profile.email.toLowerCase());
+        if(u){
+          u.authId = profile.id;
+          if(!u.emailClient) u.emailClient = profile.email_client;
+          if(profile.widget_order) state.widgetOrder = profile.widget_order;
     if(profile.sidebar_lists_order && profile.sidebar_lists_order.length) sidebarListsOrder = profile.sidebar_lists_order;
-    try{ u.notesList = await fetchPersonalNotes(profile.id); }
-    catch(e){ console.error('Fetching personal notes failed (continuing anyway):', e); u.notesList = u.notesList || []; }
-
-    // A session and a matching profile is genuinely enough to let someone back in —
-    // no email client on file yet shouldn't be able to strand a real, valid login
-    // on the sign-in screen with no explanation.
-    state.currentUser = u;
-    state.screen = 'app';
-    if(!appStateWasLoaded) seedAll();
-    await fetchAllAppDataFromSupabase();
-    checkTodoDeepLink();
-    render();
-    if(!state.isMobile){
-      try{
-        await ensureMsalInitialized();
-        const accounts = msalInstance.getAllAccounts();
-        if(accounts.length){ state.msalAccount = accounts[0]; await fetchMyOutlookEvents(); }
-      } catch(e){ console.error('Microsoft calendar auto-check failed (continuing anyway):', e); }
+          u.notesList = await fetchPersonalNotes(profile.id);
+          if(u.emailClient){
+            state.currentUser = u;
+            state.screen = 'app';
+            if(!appStateWasLoaded) seedAll();
+            await fetchAllAppDataFromSupabase();
+            checkTodoDeepLink();
+            render();
+          }
+        }
+      }
     }
   } catch(e){ console.error('Session check failed:', e); }
 })();
