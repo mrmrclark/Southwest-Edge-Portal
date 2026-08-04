@@ -544,7 +544,7 @@ let state = {
   showAllSmartLists:false,      // collapse toggle once there are more than 10 smart lists
   notifSettingsOpen:false,      // whether the notification-preferences modal is open
   pendingUsersModalOpen:false,
-  sidePanelWidgets:{outlookCalendar:true, weather:true, news:true, quicklinks:true},
+  sidePanelWidgets:{calendar:true, weather:true, news:true, quicklinks:true},
   showWidgetPicker:false,
   editContactModal:null,
   editBrokerModal:null,
@@ -561,12 +561,8 @@ let state = {
   leasingReportMode:null, // temporary override: 'deals'|'prospecting'|'all' while generating a report, then reset
   lsrCategoryManagerOpen:null, // clientId of the listing being managed, or null
   calendarViewOpen:false,
-  msalAccount:null,
   changePasswordModalOpen:false,
   newTodoPicker:null,
-  myCalendarEvents:null,
-  myCalendarLoading:false,
-  myCalendarError:null,
   calendarCursor:null,        // {year, month} — used in Month mode
   calendarViewMode:'month',   // 'month' | 'week' | '2week' | '3week' | '4week'
   calendarWeekStart:null,     // Date (always a Sunday) — anchor for Week/2 Week modes
@@ -648,46 +644,6 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     detectSessionInUrl: true,
   }
 });
-
-// Microsoft sign-in, for the read-only "My Calendar" view. This is completely
-// separate from Supabase's own login — it's a personal choice each user makes to
-// let the Portal read their own Outlook calendar specifically, nothing else.
-// Loaded lazily, on-demand, specifically so a problem with this optional feature
-// (a bad CDN version, a network hiccup) can never take down the entire app the
-// way a top-level failure did once already.
-const msalConfig = {
-  auth: {
-    clientId: '5ab0d33b-a3cb-4b3c-80d8-aa208aa91da3',
-    authority: 'https://login.microsoftonline.com/organizations',
-    redirectUri: 'https://southwestedge.net',
-  },
-  cache: {
-    cacheLocation: 'localStorage', // so signing in once doesn't require doing it again every visit
-  },
-};
-let msalInstance = null;
-let msalInitialized = false;
-let msalScriptPromise = null;
-function loadMsalScript(){
-  if(msalScriptPromise) return msalScriptPromise;
-  msalScriptPromise = new Promise((resolve, reject)=>{
-    if(window.msal){ resolve(); return; }
-    const s = document.createElement('script');
-    s.src = 'https://cdn.jsdelivr.net/npm/@azure/msal-browser@3/lib/msal-browser.min.js';
-    s.onload = ()=>resolve();
-    s.onerror = ()=>reject(new Error('Could not load the Microsoft sign-in library — check your connection and try again.'));
-    document.head.appendChild(s);
-  });
-  return msalScriptPromise;
-}
-async function ensureMsalInitialized(){
-  if(msalInitialized) return;
-  await loadMsalScript();
-  if(!window.msal) throw new Error('The Microsoft sign-in library loaded, but not the way we expected — nothing was changed on your account.');
-  msalInstance = new msal.PublicClientApplication(msalConfig);
-  await msalInstance.initialize();
-  msalInitialized = true;
-}
 
 async function fetchMyProfile(authUserId){
   const { data, error } = await supabaseClient.from('profiles').select('*').eq('id', authUserId).single();
@@ -3302,67 +3258,7 @@ function renderNewsWidget(){
   </div>`;
 }
 /* ==================== CALENDAR VIEW (desktop only) ==================== */
-async function signInToMicrosoft(){
-  try{
-    await ensureMsalInitialized();
-    const result = await msalInstance.loginPopup({ scopes: ['Calendars.Read', 'User.Read'] });
-    state.msalAccount = result.account;
-    await fetchMyOutlookEvents();
-  } catch(e){
-    if(String(e).includes('popup_window_error') || String(e).includes('user_cancelled')){
-      flashToast("Sign-in didn't complete — if your browser blocked the popup, allow popups for this site and try again.");
-    } else {
-      flashToast('Sign-in failed: ' + e.message);
-    }
-  }
-  render();
-}
-function signOutOfMicrosoft(){
-  state.msalAccount = null;
-  state.myCalendarEvents = null;
-  flashToast('Signed out of Microsoft.');
-  render();
-}
-async function fetchMyOutlookEvents(){
-  state.myCalendarLoading = true;
-  state.myCalendarError = null;
-  render();
-  try{
-    await ensureMsalInitialized();
-    const accounts = msalInstance.getAllAccounts();
-    const account = state.msalAccount || accounts[0];
-    if(!account){ state.myCalendarLoading=false; render(); return; }
-    state.msalAccount = account;
-    const tokenResult = await msalInstance.acquireTokenSilent({ scopes: ['Calendars.Read'], account });
-    const now = new Date();
-    const start = new Date(now); start.setHours(0,0,0,0);
-    const end = new Date(now); end.setDate(end.getDate()+14); end.setHours(23,59,59,999);
-    const url = `https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=${start.toISOString()}&endDateTime=${end.toISOString()}&$orderby=start/dateTime&$top=100`;
-    const res = await fetch(url, {
-      headers: { 'Authorization': `Bearer ${tokenResult.accessToken}`, 'Prefer': 'outlook.timezone="' + Intl.DateTimeFormat().resolvedOptions().timeZone + '"' },
-    });
-    if(!res.ok){
-      let detail = '';
-      try{ const errBody = await res.json(); detail = errBody.error ? ` — ${errBody.error.code}: ${errBody.error.message}` : ''; } catch(parseErr){ /* body wasn't JSON — no extra detail available */ }
-      throw new Error(`Microsoft returned an error (${res.status})${detail}.`);
-    }
-    const data = await res.json();
-    state.myCalendarEvents = (data.value||[]).map(ev=>({
-      subject: ev.subject || '(No title)',
-      isAllDay: ev.isAllDay,
-      start: new Date(ev.start.dateTime),
-      end: new Date(ev.end.dateTime),
-      location: ev.location && ev.location.displayName || '',
-      isOnline: !!ev.isOnlineMeeting,
-    }));
-  } catch(e){
-    state.myCalendarError = e.message;
-  }
-  state.myCalendarLoading = false;
-  render();
-}
-function renderOutlookCalendarWidget(){
-  const account = state.msalAccount;
+function renderCalendarWidget(){
   const now = new Date();
   const year = now.getFullYear(), month = now.getMonth();
   const firstDay = new Date(year, month, 1).getDay();
@@ -3374,67 +3270,13 @@ function renderOutlookCalendarWidget(){
     const isToday = d===now.getDate();
     cells += `<div class="cal-day ${isToday?'today':''}">${d}</div>`;
   }
-  const monthGridHtml = `
+  return `
+  <div class="widget-card">
     <div class="widget-head"><div class="widget-title">${monthName}</div></div>
     <div class="cal-grid">
       ${['S','M','T','W','T','F','S'].map(d=>`<div class="cal-dow">${d}</div>`).join('')}
       ${cells}
-    </div>`;
-
-  let bodyHtml = '';
-  if(!account){
-    bodyHtml = `<div style="text-align:center;padding:16px 6px;">
-      <div style="font-size:12.5px;color:var(--ink-soft);margin-bottom:4px;">Not connected yet.</div>
-      <div class="tiny" style="color:var(--ink-soft);">An Admin can connect this under Admin → Connect Calendar (Outlook).</div>
-    </div>`;
-  } else if(state.myCalendarLoading){
-    bodyHtml = `<div style="text-align:center;padding:16px 6px;color:var(--ink-soft);font-size:12.5px;">Loading your calendar…</div>`;
-  } else if(state.myCalendarError){
-    bodyHtml = `<div style="text-align:center;padding:16px 6px;">
-      <div style="color:var(--bad,#C0392B);font-size:12.5px;margin-bottom:10px;">Couldn't load: ${escapeHtml(state.myCalendarError)}</div>
-      <button class="btn secondary sm" data-action="msRetry">Try Again</button>
-    </div>`;
-  } else {
-    const events = state.myCalendarEvents || [];
-    const today = new Date(); today.setHours(0,0,0,0);
-    const groups = {};
-    const order = [];
-    events.forEach(ev=>{
-      const d = new Date(ev.start); d.setHours(0,0,0,0);
-      const dayDiff = Math.round((d-today)/86400000);
-      let label;
-      if(dayDiff===0) label='Today';
-      else if(dayDiff===1) label='Tomorrow';
-      else label = d.toLocaleDateString(undefined,{weekday:'long'});
-      const key = d.toISOString();
-      if(!groups[key]){ groups[key]=[]; order.push(key); }
-      groups[key].push({...ev, label});
-    });
-    if(!events.length){
-      bodyHtml = `<div style="text-align:center;padding:16px 6px;color:var(--ink-soft);font-size:12.5px;">Nothing on your calendar the next two weeks.</div>`;
-    } else {
-      bodyHtml = `<div style="max-height:420px;overflow-y:auto;">` + order.map(key=>{
-        const dayEvents = groups[key];
-        return `
-        <div style="font-weight:700;font-size:12.5px;color:var(--ink);margin:12px 0 5px;">${dayEvents[0].label}</div>
-        ${dayEvents.map(ev=>`
-          <div style="display:flex;gap:8px;padding:6px 0;border-bottom:1px solid var(--line-soft);">
-            <div style="width:56px;flex-shrink:0;font-size:11px;color:var(--ink-soft);">${ev.isAllDay?'All day':ev.start.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'})}</div>
-            <div style="width:3px;background:var(--edge);border-radius:2px;flex-shrink:0;"></div>
-            <div>
-              <div style="font-weight:600;font-size:12.5px;">${escapeHtml(ev.subject)}</div>
-              ${ev.isOnline ? `<div class="tiny" style="color:var(--ink-soft);">Microsoft Teams Meeting</div>` : (ev.location ? `<div class="tiny" style="color:var(--ink-soft);">${escapeHtml(ev.location)}</div>` : '')}
-            </div>
-          </div>`).join('')}
-        `;
-      }).join('') + `</div>`;
-    }
-  }
-
-  return `
-  <div class="widget-card">
-    ${monthGridHtml}
-    <div style="border-top:1px solid var(--line-soft);margin-top:12px;padding-top:6px;">${bodyHtml}</div>
+    </div>
   </div>`;
 }
 function openCalendarView(){
@@ -3784,11 +3626,11 @@ function wireMarketingListWizard(overlay, listing, allCats){
     };
   }
 }
-const WIDGET_RENDERERS = { outlookCalendar: renderOutlookCalendarWidget, weather: renderWeatherWidget, news: renderNewsWidget, quicklinks: renderQuickLinksWidget };
+const WIDGET_RENDERERS = { calendar: renderCalendarWidget, weather: renderWeatherWidget, news: renderNewsWidget, quicklinks: renderQuickLinksWidget };
 function renderSidePanel(){
   if(state.isMobile) return ''; // widgets are desktop-only, full stop — no markup, no weather fetch
   const w = state.sidePanelWidgets;
-  const savedOrder = (state.widgetOrder||['outlookCalendar','weather','news','quicklinks']).filter(k=>WIDGET_RENDERERS[k]);
+  const savedOrder = (state.widgetOrder||['calendar','weather','news','quicklinks']).filter(k=>WIDGET_RENDERERS[k]);
   const missingFromSaved = Object.keys(WIDGET_RENDERERS).filter(k=>!savedOrder.includes(k));
   const order = [...savedOrder, ...missingFromSaved];
   const visibleOrder = order.filter(k=>w[k]);
@@ -3804,7 +3646,7 @@ function renderSidePanel(){
       ${state.showWidgetPicker ? `
       <div class="nav-context-menu" style="top:26px;">
         <label style="display:flex;align-items:center;gap:8px;padding:8px 12px;font-size:12.5px;cursor:pointer;">
-          <input type="checkbox" data-widgettoggle="outlookCalendar" ${w.outlookCalendar?'checked':''} style="width:auto;"> My Calendar (Outlook)
+          <input type="checkbox" data-widgettoggle="calendar" ${w.calendar?'checked':''} style="width:auto;"> Calendar
         </label>
         <label style="display:flex;align-items:center;gap:8px;padding:8px 12px;font-size:12.5px;cursor:pointer;">
           <input type="checkbox" data-widgettoggle="weather" ${w.weather?'checked':''} style="width:auto;"> Weather
@@ -4412,7 +4254,6 @@ function renderAdminMenu(){
     ${!state.isMobile ? `<div class="admin-item" data-action="adminImportTodos">⬆️ Import To-Do's (CSV)</div>` : ''}
     ${!state.isMobile ? `<div class="admin-item" data-action="adminImportTaskFire">⬆️ Import from TaskFire</div>` : ''}
     ${!state.isMobile ? `<div class="admin-item" data-action="adminImportMaps">🗺️ Import from MyMaps</div>` : ''}
-    ${!state.isMobile ? `<div class="admin-item" data-action="adminConnectCalendar">🗓️ ${state.msalAccount ? 'Disconnect Calendar (Outlook)' : 'Connect Calendar (Outlook)'}</div>` : ''}
     <div class="admin-item" data-action="adminDigest">📨 Compose Weekly Digest</div>
     <div class="admin-item" data-action="adminUsers">👥 Manage Users</div>
     <div class="admin-item" data-action="adminTimes">⏱️ Email Send Times</div>
@@ -4644,7 +4485,6 @@ function attachShellHandlers(){
   const calBtn=document.querySelector('[data-action="openCalendarView"]'); if(calBtn) calBtn.onclick=()=>{
     openCalendarView(); render();
   };
-  const msRetryBtn=document.querySelector('[data-action="msRetry"]'); if(msRetryBtn) msRetryBtn.onclick=safeHandler(fetchMyOutlookEvents);
   const importBtn=document.querySelector('[data-action="openImportTodos"]'); if(importBtn) importBtn.onclick=()=>{
     state.importTodosModal = {step:'upload'};
     render();
@@ -4686,7 +4526,8 @@ function attachShellHandlers(){
     renderPreservingScroll('.content');
   });
   wireDragReorder('[data-widgetdrag]', 'widgetdrag', (fromKey, toKey)=>{
-    if(!state.widgetOrder) state.widgetOrder = ['outlookCalendar','weather','news','quicklinks'];
+    if(!state.widgetOrder) state.widgetOrder = ['calendar','weather','news','quicklinks'];
+    Object.keys(WIDGET_RENDERERS).forEach(k=>{ if(!state.widgetOrder.includes(k)) state.widgetOrder.push(k); });
     const fromIdx = state.widgetOrder.indexOf(fromKey), toIdx = state.widgetOrder.indexOf(toKey);
     if(fromIdx<0 || toIdx<0) return;
     const [moved] = state.widgetOrder.splice(fromIdx, 1);
@@ -4725,7 +4566,7 @@ function attachShellHandlers(){
     flashToast(`${name} added to ${l.name}.`);
     render();
   });
-  ['adminPending','adminFullTeam','adminImportTodos','adminImportTaskFire','adminImportMaps','adminConnectCalendar','adminDigest','adminUsers','adminTimes','adminReset'].forEach(a=>{
+  ['adminPending','adminFullTeam','adminImportTodos','adminImportTaskFire','adminImportMaps','adminDigest','adminUsers','adminTimes','adminReset'].forEach(a=>{
     const e=document.querySelector(`[data-action="${a}"]`);
     if(e) e.onclick=()=>{ state.showAdminMenu=false; handleAdminAction(a); };
   });
@@ -5039,10 +4880,6 @@ async function handleAdminAction(a){
   if(a==='adminImportTodos'){ state.importTodosModal = {step:'upload'}; }
   if(a==='adminImportTaskFire'){ state.taskfireImport = {step:'upload'}; }
   if(a==='adminImportMaps'){ state.mapsImport = {step:'upload', clientQuery:'', pickedClient:null, newClientName:''}; }
-  if(a==='adminConnectCalendar'){
-    if(state.msalAccount){ signOutOfMicrosoft(); }
-    else { await signInToMicrosoft(); }
-  }
   if(a==='adminDigest'){ state.notifSettingsOpen=true; }
   if(a==='adminUsers'){
     // Refresh every profile fresh from the server first — without this, anyone who
@@ -9848,13 +9685,6 @@ render();
     await fetchAllAppDataFromSupabase();
     checkTodoDeepLink();
     render();
-    if(!state.isMobile){
-      try{
-        await ensureMsalInitialized();
-        const accounts = msalInstance.getAllAccounts();
-        if(accounts.length){ state.msalAccount = accounts[0]; await fetchMyOutlookEvents(); }
-      } catch(e){ console.error('Microsoft calendar auto-check failed (continuing anyway):', e); }
-    }
   } catch(e){ console.error('Session check failed:', e); }
 })();
 
