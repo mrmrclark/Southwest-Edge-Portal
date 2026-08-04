@@ -9025,13 +9025,28 @@ async function mapsReadKmlText(file){
 function mapsParseFolders(kmlText){
   const xml = new DOMParser().parseFromString(kmlText, 'text/xml');
   if(xml.querySelector('parsererror')) throw new Error("That file doesn't look like valid KML.");
-  return [...xml.querySelectorAll('Folder')].map(folderEl=>{
-    const nameEl = folderEl.querySelector(':scope > name');
+  // getElementsByTagName instead of querySelectorAll('Folder') on purpose — KML
+  // files almost always declare a default XML namespace, and querySelectorAll with
+  // a plain tag name can silently match nothing at all against namespaced XML,
+  // depending on the browser. getElementsByTagName matches by local name regardless
+  // of namespace, which is what actually needs to happen here.
+  const directChildByTag = (parent, tag) => {
+    for(const child of parent.children){ if(child.tagName===tag || child.localName===tag) return child; }
+    return null;
+  };
+  const directChildrenByTag = (parent, tag) => {
+    const out = [];
+    for(const child of parent.children){ if(child.tagName===tag || child.localName===tag) out.push(child); }
+    return out;
+  };
+  const folderEls = [...xml.getElementsByTagName('Folder')];
+  return folderEls.map(folderEl=>{
+    const nameEl = directChildByTag(folderEl, 'name');
     const name = nameEl ? nameEl.textContent.trim() : '(unnamed folder)';
-    const placemarks = [...folderEl.querySelectorAll(':scope > Placemark')]
-      .filter(p=>p.querySelector('Point'))
+    const placemarks = directChildrenByTag(folderEl, 'Placemark')
+      .filter(p=>p.getElementsByTagName('Point').length > 0)
       .map(p=>{
-        const n = p.querySelector('name');
+        const n = directChildByTag(p, 'name');
         return {name: n ? n.textContent.trim() : '(unnamed site)'};
       });
     return {name, placemarks};
@@ -9171,6 +9186,7 @@ function renderMapsImportModal(){
       ${m.step==='mapping' ? `<button class="btn" data-action="mapsToPickOrReview">Continue</button>` : ''}
       ${m.step==='pickSites' ? `<button class="btn" data-action="mapsToReview">Continue</button>` : ''}
       ${m.step==='review' ? `<button class="btn" id="mapsConfirmBtn" data-action="confirmMapsImport">Import</button>` : ''}
+      ${m.step==='upload' ? `<button class="btn" data-action="mapsProcessStaticFile">Continue</button>` : ''}
     </div>
   </div>`;
   document.getElementById('app').appendChild(overlay);
@@ -9207,6 +9223,8 @@ function renderMapsImportModal(){
     const chooseFileBtn = overlay.querySelector('[data-action="mapsChooseFile"]');
     if(chooseFileBtn) chooseFileBtn.onclick=()=>{ document.getElementById('mapsFileStatic').click(); };
   }
+  const processFileBtn = overlay.querySelector('[data-action="mapsProcessStaticFile"]');
+  if(processFileBtn) processFileBtn.onclick=safeHandler(processMapsSelectedFile);
   if(m.step==='mapping'){
     overlay.querySelectorAll('[data-mapsfolderstage]').forEach(sel=>sel.onchange=()=>{
       m.folderStage[parseInt(sel.dataset.mapsfolderstage)] = sel.value;
@@ -9731,13 +9749,16 @@ function loadAppState(){
 // Wired exactly once, here, at page load — this element is never recreated by any
 // render cycle, unlike the file input that used to live inside the MyMaps modal
 // itself, which got rebuilt every time that modal re-rendered.
-document.getElementById('mapsFileStatic').addEventListener('change', function(){
-  const file = this.files && this.files[0];
-  this.value = ''; // reset immediately so choosing the exact same file again still fires "change" next time
-  if(!file) return;
+function processMapsSelectedFile(){
+  const staticInput = document.getElementById('mapsFileStatic');
+  const file = staticInput.files && staticInput.files[0];
   const m = state.mapsImport;
   if(!m || m.step!=='upload') return;
   const fileStatusEl = document.getElementById('mapsFileStatus');
+  if(!file){
+    if(fileStatusEl) fileStatusEl.textContent = 'Choose a KML/KMZ file first.';
+    return;
+  }
   if(!m.pickedClient && !m.newClientName.trim()){
     if(fileStatusEl) fileStatusEl.textContent = 'Pick or name a Client/Listing first, then choose the file again.';
     return;
@@ -9753,11 +9774,13 @@ document.getElementById('mapsFileStatic').addEventListener('change', function(){
     m.folderStage = folders.map(()=> 'skip');
     m.manualPicks = folders.map(f=>f.placemarks.map(()=>false));
     m.step = 'mapping';
+    staticInput.value = ''; // only reset now that we're actually moving on
     render();
   }).catch(err=>{
     if(fileStatusEl) fileStatusEl.textContent = "Couldn't read that file — " + err.message;
   });
-});
+}
+document.getElementById('mapsFileStatic').addEventListener('change', processMapsSelectedFile);
 loadAppState();
 
 render();
