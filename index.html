@@ -3337,7 +3337,7 @@ async function fetchMyOutlookEvents(){
     const now = new Date();
     const start = new Date(now); start.setHours(0,0,0,0);
     const end = new Date(now); end.setDate(end.getDate()+14); end.setHours(23,59,59,999);
-    const url = `https://graph.microsoft.com/v1.0/me/calendarview?startDateTime=${start.toISOString()}&endDateTime=${end.toISOString()}&$orderby=start/dateTime&$top=100`;
+    const url = `https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=${start.toISOString()}&endDateTime=${end.toISOString()}&$orderby=start/dateTime&$top=100`;
     const res = await fetch(url, {
       headers: { 'Authorization': `Bearer ${tokenResult.accessToken}`, 'Prefer': 'outlook.timezone="' + Intl.DateTimeFormat().resolvedOptions().timeZone + '"' },
     });
