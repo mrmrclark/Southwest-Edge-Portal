@@ -9192,31 +9192,31 @@ function renderMapsImportModal(){
     const newNameEl = document.getElementById('mapsNewClientName');
     if(newNameEl) newNameEl.oninput = ()=>{ m.newClientName = newNameEl.value; if(!m.newClientListId) m.newClientListId='clients'; render(); };
     overlay.querySelectorAll('[data-mapsnewlist]').forEach(b=>b.onclick=()=>{ m.newClientListId = b.dataset.mapsnewlist; render(); });
-    const continueUploadBtn = document.getElementById('mapsContinueUploadBtn');
-    if(continueUploadBtn) continueUploadBtn.onclick=safeHandler(async ()=>{
-      alert('DEBUG STEP 1: Continue clicked.\npickedClient = ' + (m.pickedClient?m.pickedClient.name:'none') + '\nnewClientName = "' + (m.newClientName||'') + '"');
+
+    const processSelectedFile = safeHandler(async (btnToReset)=>{
       if(!m.pickedClient && !m.newClientName.trim()){ flashToast('Pick or name a Client/Listing first.'); return; }
       const liveFileInput = document.getElementById('mapsFile');
       const file = liveFileInput && liveFileInput.files[0];
-      alert('DEBUG STEP 2:\nfileInput element found = ' + !!liveFileInput + '\nfile detected = ' + (file ? file.name+' ('+file.size+' bytes)' : 'NONE DETECTED'));
       if(!file){ flashToast('Choose a KML/KMZ file first.'); return; }
-      continueUploadBtn.disabled = true; continueUploadBtn.textContent = 'Reading file…';
+      if(btnToReset){ btnToReset.disabled = true; btnToReset.textContent = 'Reading file…'; }
       try{
         const kmlText = await mapsReadKmlText(file);
-        alert('DEBUG STEP 3: File read successfully.\n' + kmlText.length + ' characters of KML text extracted.');
         const folders = mapsParseFolders(kmlText);
-        alert('DEBUG STEP 4: Parsed ' + folders.length + ' folder(s) from the KML.');
-        if(!folders.length){ flashToast("Didn't find any pinned sites in that file."); continueUploadBtn.disabled=false; continueUploadBtn.textContent='Continue'; return; }
+        if(!folders.length){ flashToast("Didn't find any pinned sites in that file."); if(btnToReset){ btnToReset.disabled=false; btnToReset.textContent='Continue'; } return; }
         m.folders = folders;
         m.folderStage = folders.map(()=> 'skip');
         m.manualPicks = folders.map(f=>f.placemarks.map(()=>false));
         m.step = 'mapping';
         render();
       } catch(err){
-        alert('DEBUG STEP 3 FAILED — threw an error:\n' + err.message + '\n\n' + (err.stack||''));
-        continueUploadBtn.disabled=false; continueUploadBtn.textContent='Continue';
+        flashToast("Couldn't read that file — " + err.message);
+        if(btnToReset){ btnToReset.disabled=false; btnToReset.textContent='Continue'; }
       }
     });
+    const fileInput = document.getElementById('mapsFile');
+    if(fileInput) fileInput.onchange=()=>{ processSelectedFile(document.getElementById('mapsContinueUploadBtn')); };
+    const continueUploadBtn = document.getElementById('mapsContinueUploadBtn');
+    if(continueUploadBtn) continueUploadBtn.onclick=()=>{ processSelectedFile(continueUploadBtn); };
   }
   if(m.step==='mapping'){
     overlay.querySelectorAll('[data-mapsfolderstage]').forEach(sel=>sel.onchange=()=>{
