@@ -3779,7 +3779,9 @@ const WIDGET_RENDERERS = { outlookCalendar: renderOutlookCalendarWidget, weather
 function renderSidePanel(){
   if(state.isMobile) return ''; // widgets are desktop-only, full stop — no markup, no weather fetch
   const w = state.sidePanelWidgets;
-  const order = (state.widgetOrder||['outlookCalendar','weather','news','quicklinks']).filter(k=>WIDGET_RENDERERS[k]);
+  const savedOrder = (state.widgetOrder||['outlookCalendar','weather','news','quicklinks']).filter(k=>WIDGET_RENDERERS[k]);
+  const missingFromSaved = Object.keys(WIDGET_RENDERERS).filter(k=>!savedOrder.includes(k));
+  const order = [...savedOrder, ...missingFromSaved];
   const visibleOrder = order.filter(k=>w[k]);
   const widgetsHtml = visibleOrder.map((key,i)=>`
     <div draggable="true" data-widgetdrag="${key}" style="position:relative;cursor:grab;">
