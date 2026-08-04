@@ -9750,7 +9750,9 @@ function loadAppState(){
 // render cycle, unlike the file input that used to live inside the MyMaps modal
 // itself, which got rebuilt every time that modal re-rendered.
 function processMapsSelectedFile(){
+  alert('DEBUG: Continue button click registered. Function is running.');
   const staticInput = document.getElementById('mapsFileStatic');
+  alert('DEBUG: staticInput found = ' + !!staticInput + '\nfiles.length = ' + (staticInput ? staticInput.files.length : 'N/A'));
   const file = staticInput.files && staticInput.files[0];
   const m = state.mapsImport;
   if(!m || m.step!=='upload') return;
