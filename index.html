@@ -532,6 +532,7 @@ let state = {
   globalSearchFocused:false,
   quickLinks:null,
   widgetOrder:null,
+  defaultSmartListOrder:null,
   newTodoModal:null,            // {context:{...}} when open
   contactModal:null,            // 'master' | {id} for detail
   selectedContactIds:[],
@@ -2213,7 +2214,14 @@ async function fetchSmartListsFromSupabase(){
   const { data, error } = await supabaseClient.from('smart_lists').select('*').eq('user_id', authId).order('display_order', {ascending:true});
   if(error){ console.error('fetchSmartListsFromSupabase error:', error); return; }
   const custom = data.map(r=>({id:r.id, name:r.name, icon:r.icon, isDefault:false, filter:r.filter}));
-  smartListsArr = [...SMART_LIST_DEFAULTS.map(s=>({...s, isDefault:true})), ...custom];
+  let defaults = SMART_LIST_DEFAULTS.map(s=>({...s, isDefault:true}));
+  if(state.defaultSmartListOrder && state.defaultSmartListOrder.length){
+    const order = state.defaultSmartListOrder;
+    const known = new Set(order);
+    defaults.forEach(d=>{ if(!known.has(d.id)){ order.push(d.id); known.add(d.id); } }); // anything new since last save still shows up
+    defaults = order.map(id=>defaults.find(d=>d.id===id)).filter(Boolean);
+  }
+  smartListsArr = [...defaults, ...custom];
 }
 async function supaCreateSmartList(sl, order){
   const authId = state.currentUser && state.currentUser.authId;
@@ -2237,6 +2245,9 @@ async function supaReorderSmartLists(){
     supabaseClient.from('smart_lists').update({display_order:i}).eq('id', sl.id)
       .then(({error})=>{ if(error) console.error('supaReorderSmartLists error:', error); })
   ));
+  state.defaultSmartListOrder = smartListsArr.filter(s=>s.isDefault).map(s=>s.id);
+  const { error } = await supabaseClient.from('profiles').update({default_smart_list_order: state.defaultSmartListOrder}).eq('id', authId);
+  if(error) console.error('Saving default smart list order failed:', error);
 }
 
 function smartListTodos(key){
@@ -2844,6 +2855,7 @@ function attachLoginHandlers(){
     if(!u.emailClient) u.emailClient = profile.email_client;
     if(profile.widget_order) state.widgetOrder = profile.widget_order;
     if(profile.sidebar_lists_order && profile.sidebar_lists_order.length) sidebarListsOrder = profile.sidebar_lists_order;
+    if(profile.default_smart_list_order && profile.default_smart_list_order.length) state.defaultSmartListOrder = profile.default_smart_list_order;
     u.notesList = await fetchPersonalNotes(profile.id);
     await fetchAllProfilesIntoUsers();
     if(!u.emailClient){
@@ -5351,6 +5363,12 @@ function getTodoLinkSummary(td){
   }
   return 'Not linked to anything — a floating to-do';
 }
+function renderMoveDealResultsHtml(allClients){
+  return allClients.map(({l,c})=>`
+    <div class="row-card" data-pickmovedealto="${c.id}" data-listid="${l.id}">
+      <div class="row-body"><div class="row-title">${escapeHtml(c.name)}</div><div class="row-meta"><span class="pill gray">${l.id==='listings'?'Listing':'Client'}</span></div></div>
+    </div>`).join('') || `<div class="tiny" style="color:var(--ink-soft);padding:10px 0;">No matches.</div>`;
+}
 function renderMoveDealPicker(){
   const m = state.moveDealPicker;
   const srcList = db.lists.find(x=>x.id===m.sourceListId);
@@ -5379,11 +5397,8 @@ function renderMoveDealPicker(){
     bodyHtml = `
     <input class="searchbox" id="moveDealSearch" placeholder="🔍 Search Clients/Listings…" value="${escapeAttr(m.query||'')}">
     <button class="btn secondary sm" data-action="goCreateNewAccount" style="width:100%;margin-bottom:10px;">+ Create a New Account</button>
-    <div style="max-height:320px;overflow-y:auto;">
-      ${allClients.map(({l,c})=>`
-        <div class="row-card" data-pickmovedealto="${c.id}" data-listid="${l.id}">
-          <div class="row-body"><div class="row-title">${escapeHtml(c.name)}</div><div class="row-meta"><span class="pill gray">${l.id==='listings'?'Listing':'Client'}</span></div></div>
-        </div>`).join('') || `<div class="tiny" style="color:var(--ink-soft);padding:10px 0;">No matches.</div>`}
+    <div id="moveDealResults" style="max-height:320px;overflow-y:auto;">
+      ${renderMoveDealResultsHtml(allClients)}
     </div>`;
   }
   overlay.innerHTML = `
@@ -5394,7 +5409,22 @@ function renderMoveDealPicker(){
   document.getElementById('app').appendChild(overlay);
   overlay.querySelector('[data-action="closeMoveDeal"]').onclick=()=>{ state.moveDealPicker=null; render(); };
   const searchEl = document.getElementById('moveDealSearch');
-  if(searchEl) searchEl.oninput=()=>{ m.query=searchEl.value; render(); };
+  if(searchEl) searchEl.oninput=()=>{
+    m.query=searchEl.value;
+    const q = (m.query||'').toLowerCase();
+    const newMatches = [];
+    db.lists.filter(l=>l.type==='deep').forEach(l=>l.clients.forEach(c=>{
+      if(c.id===m.sourceClientId) return;
+      if(!q || c.name.toLowerCase().includes(q)) newMatches.push({l, c});
+    }));
+    const resultsBox = document.getElementById('moveDealResults');
+    if(resultsBox){
+      resultsBox.innerHTML = renderMoveDealResultsHtml(newMatches);
+      resultsBox.querySelectorAll('[data-pickmovedealto]').forEach(el=>el.onclick=()=>{
+        performMove(el.dataset.listid, el.dataset.pickmovedealto);
+      });
+    }
+  };
   const goCreateBtn = overlay.querySelector('[data-action="goCreateNewAccount"]'); if(goCreateBtn) goCreateBtn.onclick=()=>{
     m.step='createNew'; m.newType = m.sourceListId; render();
   };
@@ -6354,10 +6384,6 @@ function renderDealModalBody(l,c,d){
   ${!canEdit ? `<div style="background:#F3F1EC;border:1px solid var(--line);border-radius:8px;padding:8px 14px;font-size:12.5px;color:var(--ink-soft);margin-bottom:14px;">👁️ View-only — you have Full Access visibility but aren't personally added to this ${l.id==='listings'?'listing':'client'}, so editing is turned off.</div>` : ''}
   <div style="display:flex;align-items:center;justify-content:flex-end;margin-bottom:14px;flex-wrap:wrap;gap:10px;">
     <div style="display:flex;gap:14px;">
-      <label style="display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--ink-soft);font-weight:600;">
-        <input type="checkbox" data-toggleactive="${d.id}" ${d.activeDeal?'checked':''} ${ro} style="width:auto;accent-color:var(--edge);">
-        ⭐ Active Deal
-      </label>
       <label style="display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--ink-soft);font-weight:600;">
         <input type="checkbox" data-togglecaexec="${d.id}" data-listid="${l.id}" data-client="${c.id}" ${caExecuted?'checked':''} ${ro} style="width:auto;accent-color:var(--good);">
         📄 CA Executed
@@ -8126,8 +8152,8 @@ function renderContactsTableRows(filtered){
   return filtered.slice().sort((a,b)=>a.last.localeCompare(b.last)||a.first.localeCompare(b.first)).slice(0,300).map(c=>`
         <tr>
           <td class="checkbox-cell"><input type="checkbox" data-contactcheck="${c.id}" ${state.selectedContactIds.includes(c.id)?'checked':''}></td>
-          <td style="cursor:pointer;" data-contactnameclick="${c.id}">${c.isPrivate ? `<span title="Private — only visible to you until it's attached to a shared Client, Deal, Entry, or Prospect" style="margin-right:4px;">🔒</span>`:''}${escapeHtml(c.last)}</td><td style="cursor:pointer;" data-contactnameclick="${c.id}">${escapeHtml(c.first)}</td><td>${escapeHtml(c.company||'')}</td>
-          <td style="${c.email?'cursor:pointer;color:var(--edge);':''}" ${c.email?`data-contactemailclick="${escapeAttr(c.email)}"`:''}>${escapeHtml(c.email||'')}</td><td>${escapeHtml(c.mobile||'')}</td><td>${escapeHtml(c.phone||'')}</td>
+          <td style="cursor:pointer;" data-contactnameclick="${c.id}">${c.isPrivate ? `<span title="Private — only visible to you until it's attached to a shared Client, Deal, Entry, or Prospect" style="margin-right:4px;">🔒</span>`:''}${escapeHtml(c.last)}</td><td style="cursor:pointer;" data-contactnameclick="${c.id}">${escapeHtml(c.first)}</td><td>${escapeHtml(c.mobile||'')}</td><td>${escapeHtml(c.phone||'')}</td><td>${escapeHtml(c.company||'')}</td>
+          <td style="${c.email?'cursor:pointer;color:var(--edge);':''}" ${c.email?`data-contactemailclick="${escapeAttr(c.email)}"`:''}>${escapeHtml(c.email||'')}</td>
           <td><button class="row-trash" style="opacity:.7;" data-editcontact="${c.id}" title="Edit">✏️</button></td>
         </tr>`).join('');
 }
@@ -8153,7 +8179,7 @@ function renderContactsMain(){
   <table class="contacts-table">
     <thead><tr>
       <th class="checkbox-cell"><input type="checkbox" id="selectAllContacts"></th>
-      <th>Last Name</th><th>First Name</th><th>Company</th><th>Email</th><th>Mobile</th><th>Phone</th><th></th>
+      <th>Last Name</th><th>First Name</th><th>Mobile</th><th>Phone</th><th>Company</th><th>Email</th><th></th>
     </tr></thead>
     <tbody id="contactsTableBody">
       ${renderContactsTableRows(filtered)}
@@ -8262,12 +8288,12 @@ function renderBrokerListMain(){
   ` : `
   <div style="max-height:calc(100vh - 200px);overflow-y:auto;overflow-x:auto;border:1px solid var(--line);border-radius:10px;">
   <table class="contacts-table">
-    <thead><tr><th>Name</th><th>Company</th><th>Email</th><th>Mobile</th><th>Phone</th><th></th></tr></thead>
+    <thead><tr><th>Name</th><th>Mobile</th><th>Phone</th><th>Company</th><th>Email</th><th></th></tr></thead>
     <tbody>
       ${filtered.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(b=>`
         <tr>
-          <td>${escapeHtml(b.name)}</td><td>${escapeHtml(b.company||'')}</td>
-          <td>${escapeHtml(b.email||'')}</td><td>${escapeHtml(b.mobile||'')}</td><td>${escapeHtml(b.phone||'')}</td>
+          <td>${escapeHtml(b.name)}</td><td>${escapeHtml(b.mobile||'')}</td><td>${escapeHtml(b.phone||'')}</td><td>${escapeHtml(b.company||'')}</td>
+          <td>${escapeHtml(b.email||'')}</td>
           <td><button class="row-trash" style="opacity:.7;" data-editbroker="${b.id}" title="Edit">✏️</button></td>
         </tr>`).join('')}
     </tbody>
@@ -9673,6 +9699,7 @@ render();
     if(!u.emailClient) u.emailClient = profile.email_client;
     if(profile.widget_order) state.widgetOrder = profile.widget_order;
     if(profile.sidebar_lists_order && profile.sidebar_lists_order.length) sidebarListsOrder = profile.sidebar_lists_order;
+    if(profile.default_smart_list_order && profile.default_smart_list_order.length) state.defaultSmartListOrder = profile.default_smart_list_order;
     try{ u.notesList = await fetchPersonalNotes(profile.id); }
     catch(e){ console.error('Fetching personal notes failed (continuing anyway):', e); u.notesList = u.notesList || []; }
 
