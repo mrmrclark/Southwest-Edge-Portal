@@ -562,6 +562,7 @@ let state = {
   calendarViewOpen:false,
   msalAccount:null,
   changePasswordModalOpen:false,
+  newTodoPicker:null,
   myCalendarEvents:null,
   myCalendarLoading:false,
   myCalendarError:null,
@@ -2436,6 +2437,7 @@ function render(){
   if(state.manageUsersModalOpen) renderManageUsersModal();
   if(state.resetPasswordModalOpen) renderResetPasswordModal();
   if(state.changePasswordModalOpen) renderChangePasswordModal();
+  if(state.newTodoPicker) renderNewTodoPickerModal();
   if(state.pendingDeletionsOpen) renderPendingDeletionsModal();
   if(state.contactImportReview) renderContactImportReviewModal();
   if(state.taskfireImport) renderTaskFireImportModal();
@@ -4557,7 +4559,7 @@ function attachShellHandlers(){
   const back=document.querySelector('[data-action="collapseTeam"]'); if(back) back.onclick=()=>{state.expandedTeamUser=null; render();};
   const mine=document.querySelector('[data-action="todoViewMine"]'); if(mine) mine.onclick=()=>{state.todoView='mine'; render();};
   const team=document.querySelector('[data-action="todoViewTeam"]'); if(team) team.onclick=()=>{state.todoView='team'; render();};
-  const fab=document.querySelector('[data-action="newTodo"]'); if(fab) fab.onclick=()=>{ openNewTodoModal({}); render(); };
+  const fab=document.querySelector('[data-action="newTodo"]'); if(fab) fab.onclick=()=>{ state.newTodoPicker={step:'chooseType'}; render(); };
   const admin=document.querySelector('[data-action="toggleAdmin"]'); if(admin) admin.onclick=(ev)=>{ ev.stopPropagation(); state.showUserMenu=false; state.showAdminMenu=!state.showAdminMenu; render(); };
   const userMenuBtn=document.querySelector('[data-action="toggleUserMenu"]'); if(userMenuBtn) userMenuBtn.onclick=(ev)=>{ ev.stopPropagation(); state.showAdminMenu=false; state.showUserMenu=!state.showUserMenu; render(); };
   const logout=document.querySelector('[data-action="logout"]'); if(logout) logout.onclick=async ()=>{
@@ -5739,7 +5741,7 @@ function renderTodoDetailModal(){
       <div class="field"><label>What needs to happen?</label><input id="detTitle" value="${escapeAttr(td.title)}"></div>
       <div class="field autocomplete-box">
         <label>Category</label>
-        <input id="detCategory" value="${escapeAttr(td.category)}" list="detCategoryList">
+        <input id="detCategory" value="${escapeAttr(td.category)}" list="detCategoryList" autocomplete="off">
         <datalist id="detCategoryList">${cats.map(c=>`<option value="${escapeAttr(c)}">`).join('')}</datalist>
       </div>
       <div class="field autocomplete-box">
@@ -7815,6 +7817,167 @@ function finishContactPick(contactId){
 }
 
 /* ---------------- NEW TODO MODAL ---------------- */
+function accountsFlatForPicker(){
+  const out = [];
+  db.lists.filter(l=>l.type==='deep').forEach(l=>{
+    l.clients.forEach(c=>out.push({id:c.id, name:c.name, listId:l.id, listName:l.name, deals:c.deals}));
+  });
+  return out;
+}
+function renderNtpAccountListHtml(matches){
+  if(!matches.length) return `<div class="tiny" style="padding:10px;color:var(--ink-soft);">No matches.</div>`;
+  return matches.map(a=>`
+    <div class="row-card" data-action="ntpPickAccount" data-accountid="${a.id}" style="cursor:pointer;margin-bottom:6px;">
+      <div class="row-body"><div class="row-title">${escapeHtml(a.name)}</div><div class="row-meta"><span>${escapeHtml(a.listName)}</span></div></div>
+    </div>`).join('');
+}
+function renderNewTodoPickerModal(){
+  const p = state.newTodoPicker;
+  const overlay = document.createElement('div');
+  overlay.className='modal-overlay'; overlay.style.zIndex=185;
+  let title = 'New To-Do — where does this belong?';
+  let body = '';
+
+  if(p.step==='chooseType'){
+    body = `
+    <div style="display:flex;flex-direction:column;gap:10px;">
+      <button class="btn secondary" data-action="ntpChooseAccountStep" style="text-align:left;padding:16px;font-size:14px;">🏢 Client / Listing</button>
+      <button class="btn secondary" data-action="ntpChooseEntryTypeStep" style="text-align:left;padding:16px;font-size:14px;">🎯 Hit List / Hot List</button>
+      <button class="btn secondary" data-action="ntpChooseOpen" style="text-align:left;padding:16px;font-size:14px;">📋 Open To-Do — not tied to anything</button>
+    </div>`;
+  } else if(p.step==='chooseAccount'){
+    title = 'Which Client or Listing?';
+    const query = (p.accountQuery||'').trim().toLowerCase();
+    const matches = accountsFlatForPicker().filter(a=>!query || a.name.toLowerCase().includes(query)).slice(0,50);
+    body = `
+      <input id="ntpAccountSearch" placeholder="🔍 Search clients and listings…" value="${escapeAttr(p.accountQuery||'')}" style="margin-bottom:10px;">
+      <div id="ntpAccountList" style="max-height:320px;overflow-y:auto;">${renderNtpAccountListHtml(matches)}</div>`;
+  } else if(p.step==='chooseDealOrStop'){
+    const acct = p.pickedAccount;
+    title = acct.name;
+    body = `
+      <button class="btn" data-action="ntpStopAtAccount" style="width:100%;margin-bottom:16px;">Not associated with a Deal — create it under ${escapeHtml(acct.name)}</button>
+      <div class="section-label">Or pick a specific deal:</div>
+      <div style="max-height:280px;overflow-y:auto;">
+        ${acct.deals.length ? acct.deals.map(d=>`
+          <div class="row-card" data-action="ntpPickDeal" data-dealid="${d.id}" style="cursor:pointer;margin-bottom:6px;">
+            <div class="row-body"><div class="row-title">${escapeHtml(d.name)}</div></div>
+          </div>`).join('') : `<div class="tiny" style="color:var(--ink-soft);padding:10px 0;">No deals yet on this account.</div>`}
+      </div>`;
+  } else if(p.step==='chooseEntryType'){
+    title = 'Hit List or Hot List?';
+    body = `
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        <button class="btn secondary" data-action="ntpChooseEntryListStep" data-listid="hitlist" style="text-align:left;padding:16px;font-size:14px;">📋 Hit List</button>
+        <button class="btn secondary" data-action="ntpChooseEntryListStep" data-listid="hotlist" style="text-align:left;padding:16px;font-size:14px;">🎯 Hot List</button>
+      </div>`;
+  } else if(p.step==='chooseEntry'){
+    const l = db.lists.find(x=>x.id===p.entryListId);
+    title = l.name;
+    const query = (p.entryQuery||'').trim().toLowerCase();
+    const matches = l.entries.filter(e=>!query || e.name.toLowerCase().includes(query)).slice(0,50);
+    body = `
+      <input id="ntpEntrySearch" placeholder="🔍 Search ${escapeAttr(l.name.toLowerCase())}…" value="${escapeAttr(p.entryQuery||'')}" style="margin-bottom:10px;">
+      <div id="ntpEntryList" style="max-height:320px;overflow-y:auto;">
+        ${matches.length ? matches.map(e=>`
+          <div class="row-card" data-action="ntpPickEntry" data-entryid="${e.id}" style="cursor:pointer;margin-bottom:6px;">
+            <div class="row-body"><div class="row-title">${escapeHtml(e.name)}</div></div>
+          </div>`).join('') : `<div class="tiny" style="color:var(--ink-soft);padding:10px;">No matches.</div>`}
+      </div>`;
+  }
+
+  overlay.innerHTML = `
+  <div class="modal-card">
+    <div class="modal-head"><div class="modal-title">${escapeHtml(title)}</div><button class="modal-close" data-action="closeNewTodoPicker">✕</button></div>
+    <div class="modal-body">${body}</div>
+    <div class="modal-foot">
+      ${p.step!=='chooseType' ? `<button class="btn secondary" data-action="ntpBack">← Back</button>` : ''}
+      <button class="btn secondary" data-action="closeNewTodoPicker">Cancel</button>
+    </div>
+  </div>`;
+  document.getElementById('app').appendChild(overlay);
+
+  overlay.querySelectorAll('[data-action="closeNewTodoPicker"]').forEach(b=>b.onclick=()=>{ state.newTodoPicker=null; render(); });
+  overlay.querySelector('[data-action="ntpBack"]').onclick=()=>{
+    if(p.step==='chooseAccount' || p.step==='chooseEntryType') p.step='chooseType';
+    else if(p.step==='chooseDealOrStop') p.step='chooseAccount';
+    else if(p.step==='chooseEntry') p.step='chooseEntryType';
+    render();
+  };
+  const openBtn = overlay.querySelector('[data-action="ntpChooseOpen"]'); if(openBtn) openBtn.onclick=()=>{
+    state.newTodoPicker=null;
+    openNewTodoModal({});
+    render();
+  };
+  const acctStepBtn = overlay.querySelector('[data-action="ntpChooseAccountStep"]'); if(acctStepBtn) acctStepBtn.onclick=()=>{ p.step='chooseAccount'; p.accountQuery=''; render(); };
+  const entryTypeStepBtn = overlay.querySelector('[data-action="ntpChooseEntryTypeStep"]'); if(entryTypeStepBtn) entryTypeStepBtn.onclick=()=>{ p.step='chooseEntryType'; render(); };
+  overlay.querySelectorAll('[data-action="ntpChooseEntryListStep"]').forEach(b=>b.onclick=()=>{ p.step='chooseEntry'; p.entryListId=b.dataset.listid; p.entryQuery=''; render(); });
+
+  const acctSearchEl = document.getElementById('ntpAccountSearch');
+  if(acctSearchEl) acctSearchEl.oninput=()=>{
+    p.accountQuery = acctSearchEl.value;
+    const q = p.accountQuery.trim().toLowerCase();
+    const newMatches = accountsFlatForPicker().filter(a=>!q || a.name.toLowerCase().includes(q)).slice(0,50);
+    const listBox = document.getElementById('ntpAccountList');
+    if(listBox){
+      listBox.innerHTML = renderNtpAccountListHtml(newMatches);
+      listBox.querySelectorAll('[data-action="ntpPickAccount"]').forEach(b=>b.onclick=()=>{
+        p.pickedAccount = accountsFlatForPicker().find(a=>a.id===b.dataset.accountid);
+        p.step='chooseDealOrStop';
+        render();
+      });
+    }
+  };
+  overlay.querySelectorAll('[data-action="ntpPickAccount"]').forEach(b=>b.onclick=()=>{
+    p.pickedAccount = accountsFlatForPicker().find(a=>a.id===b.dataset.accountid);
+    p.step='chooseDealOrStop';
+    render();
+  });
+  const stopBtn = overlay.querySelector('[data-action="ntpStopAtAccount"]'); if(stopBtn) stopBtn.onclick=()=>{
+    const acct = p.pickedAccount;
+    state.newTodoPicker=null;
+    openNewTodoModal({listId:acct.listId, clientId:acct.id});
+    state.newTodoModal.navigateAfterSave = {kind:'client', listId:acct.listId, clientId:acct.id};
+    render();
+  };
+  overlay.querySelectorAll('[data-action="ntpPickDeal"]').forEach(b=>b.onclick=()=>{
+    const acct = p.pickedAccount;
+    const d = acct.deals.find(x=>x.id===b.dataset.dealid);
+    state.newTodoPicker=null;
+    openNewTodoModal({listId:acct.listId, clientId:acct.id, dealId:d.id});
+    state.newTodoModal.navigateAfterSave = {kind:'deal', listId:acct.listId, clientId:acct.id, dealId:d.id};
+    render();
+  });
+
+  const entrySearchEl = document.getElementById('ntpEntrySearch');
+  if(entrySearchEl) entrySearchEl.oninput=()=>{
+    p.entryQuery = entrySearchEl.value;
+    const q = p.entryQuery.trim().toLowerCase();
+    const l = db.lists.find(x=>x.id===p.entryListId);
+    const newMatches = l.entries.filter(e=>!q || e.name.toLowerCase().includes(q)).slice(0,50);
+    const listBox = document.getElementById('ntpEntryList');
+    if(listBox){
+      listBox.innerHTML = newMatches.length ? newMatches.map(e=>`
+        <div class="row-card" data-action="ntpPickEntry" data-entryid="${e.id}" style="cursor:pointer;margin-bottom:6px;">
+          <div class="row-body"><div class="row-title">${escapeHtml(e.name)}</div></div>
+        </div>`).join('') : `<div class="tiny" style="color:var(--ink-soft);padding:10px;">No matches.</div>`;
+      listBox.querySelectorAll('[data-action="ntpPickEntry"]').forEach(b=>b.onclick=()=>{
+        const listId = p.entryListId;
+        state.newTodoPicker=null;
+        openNewTodoModal({listId, entryId:b.dataset.entryid});
+        state.newTodoModal.navigateAfterSave = {kind:'entry', listId, entryId:b.dataset.entryid};
+        render();
+      });
+    }
+  };
+  overlay.querySelectorAll('[data-action="ntpPickEntry"]').forEach(b=>b.onclick=()=>{
+    const listId = p.entryListId;
+    state.newTodoPicker=null;
+    openNewTodoModal({listId, entryId:b.dataset.entryid});
+    state.newTodoModal.navigateAfterSave = {kind:'entry', listId, entryId:b.dataset.entryid};
+    render();
+  });
+}
 function openNewTodoModal(context){
   state.newTodoModal={ context, title:'', category: context.category||'', status:'Not Started', dueInput:'', notes:'', type:'task', assignTo:state.currentUser.id, attachments:[], checklistItems:[] };
 }
@@ -7884,7 +8047,7 @@ function renderNewTodoModal(){
       </div>
       <div class="field autocomplete-box">
         <label>Category</label>
-        <input id="ntCategory" placeholder="e.g., Freddy's, Personal, Dutch Bros" value="${escapeAttr(m.category)}" list="categoryList">
+        <input id="ntCategory" placeholder="e.g., Freddy's, Personal, Dutch Bros" value="${escapeAttr(m.category)}" list="categoryList" autocomplete="off">
         <datalist id="categoryList">${cats.map(c=>`<option value="${escapeAttr(c)}">`).join('')}</datalist>
       </div>
       <div class="field autocomplete-box">
@@ -8025,6 +8188,12 @@ function renderNewTodoModal(){
       flashToast('To-do saved.');
     }
     supaCreateTodo(newTd);
+    if(m.navigateAfterSave){
+      const nav = m.navigateAfterSave;
+      if(nav.kind==='deal') openDealModal(nav.listId, nav.clientId, nav.dealId);
+      else if(nav.kind==='client') openClientModal(nav.listId, nav.clientId, 'all');
+      else if(nav.kind==='entry') openEntryModal(nav.listId, nav.entryId);
+    }
     render();
   };
 }
@@ -8993,6 +9162,7 @@ function renderMapsImportModal(){
       ${m.step==='mapping' ? `<button class="btn" data-action="mapsToPickOrReview">Continue</button>` : ''}
       ${m.step==='pickSites' ? `<button class="btn" data-action="mapsToReview">Continue</button>` : ''}
       ${m.step==='review' ? `<button class="btn" id="mapsConfirmBtn" data-action="confirmMapsImport">Import</button>` : ''}
+      ${m.step==='upload' && m.selectedFile ? `<button class="btn" id="mapsContinueUploadBtn" data-action="mapsContinueUpload">Continue</button>` : ''}
     </div>
   </div>`;
   document.getElementById('app').appendChild(overlay);
@@ -9023,13 +9193,20 @@ function renderMapsImportModal(){
     if(newNameEl) newNameEl.oninput = ()=>{ m.newClientName = newNameEl.value; if(!m.newClientListId) m.newClientListId='clients'; render(); };
     overlay.querySelectorAll('[data-mapsnewlist]').forEach(b=>b.onclick=()=>{ m.newClientListId = b.dataset.mapsnewlist; render(); });
     const fileInput = document.getElementById('mapsFile');
-    if(fileInput) fileInput.onchange=async ()=>{
-      const file = fileInput.files[0]; if(!file) return;
-      if(!m.pickedClient && !m.newClientName.trim()){ flashToast('Pick or name a Client/Listing first.'); fileInput.value=''; return; }
+    if(fileInput) fileInput.onchange=()=>{
+      const file = fileInput.files[0];
+      m.selectedFile = file || null;
+      renderPreservingScroll('.modal-body');
+    };
+    const continueUploadBtn = document.getElementById('mapsContinueUploadBtn');
+    if(continueUploadBtn) continueUploadBtn.onclick=safeHandler(async ()=>{
+      if(!m.pickedClient && !m.newClientName.trim()){ flashToast('Pick or name a Client/Listing first.'); return; }
+      if(!m.selectedFile){ flashToast('Choose a KML/KMZ file first.'); return; }
+      continueUploadBtn.disabled = true; continueUploadBtn.textContent = 'Reading file…';
       try{
-        const kmlText = await mapsReadKmlText(file);
+        const kmlText = await mapsReadKmlText(m.selectedFile);
         const folders = mapsParseFolders(kmlText);
-        if(!folders.length){ flashToast("Didn't find any pinned sites in that file."); return; }
+        if(!folders.length){ flashToast("Didn't find any pinned sites in that file."); continueUploadBtn.disabled=false; continueUploadBtn.textContent='Continue'; return; }
         m.folders = folders;
         m.folderStage = folders.map(()=> 'skip');
         m.manualPicks = folders.map(f=>f.placemarks.map(()=>false));
@@ -9037,8 +9214,9 @@ function renderMapsImportModal(){
         render();
       } catch(err){
         flashToast("Couldn't read that file — " + err.message);
+        continueUploadBtn.disabled=false; continueUploadBtn.textContent='Continue';
       }
-    };
+    });
   }
   if(m.step==='mapping'){
     overlay.querySelectorAll('[data-mapsfolderstage]').forEach(sel=>sel.onchange=()=>{
@@ -9506,6 +9684,7 @@ document.addEventListener('keydown', (ev)=>{
   if(state.editContactModal){ state.editContactModal=null; render(); return; }
   if(state.resetPasswordModalOpen){ state.resetPasswordModalOpen=false; render(); return; }
   if(state.changePasswordModalOpen){ state.changePasswordModalOpen=false; render(); return; }
+  if(state.newTodoPicker){ state.newTodoPicker=null; render(); return; }
   if(state.editBrokerModal){ state.editBrokerModal=null; render(); return; }
   if(state.todoDetailModal){ const td = db.todos.find(x=>x.id===state.todoDetailModal.id); if(!td || attemptCloseTodoDetail(td)) render(); return; }
   if(state.newTodoModal){ state.newTodoModal=null; render(); return; }
