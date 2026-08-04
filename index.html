@@ -2969,7 +2969,7 @@ function renderSidebar(){
         <button class="icon-btn" data-action="refreshApp" title="Refresh">🔄</button>
         <button class="icon-btn" data-action="openBlankEmail" title="New Email">✉️</button>
         ${!state.isMobile ? `<button class="icon-btn" data-action="openCalendarView" title="Calendar View">📅</button>` : ''}
-        ${cu.role==='Admin' ? `<button class="icon-btn" data-action="toggleAdmin" title="Admin menu">☰</button>` : ''}
+        <button class="icon-btn" data-action="toggleAdmin" title="${cu.role==='Admin' ? 'Admin menu' : 'Import files'}">☰</button>
       </div>
     </div>
     <div class="nav-section-label">Smart Lists <button class="nav-add" data-action="addSmartList">+</button></div>
@@ -4260,17 +4260,18 @@ function renderMobileTabbar(){
   </div>`;
 }
 function renderAdminMenu(){
+  const isAdmin = state.currentUser.role==='Admin';
   return `
   <div class="admin-menu">
-    <div class="admin-item" data-action="adminPending">🆕 Pending User Requests ${pendingUsers.length? `<span class="nav-count urgent" style="margin-left:auto;">${pendingUsers.length}</span>`:''}</div>
-    <div class="admin-item" data-action="adminFullTeam">👥 Full Team To-Do's (unfiltered)</div>
+    ${isAdmin ? `<div class="admin-item" data-action="adminPending">🆕 Pending User Requests ${pendingUsers.length? `<span class="nav-count urgent" style="margin-left:auto;">${pendingUsers.length}</span>`:''}</div>` : ''}
+    ${isAdmin ? `<div class="admin-item" data-action="adminFullTeam">👥 Full Team To-Do's (unfiltered)</div>` : ''}
     ${!state.isMobile ? `<div class="admin-item" data-action="adminImportTodos">⬆️ Import To-Do's (CSV)</div>` : ''}
     ${!state.isMobile ? `<div class="admin-item" data-action="adminImportTaskFire">⬆️ Import from TaskFire</div>` : ''}
     ${!state.isMobile ? `<div class="admin-item" data-action="adminImportMaps">🗺️ Import from MyMaps</div>` : ''}
-    <div class="admin-item" data-action="adminDigest">📨 Compose Weekly Digest</div>
-    <div class="admin-item" data-action="adminUsers">👥 Manage Users</div>
-    <div class="admin-item" data-action="adminTimes">⏱️ Email Send Times</div>
-    <div class="admin-item" data-action="adminReset">🔑 Reset a Password</div>
+    ${isAdmin ? `<div class="admin-item" data-action="adminDigest">📨 Compose Weekly Digest</div>` : ''}
+    ${isAdmin ? `<div class="admin-item" data-action="adminUsers">👥 Manage Users</div>` : ''}
+    ${isAdmin ? `<div class="admin-item" data-action="adminTimes">⏱️ Email Send Times</div>` : ''}
+    ${isAdmin ? `<div class="admin-item" data-action="adminReset">🔑 Reset a Password</div>` : ''}
   </div>`;
 }
 
