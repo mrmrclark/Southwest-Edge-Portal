@@ -596,6 +596,23 @@ function usersSortedByMe(){
   });
 }
 let pendingUsers = []; // {id, name, email, requestedAt} — awaiting admin approval before they can sign in
+// People who can be assigned a commission split (e.g. a former employee still owed
+// commission on deals they started) without ever having a login, showing up in any
+// "assign a to-do" picker, or appearing anywhere else in the app besides this list.
+let commissionOnlyPeople = [];
+async function fetchCommissionOnlyPeople(){
+  const { data, error } = await supabaseClient.from('commission_only_people').select('*').order('name');
+  if(error){ console.error('fetchCommissionOnlyPeople error:', error); return; }
+  commissionOnlyPeople = data.map(r=>({id:r.id, name:r.name}));
+}
+async function supaCreateCommissionOnlyPerson(name){
+  const { data, error } = await supabaseClient.from('commission_only_people').insert({name, created_by: state.currentUser.authId}).select().single();
+  if(error){ console.error('supaCreateCommissionOnlyPerson error:', error); flashToast("Couldn't add that person — try again."); return null; }
+  const person = {id:data.id, name:data.name};
+  commissionOnlyPeople.push(person);
+  commissionOnlyPeople.sort((a,b)=>a.name.localeCompare(b.name));
+  return person;
+}
 async function fetchPendingUsersFromSupabase(){
   const { data, error } = await supabaseClient.from('pending_users').select('*');
   if(error){ console.error('fetchPendingUsersFromSupabase error:', error); return; }
@@ -1175,6 +1192,7 @@ async function fetchAllAppDataFromSupabase(){
   await fetchPendingUsersFromSupabase();
   await fetchCompanySettingsFromSupabase();
   await fetchSmartListsFromSupabase();
+  await fetchCommissionOnlyPeople();
 }
 async function fetchCompanySettingsFromSupabase(){
   const { data, error } = await supabaseClient.from('company_settings').select('*').eq('id','default').single();
@@ -6077,6 +6095,11 @@ function renderClientModalBody(l,c,viewMode,pendingDel){
   ${showDeals ? accessHtml : ''}
   ${l.id==='listings' ? renderElaCard(c, canEdit) : ''}
   <div class="contact-card" style="margin-top:20px;">
+    <div class="label">${l.id==='listings' ? 'Listing' : 'Client'} Name</div>
+    <input id="clientNameEdit" value="${escapeAttr(c.name)}" ${canEdit?'':'disabled'} style="width:100%;font-size:19px;padding:16px 14px;border:1px solid var(--line);border-radius:8px;color:var(--ink);background:#fff;box-sizing:border-box;">
+    ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="saveClientName" data-listid="${l.id}" data-client="${c.id}">Save Name</button>` : ''}
+  </div>
+  <div class="contact-card" style="margin-top:20px;">
     <div class="label">Tags</div>
     <div style="font-size:12.5px;color:var(--ink-soft);margin:4px 0 8px;">Comma-separated, e.g. #Freddys, #SouthwestEdgeRocks, #PortalPower</div>
     <input id="clientHashtags" value="${escapeAttr(c.hashtags||'')}" placeholder="#Freddys, #SouthwestEdgeRocks" ${canEdit?'':'disabled'} style="width:100%;font-size:19px;padding:16px 14px;border:1px solid var(--line);border-radius:8px;color:var(--ink);background:#fff;box-sizing:border-box;">
@@ -6271,6 +6294,9 @@ function renderSplitRowHtml(row,i){
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">
       <select data-splituser="${i}" style="flex:1;">
         ${usersSortedByMe().map(u=>`<option value="${u.id}" ${row.userId===u.id?'selected':''}>${u.name}</option>`).join('')}
+        ${commissionOnlyPeople.length ? `<optgroup label="No login — commission only">
+          ${commissionOnlyPeople.map(p=>`<option value="${p.id}" ${row.userId===p.id?'selected':''}>${p.name}</option>`).join('')}
+        </optgroup>` : ''}
       </select>
       <input type="number" step="0.01" data-splitpct="${i}" value="${row.pct!=null?row.pct:''}" placeholder="%" style="width:80px;">
       <span style="font-size:12.5px;color:var(--ink-soft);">%</span>
@@ -6312,6 +6338,7 @@ function renderCommissionModal(){
           ${draft.map((row,i)=>renderSplitRowHtml(row,i)).join('')}
         </div>
         <button class="btn secondary sm" data-action="addSplitRow" style="margin-top:4px;">+ Add person</button>
+        <button class="btn secondary sm" data-action="addCommissionOnlyPerson" style="margin-top:4px;">+ Add someone with no login</button>
         <div id="splitsTotalLine" style="margin-top:8px;font-size:12.5px;font-weight:600;color:${totalOk?'var(--good)':'var(--bad)'};">
           Total: ${total.toFixed(2)}%${totalOk?' ✓':' — must equal 100%'}
         </div>
@@ -6341,6 +6368,15 @@ function renderCommissionModal(){
     draft.push({userId: USERS[0].id, pct: ''});
     renderPreservingScroll('.modal-body');
   };
+  const addCoBtn = overlay.querySelector('[data-action="addCommissionOnlyPerson"]');
+  if(addCoBtn) addCoBtn.onclick=safeHandler(async ()=>{
+    const name = prompt("This person's name (they'll never get a login — just a commission split entry):");
+    if(!name || !name.trim()) return;
+    const person = await supaCreateCommissionOnlyPerson(name.trim());
+    if(!person) return;
+    draft.push({userId: person.id, pct: ''});
+    renderPreservingScroll('.modal-body');
+  });
   overlay.querySelectorAll('[data-removesplitrow]').forEach(el=>el.onclick=()=>{
     draft.splice(parseInt(el.dataset.removesplitrow), 1);
     renderPreservingScroll('.modal-body');
@@ -7348,6 +7384,16 @@ function attachModalHandlers(root){
     d.dealType = newType;
     render();
   }));
+  const saveNameBtn = root.querySelector('[data-action="saveClientName"]'); if(saveNameBtn) saveNameBtn.onclick=safeHandler(()=>{
+    const l=db.lists.find(x=>x.id===saveNameBtn.dataset.listid); const c=l && l.clients.find(x=>x.id===saveNameBtn.dataset.client);
+    if(!c){ flashToast("Couldn't find this client."); render(); return; }
+    const newName = document.getElementById('clientNameEdit').value.trim();
+    if(!newName){ flashToast('Name cannot be blank.'); return; }
+    c.name = newName;
+    supaUpdateClientContact(c, l.id);
+    flashToast('Name updated.');
+    render();
+  });
   const saveHashtagsBtn = root.querySelector('[data-action="saveHashtags"]'); if(saveHashtagsBtn) saveHashtagsBtn.onclick=safeHandler(()=>{
     const frame = state.modalStack[state.modalStack.length-1];
     const l=db.lists.find(x=>x.id===frame.listId); const c=l && l.clients.find(x=>x.id===saveHashtagsBtn.dataset.client);
