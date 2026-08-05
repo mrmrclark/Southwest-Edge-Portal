@@ -375,7 +375,7 @@
   .modal-breadcrumb span{cursor:pointer;text-decoration:underline;text-underline-offset:2px;}
   .modal-title-row{display:flex;align-items:center;width:100%;}
   .modal-title{font-size:17px;font-weight:600;flex:1;}
-  .modal-close{background:rgba(255,255,255,.18);border:none;color:#fff;width:28px;height:28px;border-radius:8px;font-size:14px;}
+  .modal-close{background:rgba(255,255,255,.18);border:none;color:#fff;min-width:28px;height:28px;padding:0 10px;border-radius:8px;font-size:14px;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center;}
   .modal-close:hover{background:rgba(255,255,255,.32);}
   .modal-body{padding:18px 20px;overflow-y:auto;flex:1;overscroll-behavior-y:contain;}
   .modal-foot{padding:12px 20px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end;}
@@ -5958,10 +5958,11 @@ function brandLogoImg(name){
 function renderTopModalCard(){
   const frame = state.modalStack[state.modalStack.length-1];
   const crumbs = breadcrumbFor(state.modalStack);
-  let bodyHtml='', titleText='', brandName='', dealCanEdit=true;
+  let bodyHtml='', titleText='', brandName='', dealCanEdit=true, clientCanEdit=true;
   if(frame.kind==='client'){
     const l=db.lists.find(x=>x.id===frame.listId); const c=l.clients.find(x=>x.id===frame.clientId);
     titleText=c.name; brandName=c.name;
+    clientCanEdit = state.currentUser.role==='Admin' || c.createdBy===state.currentUser.id || (c.authorizedUserIds||[]).includes(state.currentUser.id);
     const pendingDel = db.deletionRequests.find(r=>r.clientId===c.id);
     let banner = '';
     if(c.archivedAt) banner = `<div style="background:#FBEBD8;color:#A5620C;padding:8px 14px;border-radius:8px;font-size:12.5px;font-weight:600;margin-bottom:14px;">🗄️ This is archived — viewing only. Restore it to make it active again.</div>`;
@@ -5993,10 +5994,10 @@ function renderTopModalCard(){
         <div class="modal-breadcrumb">
           ${crumbs.map(cr=>`<span data-crumb="${cr.idx}">${escapeHtml(cr.label)}</span>`).join('<span style="opacity:.6;"> / </span>')}
         </div>
-        <div class="modal-title-row">${brandLogoImg(brandName)}<div class="modal-title">${escapeHtml(titleText)}</div></div>
+        <div class="modal-title-row">${brandLogoImg(brandName)}<div class="modal-title">${escapeHtml(titleText)}</div>${frame.kind==='client' && clientCanEdit ? `<button data-action="renameClient" data-listid="${frame.listId}" data-client="${frame.clientId}" title="Rename this ${frame.listId==='listings'?'listing':'client'}" style="background:none;border:none;color:rgba(255,255,255,.75);font-size:15px;margin-left:8px;cursor:pointer;padding:4px;">✏️</button>` : ''}</div>
       </div>
       ${frame.kind==='deal' && dealCanEdit ? `<button class="btn sm" data-action="saveAndCloseDeal" style="background:#fff;color:var(--edge);">Save &amp; Close</button>` : ''}
-      <button class="modal-close" data-action="closeModal">${(frame.kind==='client' || frame.kind==='entry') ? '✓ Save & Close' : '✕ Done'}</button>
+      <button class="modal-close" data-action="closeModal" style="${(frame.kind==='client' || frame.kind==='entry') ? 'width:auto;height:auto;padding:8px 14px;white-space:nowrap;font-size:13px;' : ''}">${(frame.kind==='client' || frame.kind==='entry') ? '✓ Save & Close' : '✕ Done'}</button>
     </div>
     <div class="modal-body">${bodyHtml}</div>
   </div>`;
@@ -6094,11 +6095,6 @@ function renderClientModalBody(l,c,viewMode,pendingDel){
   ${showProspecting ? renderLSRInline(c, state.leasingReportMode || viewMode) : ''}
   ${showDeals ? accessHtml : ''}
   ${l.id==='listings' ? renderElaCard(c, canEdit) : ''}
-  <div class="contact-card" style="margin-top:20px;">
-    <div class="label">${l.id==='listings' ? 'Listing' : 'Client'} Name</div>
-    <input id="clientNameEdit" value="${escapeAttr(c.name)}" ${canEdit?'':'disabled'} style="width:100%;font-size:19px;padding:16px 14px;border:1px solid var(--line);border-radius:8px;color:var(--ink);background:#fff;box-sizing:border-box;">
-    ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="saveClientName" data-listid="${l.id}" data-client="${c.id}">Save Name</button>` : ''}
-  </div>
   <div class="contact-card" style="margin-top:20px;">
     <div class="label">Tags</div>
     <div style="font-size:12.5px;color:var(--ink-soft);margin:4px 0 8px;">Comma-separated, e.g. #Freddys, #SouthwestEdgeRocks, #PortalPower</div>
@@ -7230,6 +7226,16 @@ function attachModalHandlers(root){
       });
     }
   });
+  const renameClientBtn = root.querySelector('[data-action="renameClient"]'); if(renameClientBtn) renameClientBtn.onclick=safeHandler(()=>{
+    const l=db.lists.find(x=>x.id===renameClientBtn.dataset.listid); const c=l && l.clients.find(x=>x.id===renameClientBtn.dataset.client);
+    if(!c){ flashToast("Couldn't find this client."); render(); return; }
+    const newName = prompt(`Rename "${c.name}" to:`, c.name);
+    if(!newName || !newName.trim() || newName.trim()===c.name) return;
+    c.name = newName.trim();
+    supaUpdateClientContact(c, l.id);
+    flashToast('Name updated.');
+    render();
+  });
   const archiveClientBtn = root.querySelector('[data-action="archiveClient"]'); if(archiveClientBtn) archiveClientBtn.onclick=safeHandler(()=>{
     const l=db.lists.find(x=>x.id===archiveClientBtn.dataset.listid); const c=l && l.clients.find(x=>x.id===archiveClientBtn.dataset.client);
     if(!c){ flashToast("Couldn't find this client."); render(); return; }
@@ -7384,16 +7390,6 @@ function attachModalHandlers(root){
     d.dealType = newType;
     render();
   }));
-  const saveNameBtn = root.querySelector('[data-action="saveClientName"]'); if(saveNameBtn) saveNameBtn.onclick=safeHandler(()=>{
-    const l=db.lists.find(x=>x.id===saveNameBtn.dataset.listid); const c=l && l.clients.find(x=>x.id===saveNameBtn.dataset.client);
-    if(!c){ flashToast("Couldn't find this client."); render(); return; }
-    const newName = document.getElementById('clientNameEdit').value.trim();
-    if(!newName){ flashToast('Name cannot be blank.'); return; }
-    c.name = newName;
-    supaUpdateClientContact(c, l.id);
-    flashToast('Name updated.');
-    render();
-  });
   const saveHashtagsBtn = root.querySelector('[data-action="saveHashtags"]'); if(saveHashtagsBtn) saveHashtagsBtn.onclick=safeHandler(()=>{
     const frame = state.modalStack[state.modalStack.length-1];
     const l=db.lists.find(x=>x.id===frame.listId); const c=l && l.clients.find(x=>x.id===saveHashtagsBtn.dataset.client);
