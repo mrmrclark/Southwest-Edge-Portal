@@ -5958,7 +5958,7 @@ function brandLogoImg(name){
 function renderTopModalCard(){
   const frame = state.modalStack[state.modalStack.length-1];
   const crumbs = breadcrumbFor(state.modalStack);
-  let bodyHtml='', titleText='', brandName='', dealCanEdit=true, clientCanEdit=true;
+  let bodyHtml='', titleText='', brandName='', dealCanEdit=true, clientCanEdit=true, entryCanEdit=true;
   if(frame.kind==='client'){
     const l=db.lists.find(x=>x.id===frame.listId); const c=l.clients.find(x=>x.id===frame.clientId);
     titleText=c.name; brandName=c.name;
@@ -5980,6 +5980,7 @@ function renderTopModalCard(){
   } else if(frame.kind==='entry'){
     const l=db.lists.find(x=>x.id===frame.listId); const e=l.entries.find(x=>x.id===frame.entryId);
     titleText=e.name; brandName=e.name;
+    entryCanEdit = state.currentUser.role==='Admin' || e.ownerId===state.currentUser.id || (e.authorizedUserIds||[]).includes(state.currentUser.id);
     bodyHtml = renderEntryModalBody(l,e);
   } else if(frame.kind==='lsrProspect'){
     const l=db.lists.find(x=>x.id==='listings'); const c=l.clients.find(x=>x.id===frame.clientId);
@@ -5994,7 +5995,7 @@ function renderTopModalCard(){
         <div class="modal-breadcrumb">
           ${crumbs.map(cr=>`<span data-crumb="${cr.idx}">${escapeHtml(cr.label)}</span>`).join('<span style="opacity:.6;"> / </span>')}
         </div>
-        <div class="modal-title-row">${brandLogoImg(brandName)}<div class="modal-title">${escapeHtml(titleText)}</div>${frame.kind==='client' && clientCanEdit ? `<button data-action="renameClient" data-listid="${frame.listId}" data-client="${frame.clientId}" title="Rename this ${frame.listId==='listings'?'listing':'client'}" style="background:none;border:none;color:rgba(255,255,255,.75);font-size:15px;margin-left:8px;cursor:pointer;padding:4px;">✏️</button>` : ''}</div>
+        <div class="modal-title-row">${brandLogoImg(brandName)}<div class="modal-title">${escapeHtml(titleText)}</div>${frame.kind==='client' && clientCanEdit ? `<button data-action="renameClient" data-listid="${frame.listId}" data-client="${frame.clientId}" title="Rename this ${frame.listId==='listings'?'listing':'client'}" style="background:none;border:none;color:rgba(255,255,255,.75);font-size:15px;margin-left:8px;cursor:pointer;padding:4px;">✏️</button>` : ''}${frame.kind==='deal' && dealCanEdit ? `<button data-action="renameDeal" data-listid="${frame.listId}" data-client="${frame.clientId}" data-deal="${frame.dealId}" title="Rename this deal" style="background:none;border:none;color:rgba(255,255,255,.75);font-size:15px;margin-left:8px;cursor:pointer;padding:4px;">✏️</button>` : ''}${frame.kind==='entry' && entryCanEdit ? `<button data-action="renameEntry" data-listid="${frame.listId}" data-entry="${frame.entryId}" title="Rename this entry" style="background:none;border:none;color:rgba(255,255,255,.75);font-size:15px;margin-left:8px;cursor:pointer;padding:4px;">✏️</button>` : ''}</div>
       </div>
       ${frame.kind==='deal' && dealCanEdit ? `<button class="btn sm" data-action="saveAndCloseDeal" style="background:#fff;color:var(--edge);">Save &amp; Close</button>` : ''}
       <button class="modal-close" data-action="closeModal" style="${(frame.kind==='client' || frame.kind==='entry') ? 'width:auto;height:auto;padding:8px 14px;white-space:nowrap;font-size:13px;' : ''}">${(frame.kind==='client' || frame.kind==='entry') ? '✓ Save & Close' : '✕ Done'}</button>
@@ -7233,6 +7234,27 @@ function attachModalHandlers(root){
     if(!newName || !newName.trim() || newName.trim()===c.name) return;
     c.name = newName.trim();
     supaUpdateClientContact(c, l.id);
+    flashToast('Name updated.');
+    render();
+  });
+  const renameDealBtn = root.querySelector('[data-action="renameDeal"]'); if(renameDealBtn) renameDealBtn.onclick=safeHandler(()=>{
+    const l=db.lists.find(x=>x.id===renameDealBtn.dataset.listid); const c=l && l.clients.find(x=>x.id===renameDealBtn.dataset.client);
+    const d=c && c.deals.find(x=>x.id===renameDealBtn.dataset.deal);
+    if(!d){ flashToast("Couldn't find this deal."); render(); return; }
+    const newName = prompt(`Rename "${d.name}" to:`, d.name);
+    if(!newName || !newName.trim() || newName.trim()===d.name) return;
+    d.name = newName.trim();
+    supaUpdateDeal(d, c.id);
+    flashToast('Name updated.');
+    render();
+  });
+  const renameEntryBtn = root.querySelector('[data-action="renameEntry"]'); if(renameEntryBtn) renameEntryBtn.onclick=safeHandler(()=>{
+    const l=db.lists.find(x=>x.id===renameEntryBtn.dataset.listid); const e=l && l.entries.find(x=>x.id===renameEntryBtn.dataset.entry);
+    if(!e){ flashToast("Couldn't find this entry."); render(); return; }
+    const newName = prompt(`Rename "${e.name}" to:`, e.name);
+    if(!newName || !newName.trim() || newName.trim()===e.name) return;
+    e.name = newName.trim();
+    supaUpdateEntry(e, l.id);
     flashToast('Name updated.');
     render();
   });
