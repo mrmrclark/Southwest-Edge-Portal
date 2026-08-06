@@ -1104,7 +1104,7 @@ function todoRowToLocal(r){
     assignedTo: authIdToLocalUserId(r.assigned_to) || r.assigned_to, createdBy: authIdToLocalUserId(r.created_by) || r.created_by,
     type:r.type, private:r.is_private, completed:r.is_completed, isNew:r.is_new, notes:r.notes||'',
     listId:r.list_id, clientId:r.client_id, dealId:r.deal_id, entryId:r.entry_id, projectId:r.project_id, attachments:[],
-    checklistItems: r.checklist_items || [],
+    checklistItems: (r.checklist_items || []).map(item => ({...item, dueDate: item.dueDate ? new Date(item.dueDate) : null})),
     status: r.status || '',
     reminderPending: !!r.reminder_pending,
     createdAt: r.created_at ? new Date(r.created_at) : null,
@@ -2297,12 +2297,6 @@ function smartListTodosRaw(key){
     case 'completed': return t.filter(td=>td.completed && inMySphere(td));
     case 'archived': return db.archivedTodos.filter(td=>inMySphere(td));
     case 'everything': return t.filter(td=>!td.completed && inMySphere(td));
-    case 'activeDeals': {
-      // Back in the sidebar for now, pending a decision after checking with Nick.
-      const activeDealIds = new Set();
-      db.lists.filter(l=>l.type==='deep').forEach(l=>l.clients.forEach(c=>c.deals.forEach(d=>{ if(d.activeDeal && !d.complete) activeDealIds.add(d.id); })));
-      return t.filter(td=>td.dealId && activeDealIds.has(td.dealId) && !td.completed);
-    }
     case 'fullTeam': return t.filter(td=>!td.completed); // Admin-only, unrestricted — genuinely everyone
     default: {
       const custom = smartListsArr.find(c=>c.id===key && !c.isDefault);
@@ -3693,22 +3687,6 @@ function caOutstandingCount(){
   }));
   return out;
 }
-function activeDealsClients(){
-  const out = [];
-  db.lists.filter(l=>l.type==='deep').forEach(l=>{
-    l.clients.forEach(c=>{
-      const oldActive = c.deals.filter(d=>d.activeDeal && !d.complete).length;
-      const lsrActive = (c.prospects||[]).filter(p=>{
-        const isDeal = p.stage!=='contacted' && p.stage!=='interested' && p.stage!=='dead' && p.stage!=='notInterested';
-        return isDeal && lsrDealIsActive(p);
-      }).length;
-      const activeCount = oldActive + lsrActive;
-      const totalCount = c.deals.length + (c.prospects? c.prospects.filter(p=>p.stage!=='contacted'&&p.stage!=='interested'&&p.stage!=='dead'&&p.stage!=='notInterested').length : 0);
-      if(activeCount>0) out.push({client:c, listId:l.id, listName:l.name, activeCount, totalCount});
-    });
-  });
-  return out;
-}
 function allDealsList(){
   const out = [];
   db.lists.filter(l=>l.type==='deep').forEach(l=>{
@@ -3752,6 +3730,7 @@ function renderAllDealsMain(){
     : `<div class="empty-state"><div class="big">No open deals of yours right now.</div><div class="tiny">Closed Escrow and Open for Business deals are left out of this list on purpose.</div></div>`;
 
   if(!state.allDealsAccountOpen) state.allDealsAccountOpen = {};
+  if(!state.allDealsStageOpen) state.allDealsStageOpen = {};
   const renderSection = (listId, sectionTitle)=>{
     const sectionRows = rows.filter(r=>r.listId===listId);
     if(!sectionRows.length) return '';
@@ -3762,6 +3741,13 @@ function renderAllDealsMain(){
     <div class="section-label" style="margin-top:18px;">${sectionTitle} <span style="font-weight:400;color:var(--ink-soft);">(${sectionRows.length})</span></div>
     ${groups.map(g=>{
       const isOpen = !!state.allDealsAccountOpen[g.client.id];
+      const byStage = {};
+      g.deals.forEach(d=>{ const key = d.stage || 'noStage'; (byStage[key] = byStage[key] || []).push(d); });
+      const stageKeys = Object.keys(byStage).sort((a,b)=>{
+        const ao = a==='noStage' ? -1 : LSR_STAGES.findIndex(s=>s.id===a);
+        const bo = b==='noStage' ? -1 : LSR_STAGES.findIndex(s=>s.id===b);
+        return ao - bo;
+      });
       return `
       <div class="row-card" data-action="toggleAllDealsAccount" data-accountid="${g.client.id}" style="cursor:pointer;margin-bottom:6px;flex-direction:column;align-items:stretch;">
         <div style="display:flex;align-items:center;">
@@ -3772,14 +3758,30 @@ function renderAllDealsMain(){
           </div>
         </div>
         ${isOpen ? `<div style="margin:8px 0 2px 26px;">
-          ${g.deals.map(d=>{
-            const stageInfo = LSR_STAGE_MAP[d.stage];
+          ${stageKeys.map(stageKey=>{
+            const stageInfo = LSR_STAGE_MAP[stageKey];
+            const stageName = stageInfo ? stageInfo.name : 'No stage';
+            const stageColor = stageInfo ? stageInfo.color : 'var(--ink-soft)';
+            const stageDeals = byStage[stageKey];
+            const stageToggleKey = g.client.id + '|' + stageKey;
+            const stageOpen = !!state.allDealsStageOpen[stageToggleKey];
             return `
-            <div class="row-card" data-opendealdirect="${d.id}" data-client="${g.client.id}" data-listid="${listId}" style="margin-bottom:6px;">
-              <div class="row-body">
-                <div class="row-title">${escapeHtml(d.name)}</div>
-                <div class="row-meta">${stageInfo ? `<span class="pill" style="background:${stageInfo.color}22;color:${stageInfo.color};">${stageInfo.name}</span>` : `<span class="pill gray">No stage</span>`}</div>
+            <div class="row-card" data-action="toggleAllDealsStage" data-stagekey="${escapeAttr(stageToggleKey)}" style="cursor:pointer;margin-bottom:6px;flex-direction:column;align-items:stretch;background:var(--canvas);">
+              <div style="display:flex;align-items:center;">
+                <div class="nav-icon" style="font-size:14px;">${stageOpen?'▾':'▸'}</div>
+                <div class="row-body">
+                  <div class="row-title" style="font-size:13px;"><span class="pill" style="background:${stageColor}22;color:${stageColor};">${escapeHtml(stageName)}</span></div>
+                  <div class="row-meta"><span>${stageDeals.length} deal${stageDeals.length===1?'':'s'}</span></div>
+                </div>
               </div>
+              ${stageOpen ? `<div style="margin:8px 0 2px 26px;">
+                ${stageDeals.map(d=>`
+                <div class="row-card" data-opendealdirect="${d.id}" data-client="${g.client.id}" data-listid="${listId}" style="margin-bottom:6px;">
+                  <div class="row-body">
+                    <div class="row-title">${escapeHtml(d.name)}</div>
+                  </div>
+                </div>`).join('')}
+              </div>` : ''}
             </div>`;
           }).join('')}
         </div>` : ''}
@@ -3835,18 +3837,6 @@ function renderArchivedDealsMain(){
     `;
   };
   return renderSection('clients', 'Clients') + renderSection('listings', 'Listings');
-}
-function renderActiveDealsMain(){
-  const rows = activeDealsClients();
-  if(!rows.length) return `<div class="empty-state"><div class="big">No active deals right now.</div><div class="tiny">Check "Active Deal" on a site/deal inside a client to have it show up here.</div></div>`;
-  return rows.map(r=>`
-    <div class="row-card" data-openclient="${r.client.id}" data-listid="${r.listId}">
-      <div class="nav-icon" style="font-size:20px;">⭐</div>
-      <div class="row-body">
-        <div class="row-title">${escapeHtml(r.client.name)}</div>
-        <div class="row-meta"><span>${r.activeCount} active deal${r.activeCount===1?'':'s'} of ${r.totalCount} site${r.totalCount===1?'':'s'}</span><span class="pill gray">${escapeHtml(r.listName)}</span></div>
-      </div>
-    </div>`).join('');
 }
 function renderContactsScreen(){
   const sub = state.contactsSubView || 'contacts';
@@ -4407,10 +4397,18 @@ function attachShellHandlers(){
     ];
     render();
   });
-  document.querySelectorAll('[data-action="toggleAllDealsAccount"]').forEach(el=>el.onclick=()=>{
+  document.querySelectorAll('[data-action="toggleAllDealsAccount"]').forEach(el=>el.onclick=(ev)=>{
+    if(ev.target.closest('[data-action="toggleAllDealsStage"]')) return; // let the nested stage handler deal with its own click
     const id = el.dataset.accountid;
     if(!state.allDealsAccountOpen) state.allDealsAccountOpen = {};
     state.allDealsAccountOpen[id] = !state.allDealsAccountOpen[id];
+    renderPreservingScroll('.content');
+  });
+  document.querySelectorAll('[data-action="toggleAllDealsStage"]').forEach(el=>el.onclick=(ev)=>{
+    ev.stopPropagation();
+    const key = el.dataset.stagekey;
+    if(!state.allDealsStageOpen) state.allDealsStageOpen = {};
+    state.allDealsStageOpen[key] = !state.allDealsStageOpen[key];
     renderPreservingScroll('.content');
   });
   document.querySelectorAll('[data-action="toggleArchivedDealsAccount"]').forEach(el=>el.onclick=()=>{
@@ -5555,6 +5553,7 @@ function renderChecklistSection(td){
         <div style="display:flex;align-items:center;gap:8px;padding:4px 0;">
           <input type="checkbox" data-checkitem="${item.id}" ${item.done?'checked':''} style="width:auto;">
           <input data-checklistitemtext="${item.id}" value="${escapeAttr(item.text)}" placeholder="Item ${idx+1}" style="flex:1;font-size:13.5px;${item.done?'text-decoration:line-through;color:var(--ink-soft);':''}">
+          <input type="date" data-checklistitemdue="${item.id}" value="${item.dueDate?toLocalDateStr(item.dueDate):''}" title="Due date (optional)" style="width:150px;font-size:12.5px;color:var(--ink-soft);">
           <button class="row-trash" data-removeitem="${item.id}" style="opacity:.5;">✕</button>
         </div>`).join('')}
     </div>
@@ -5611,7 +5610,7 @@ function renderTodoDetailModal(){
   const contact = getTodoContact(td);
   const isForMe = td.assignedTo===state.currentUser.id;
   overlay.innerHTML = `
-  <div class="modal-card">
+  <div class="modal-card" style="${(td.type==='checklist' || td.type==='project') ? 'width:780px;' : ''}">
     <div class="modal-head">
       <div class="modal-title">To-Do Details</div>
       <div style="display:flex;gap:8px;align-items:center;">
@@ -5725,6 +5724,10 @@ function renderTodoDetailModal(){
     const item = td.checklistItems.find(i=>i.id===el.dataset.checklistitemtext);
     if(item){ item.text = el.value.trim(); supaUpdateTodo(td); renderPreservingScroll('.modal-body'); }
   });
+  overlay.querySelectorAll('[data-checklistitemdue]').forEach(el=>el.onchange=()=>{
+    const item = td.checklistItems.find(i=>i.id===el.dataset.checklistitemdue);
+    if(item){ item.dueDate = el.value ? new Date(el.value+'T00:00:00') : null; supaUpdateTodo(td); }
+  });
   overlay.querySelectorAll('[data-checkitem]').forEach(el=>el.onchange=()=>{
     const item = td.checklistItems.find(i=>i.id===el.dataset.checkitem);
     if(item){ item.done = el.checked; supaUpdateTodo(td); renderPreservingScroll('.modal-body'); }
@@ -5833,8 +5836,8 @@ function wireTodoRowHandlers(root){
       openTodoDetail(el.dataset.todo); render();
     };
   });
-  root.querySelectorAll('[data-toggle]').forEach(el=>el.onclick=(ev)=>{ ev.stopPropagation(); toggleComplete(el.dataset.toggle); render(); });
-  root.querySelectorAll('[data-select]').forEach(el=>el.onclick=(ev)=>{ ev.stopPropagation(); toggleSelectTodo(el.dataset.select); render(); });
+  root.querySelectorAll('[data-toggle]').forEach(el=>el.onclick=(ev)=>{ ev.stopPropagation(); toggleComplete(el.dataset.toggle); renderPreservingScroll('.content'); });
+  root.querySelectorAll('[data-select]').forEach(el=>el.onclick=(ev)=>{ ev.stopPropagation(); toggleSelectTodo(el.dataset.select); renderPreservingScroll('.content'); });
   root.querySelectorAll('[data-delete]').forEach(el=>el.onclick=(ev)=>{
     ev.stopPropagation();
     const td = db.todos.find(x=>x.id===el.dataset.delete);
@@ -6149,10 +6152,6 @@ function renderDealRowInClient(l,c,d){
     </div>
     <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end;flex-shrink:0;" data-stopprop="1">
       <label style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink-soft);">
-        <input type="checkbox" data-toggleactive="${d.id}" ${d.activeDeal?'checked':''} style="width:auto;accent-color:var(--edge);">
-        Active Deal
-      </label>
-      <label style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink-soft);">
         <input type="checkbox" data-togglecaexec="${d.id}" data-listid="${l.id}" data-client="${c.id}" ${caExecuted?'checked':''} style="width:auto;accent-color:var(--good);">
         CA Executed
       </label>
@@ -6416,22 +6415,25 @@ function renderDealModalBody(l,c,d){
       </label>
     </div>
   </div>
-  <div class="contact-card">
-    <div class="label">Primary Site Contact</div>
-    ${contactRow(d.contactId)}
-    ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickDealContact" data-slot="primary" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">${d.contactId? 'Change contact':'Add Contact / Create New Contact'}</button>` : ''}
+  <div style="display:flex;gap:14px;margin-bottom:14px;flex-wrap:wrap;">
+    <div class="contact-card" style="flex:1;min-width:220px;">
+      <div class="label">Primary Site Contact</div>
+      ${contactRow(d.contactId)}
+      ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickDealContact" data-slot="primary" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">${d.contactId? 'Change contact':'Add Contact / Create New Contact'}</button>` : ''}
+    </div>
+    ${!state.isMobile ? `
+    <div class="contact-card" style="flex:1;min-width:220px;">
+      <div class="label">Second Site Contact</div>
+      ${contactRow(d.secondContactId)}
+      ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickDealContact" data-slot="second" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">${d.secondContactId? 'Change contact':'Add Contact / Create New Contact'}</button>` : ''}
+    </div>` : ''}
+    ${(d.secondContactId && !state.isMobile) ? `
+    <div class="contact-card" style="flex:1;min-width:220px;">
+      <div class="label">Third Site Contact</div>
+      ${contactRow(d.thirdContactId)}
+      ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickDealContact" data-slot="third" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">${d.thirdContactId? 'Change contact':'Add Contact / Create New Contact'}</button>` : ''}
+    </div>` : ''}
   </div>
-  <div class="contact-card">
-    <div class="label">Second Site Contact</div>
-    ${contactRow(d.secondContactId)}
-    ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickDealContact" data-slot="second" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">${d.secondContactId? 'Change contact':'Add Contact / Create New Contact'}</button>` : ''}
-  </div>
-  ${d.secondContactId ? `
-  <div class="contact-card">
-    <div class="label">Third Site Contact</div>
-    ${contactRow(d.thirdContactId)}
-    ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickDealContact" data-slot="third" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">${d.thirdContactId? 'Change contact':'Add Contact / Create New Contact'}</button>` : ''}
-  </div>` : ''}
   <div class="section-label">To-Do's</div>
   ${canEdit ? `<button class="btn secondary sm" data-action="newTodoInDeal" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}" style="margin-bottom:10px;">+ New To-Do</button>` : ''}
   ${todos.length? renderTodoList(todos, true) : `<div class="tiny" style="color:var(--ink-soft);padding:6px 0;">No to-do's yet — add the first action item for this site.</div>`}
@@ -6468,16 +6470,16 @@ function renderDealModalBody(l,c,d){
     </div>` : `<div class="field"></div>`}
   </div>
   <div class="field-row">
-    <div class="field"><label>Building</label><input id="dtBuilding" value="${escapeAttr(d.building||'')}" ${ro}></div>
-    <div class="field"><label>Space #</label><input id="dtSpaceNum" value="${escapeAttr(d.spaceNum||'')}" ${ro}></div>
-  </div>
-  <div class="field-row">
-    <div class="field"><label>Size</label><input id="dtSize" value="${escapeAttr(d.size||'')}" ${ro}></div>
     <div class="field"><label>${d.dealType==='sale'?'Price':'Rent'}</label><input id="dtMoney" value="${escapeAttr(d.dealType==='sale'? (d.price||'') : (d.rent||''))}" ${ro}></div>
+    <div class="field"><label>TI Allowance</label><input id="dtTI" value="${escapeAttr(d.tiAllowance||'')}" ${ro}></div>
   </div>
   <div class="field-row">
     <div class="field"><label>Term</label><input id="dtTerm" value="${escapeAttr(d.term||'')}" ${ro}></div>
-    <div class="field"><label>TI Allowance</label><input id="dtTI" value="${escapeAttr(d.tiAllowance||'')}" ${ro}></div>
+    <div class="field"><label>Building</label><input id="dtBuilding" value="${escapeAttr(d.building||'')}" ${ro}></div>
+  </div>
+  <div class="field-row">
+    <div class="field"><label>Space #</label><input id="dtSpaceNum" value="${escapeAttr(d.spaceNum||'')}" ${ro}></div>
+    <div class="field"><label>Size</label><input id="dtSize" value="${escapeAttr(d.size||'')}" ${ro}></div>
   </div>
   <div style="display:flex;gap:8px;margin-bottom:14px;">
     <button class="btn secondary sm" data-action="openCommission" data-kind="deal" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">💰 Commission</button>
@@ -7295,17 +7297,6 @@ function attachModalHandlers(root){
     state.dealGroupCollapsed[k]=!currentlyCollapsed;
     renderPreservingScroll('.modal-body');
   });
-  root.querySelectorAll('[data-toggleactive]').forEach(el=>el.onclick=safeHandler((ev)=>{
-    ev.stopPropagation();
-    const frame = state.modalStack[0];
-    const l=db.lists.find(x=>x.id===frame.listId); const c=l && l.clients.find(x=>x.id===frame.clientId);
-    const d=c && c.deals.find(x=>x.id===el.dataset.toggleactive);
-    if(!d){ flashToast("Couldn't find this deal."); render(); return; }
-    d.activeDeal = el.checked;
-    supaUpdateDeal(d, c.id);
-    flashToast(d.activeDeal ? `${d.name} marked as an Active Deal.` : `${d.name} removed from Active Deals.`);
-    render();
-  }));
   root.querySelectorAll('[data-togglecaexec]').forEach(el=>el.onclick=safeHandler((ev)=>{
     ev.stopPropagation();
     const l=db.lists.find(x=>x.id===el.dataset.listid); const c=l && l.clients.find(x=>x.id===el.dataset.client);
