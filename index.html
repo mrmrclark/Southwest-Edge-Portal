@@ -1104,7 +1104,7 @@ function todoRowToLocal(r){
     assignedTo: authIdToLocalUserId(r.assigned_to) || r.assigned_to, createdBy: authIdToLocalUserId(r.created_by) || r.created_by,
     type:r.type, private:r.is_private, completed:r.is_completed, isNew:r.is_new, notes:r.notes||'',
     listId:r.list_id, clientId:r.client_id, dealId:r.deal_id, entryId:r.entry_id, projectId:r.project_id, attachments:[],
-    checklistItems: (r.checklist_items || []).map(item => ({...item, dueDate: item.dueDate ? new Date(item.dueDate) : null})),
+    checklistItems: (r.checklist_items || []).map(item => ({...item, dueDate: item.dueDate ? new Date(item.dueDate) : null, dueDate2: item.dueDate2 ? new Date(item.dueDate2) : null})),
     status: r.status || '',
     reminderPending: !!r.reminder_pending,
     createdAt: r.created_at ? new Date(r.created_at) : null,
@@ -5470,6 +5470,12 @@ function renderMoveDealPicker(){
     performMove(targetListId, newClient.id);
   };
 }
+function renderMoveTodoResultsHtml(allClients){
+  return allClients.map(({l,c})=>`
+    <div class="row-card" data-pickmoveclient="${c.id}" data-listid="${l.id}">
+      <div class="row-body"><div class="row-title">${escapeHtml(c.name)}</div><div class="row-meta"><span class="pill gray">${l.id==='listings'?'Listing':'Client'}</span></div></div>
+    </div>`).join('') || `<div class="tiny" style="color:var(--ink-soft);padding:10px 0;">No matches.</div>`;
+}
 function renderMoveTodoPicker(){
   const m = state.moveTodoPicker;
   const td = db.todos.find(x=>x.id===m.todoId);
@@ -5486,11 +5492,8 @@ function renderMoveTodoPicker(){
     bodyHtml = `
     <input class="searchbox" id="moveTodoSearch" placeholder="🔍 Search Clients/Listings…" value="${escapeAttr(m.query||'')}">
     <button class="btn secondary sm" data-action="detachTodo" style="width:100%;margin-bottom:10px;">Detach — make this a floating to-do</button>
-    <div style="max-height:320px;overflow-y:auto;">
-      ${allClients.map(({l,c})=>`
-        <div class="row-card" data-pickmoveclient="${c.id}" data-listid="${l.id}">
-          <div class="row-body"><div class="row-title">${escapeHtml(c.name)}</div><div class="row-meta"><span class="pill gray">${l.id==='listings'?'Listing':'Client'}</span></div></div>
-        </div>`).join('') || `<div class="tiny" style="color:var(--ink-soft);padding:10px 0;">No matches.</div>`}
+    <div id="moveTodoResults" style="max-height:320px;overflow-y:auto;">
+      ${renderMoveTodoResultsHtml(allClients)}
     </div>`;
   } else {
     const l = db.lists.find(x=>x.id===m.clientListId);
@@ -5515,7 +5518,22 @@ function renderMoveTodoPicker(){
   document.getElementById('app').appendChild(overlay);
   overlay.querySelector('[data-action="closeMoveTodo"]').onclick=()=>{ state.moveTodoPicker=null; render(); };
   const searchEl = document.getElementById('moveTodoSearch');
-  if(searchEl) searchEl.oninput=()=>{ m.query=searchEl.value; render(); };
+  if(searchEl) searchEl.oninput=()=>{
+    m.query=searchEl.value;
+    const q = (m.query||'').toLowerCase();
+    const newMatches = [];
+    db.lists.filter(l=>l.type==='deep').forEach(l=>l.clients.forEach(c=>{
+      if(!q || c.name.toLowerCase().includes(q)) newMatches.push({l, c});
+    }));
+    const resultsBox = document.getElementById('moveTodoResults');
+    if(resultsBox){
+      resultsBox.innerHTML = renderMoveTodoResultsHtml(newMatches);
+      resultsBox.querySelectorAll('[data-pickmoveclient]').forEach(el=>el.onclick=()=>{
+        m.step='deal'; m.clientListId=el.dataset.listid; m.clientId=el.dataset.pickmoveclient;
+        render();
+      });
+    }
+  };
   const detachBtn = overlay.querySelector('[data-action="detachTodo"]'); if(detachBtn) detachBtn.onclick=()=>{
     td.listId=null; td.clientId=null; td.dealId=null; td.entryId=null;
     supaUpdateTodo(td);
@@ -5553,7 +5571,8 @@ function renderChecklistSection(td){
         <div style="display:flex;align-items:center;gap:8px;padding:4px 0;">
           <input type="checkbox" data-checkitem="${item.id}" ${item.done?'checked':''} style="width:auto;">
           <input data-checklistitemtext="${item.id}" value="${escapeAttr(item.text)}" placeholder="Item ${idx+1}" style="flex:1;font-size:13.5px;${item.done?'text-decoration:line-through;color:var(--ink-soft);':''}">
-          <input type="date" data-checklistitemdue="${item.id}" value="${item.dueDate?toLocalDateStr(item.dueDate):''}" title="Due date (optional)" style="width:150px;font-size:12.5px;color:var(--ink-soft);">
+          <input type="date" data-checklistitemdue="${item.id}" value="${item.dueDate?toLocalDateStr(item.dueDate):''}" title="Date 1 (optional)" style="width:135px;font-size:12.5px;color:var(--ink-soft);">
+          <input type="date" data-checklistitemdue2="${item.id}" value="${item.dueDate2?toLocalDateStr(item.dueDate2):''}" title="Date 2 (optional)" style="width:135px;font-size:12.5px;color:var(--ink-soft);">
           <button class="row-trash" data-removeitem="${item.id}" style="opacity:.5;">✕</button>
         </div>`).join('')}
     </div>
@@ -5610,7 +5629,7 @@ function renderTodoDetailModal(){
   const contact = getTodoContact(td);
   const isForMe = td.assignedTo===state.currentUser.id;
   overlay.innerHTML = `
-  <div class="modal-card" style="${(td.type==='checklist' || td.type==='project') ? 'width:780px;' : ''}">
+  <div class="modal-card" style="${(td.type==='checklist' || td.type==='project') ? 'width:860px;' : ''}">
     <div class="modal-head">
       <div class="modal-title">To-Do Details</div>
       <div style="display:flex;gap:8px;align-items:center;">
@@ -5727,6 +5746,10 @@ function renderTodoDetailModal(){
   overlay.querySelectorAll('[data-checklistitemdue]').forEach(el=>el.onchange=()=>{
     const item = td.checklistItems.find(i=>i.id===el.dataset.checklistitemdue);
     if(item){ item.dueDate = el.value ? new Date(el.value+'T00:00:00') : null; supaUpdateTodo(td); }
+  });
+  overlay.querySelectorAll('[data-checklistitemdue2]').forEach(el=>el.onchange=()=>{
+    const item = td.checklistItems.find(i=>i.id===el.dataset.checklistitemdue2);
+    if(item){ item.dueDate2 = el.value ? new Date(el.value+'T00:00:00') : null; supaUpdateTodo(td); }
   });
   overlay.querySelectorAll('[data-checkitem]').forEach(el=>el.onchange=()=>{
     const item = td.checklistItems.find(i=>i.id===el.dataset.checkitem);
@@ -7539,6 +7562,14 @@ function openContactPicker(ctx){
 function openBrokerPicker(ctx){
   state.brokerPickerOpen = ctx; state.brokerPickerQuery='';
 }
+function renderBrokerSuggestListHtml(matches){
+  if(!matches.length) return '';
+  return `<div class="suggest-list">${matches.map(b=>`
+    <div class="suggest-item" data-selectbroker="${b.id}">
+      <b>${escapeHtml(b.name)}</b>
+      <div class="sub">${escapeHtml(b.company||'No company')} · ${escapeHtml(b.mobile||b.phone||'No number')}</div>
+    </div>`).join('')}</div>`;
+}
 function renderBrokerPickerPanel(){
   if(!state.brokerPickerOpen) return '';
   const q = state.brokerPickerQuery.toLowerCase();
@@ -7551,11 +7582,7 @@ function renderBrokerPickerPanel(){
         <div class="field autocomplete-box">
           <label>Search the Phoenix Broker List</label>
           <input id="brokerSearchInput" placeholder="Start typing a name or company…" value="${escapeAttr(state.brokerPickerQuery)}">
-          ${matches.length? `<div class="suggest-list">${matches.map(b=>`
-            <div class="suggest-item" data-selectbroker="${b.id}">
-              <b>${escapeHtml(b.name)}</b>
-              <div class="sub">${escapeHtml(b.company||'No company')} · ${escapeHtml(b.mobile||b.phone||'No number')}</div>
-            </div>`).join('')}</div>` : ''}
+          <div id="brokerSuggestList">${renderBrokerSuggestListHtml(matches)}</div>
         </div>
         <div style="margin-top:14px;border-top:1px solid var(--line);padding-top:14px;">
           <div style="font-size:12px;font-weight:600;color:var(--ink-soft);margin-bottom:8px;">Or add a new broker to the list</div>
@@ -9150,7 +9177,7 @@ function renderMapsImportModal(){
     const clearLink = overlay.querySelector('[data-mapsclearclient]');
     if(clearLink) clearLink.onclick=(ev)=>{ ev.preventDefault(); m.pickedClient=null; render(); };
     const newNameEl = document.getElementById('mapsNewClientName');
-    if(newNameEl) newNameEl.oninput = ()=>{ m.newClientName = newNameEl.value; if(!m.newClientListId) m.newClientListId='clients'; render(); };
+    if(newNameEl) newNameEl.oninput = ()=>{ m.newClientName = newNameEl.value; if(!m.newClientListId) m.newClientListId='clients'; };
     overlay.querySelectorAll('[data-mapsnewlist]').forEach(b=>b.onclick=()=>{ m.newClientListId = b.dataset.mapsnewlist; render(); });
 
     const chooseFileBtn = overlay.querySelector('[data-action="mapsChooseFile"]');
@@ -9487,7 +9514,18 @@ render = function(){
     const input = document.getElementById('brokerSearchInput');
     if(input){
       input.focus();
-      input.oninput=()=>{ state.brokerPickerQuery=input.value; render(); };
+      input.oninput=()=>{
+        state.brokerPickerQuery=input.value;
+        const q = state.brokerPickerQuery.toLowerCase();
+        const newMatches = q ? PHOENIX_BROKER_LIST.filter(b=>b.name.toLowerCase().includes(q) || (b.company||'').toLowerCase().includes(q)) : [];
+        const listBox = document.getElementById('brokerSuggestList');
+        if(listBox){
+          listBox.innerHTML = renderBrokerSuggestListHtml(newMatches);
+          listBox.querySelectorAll('[data-selectbroker]').forEach(el=>el.onclick=()=>{
+            finishBrokerPick(el.dataset.selectbroker);
+          });
+        }
+      };
     }
     document.querySelectorAll('[data-selectbroker]').forEach(el=>el.onclick=()=>{
       finishBrokerPick(el.dataset.selectbroker);
