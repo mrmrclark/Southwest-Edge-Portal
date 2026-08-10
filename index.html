@@ -4912,7 +4912,7 @@ function renderPendingUsersModal(){
   });
 }
 async function handleAdminAction(a){
-  if(a==='adminPending'){ state.pendingUsersModalOpen=true; }
+  if(a==='adminPending'){ state.pendingUsersModalOpen=true; render(); await fetchPendingUsersFromSupabase(); render(); }
   if(a==='adminPendingDeletions'){ state.pendingDeletionsOpen=true; }
   if(a==='adminFullTeam'){ state.mainView = {type:'smart', id:'fullTeam'}; if(state.isMobile) state.mobileScreen='main'; }
   if(a==='adminImportTodos'){ state.importTodosModal = {step:'upload'}; }
