@@ -2308,7 +2308,7 @@ function smartListTodosRaw(key){
     case 'assignedByOthers': return t.filter(td=>!td.completed && td.assignedTo===me && td.createdBy && td.createdBy!==me);
     case 'week': return t.filter(td=>!td.completed && inMySphere(td) && ['today','overdue','week'].includes(dueStatus(td.dueDate)));
     case 'month': return t.filter(td=>!td.completed && inMySphere(td) && ['today','overdue','week','month'].includes(dueStatus(td.dueDate)));
-    case 'allMe': return t.filter(td=>!td.completed && inMySphere(td) && !!td.dueDate);
+    case 'allMe': return t.filter(td=>!td.completed && inMySphere(td));
     case 'someday': return t.filter(td=>!td.completed && !td.dueDate && inMySphere(td));
     case 'completed': return t.filter(td=>td.completed && inMySphere(td));
     case 'archived': return db.archivedTodos.filter(td=>inMySphere(td));
