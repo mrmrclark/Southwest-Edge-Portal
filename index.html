@@ -3886,7 +3886,7 @@ function renderMainContent(){
   const archiveBar = id==='completed' && list.length ?
     `<button class="btn secondary sm" data-action="archiveAllCompleted" style="margin-bottom:12px;">🗄️ Archive All Completed (${list.length})</button>` : '';
   if(!list.length && searchQ) return `<div class="empty-state"><div class="big">No matches for "${escapeHtml(searchQ)}".</div><div class="tiny">Try a different search, or clear it to see everything.</div></div>`;
-  return archiveBar + renderBulkBar() + renderTodoList(list);
+  return archiveBar + renderBulkBar() + renderTodoList(list, false, id==='allMe');
 }
 function renderArchivedClientsMain(){
   let archived = db.archivedClients||[];
@@ -4017,10 +4017,23 @@ function todoRowLegend(ids){
     <span><span style="display:inline-block;width:15px;height:15px;border:2px solid var(--ink);border-radius:50%;vertical-align:middle;margin-right:6px;"></span>Mark complete</span>
   </div>`;
 }
-function renderTodoList(list, compact){
+function renderTodoList(list, compact, dateOnly){
   if(!list.length){
     if(compact) return `<div class="tiny" style="color:var(--ink-soft);padding:6px 0;">Nothing here right now.</div>`;
     return `<div class="empty-state"><div class="big">All clear.</div><div class="tiny">Nothing here right now. Nice work. Take five.</div></div>`;
+  }
+  if(dateOnly){
+    // Pure soonest-first sort, no assignee grouping at all — used for personal
+    // date-ordered views (e.g. All - Me) where grouping by assignee would break
+    // up the chronological order.
+    const sorted = list.slice().sort((a,b)=>{
+      if(!a.dueDate && !b.dueDate) return 0;
+      if(!a.dueDate) return 1;
+      if(!b.dueDate) return -1;
+      return a.dueDate-b.dueDate;
+    });
+    const allIds = sorted.map(td=>td.id);
+    return todoRowLegend(allIds) + sorted.map(td=>renderTodoRow(td)).join('');
   }
   // Group by assignee — mine first, then each teammate in turn — and within each
   // group, new/unseen assignments float up, then soonest due date first.
