@@ -13,7 +13,7 @@
 // currently-open tab gets taken over right away rather than waiting for the
 // user to close and reopen the app.
 
-const CACHE_NAME = 'edge-portal-network-first-v3';
+const CACHE_NAME = 'edge-portal-network-first-v4';
 
 self.addEventListener('install', (event) => {
   // Activate this service worker immediately, without waiting for other
