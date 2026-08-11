@@ -7612,7 +7612,7 @@ function renderEntryModalBody(l,e){
 }
 
 function saveDealTermsFromForm(l, c, d){
-  const oldStage = d._stageBeforeEdit!==undefined ? d._stageBeforeEdit : d.stage;
+  const oldStage = Object.prototype.hasOwnProperty.call(d, '_stageBeforeEdit') ? d._stageBeforeEdit : d.stage;
   const stageEl = document.getElementById('dtStage');
   if(stageEl) d.stage = stageEl.value || null; // empty is fine — it just means "Prospects" in the grouped view
   const categorySelect = document.getElementById('dtCategory');
@@ -7901,7 +7901,7 @@ function attachModalHandlers(root){
     const tiEl = document.getElementById('dtTI'); if(tiEl) tiEl.oninput=()=>{ d.tiAllowance = tiEl.value; };
     const notesEl = document.getElementById('dtNotes'); if(notesEl) notesEl.oninput=()=>{ d.notes = notesEl.value; };
     const stageEl = document.getElementById('dtStage'); if(stageEl) stageEl.onchange=()=>{
-      if(d._stageBeforeEdit===undefined) d._stageBeforeEdit = d.stage;
+      if(!Object.prototype.hasOwnProperty.call(d, '_stageBeforeEdit')) d._stageBeforeEdit = d.stage;
       d.stage = stageEl.value;
     };
     const openForBizEl = document.getElementById('dtOpenForBusiness'); if(openForBizEl) openForBizEl.onchange=()=>{
