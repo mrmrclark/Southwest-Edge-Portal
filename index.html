@@ -547,11 +547,15 @@ let state = {
   selectedTodoIds:[],
   todoDetailModal:null,         // {id} when the To-Do detail/edit modal is open
   newSmartListModal:null,       // filter-builder state when creating a custom smart list
+  brokerReviewModal:null,       // {todoId, reviewId} — Designated Broker / Office Manager review modal
+  qualifiedOfferPrompt:null,    // {sourceTable, sourceId, clientId, dealName} — LOI qualified-offer popup
+  brokerReviewLogOpen:false,    // hamburger menu: audit log screen for David/Gina/Admin
+  brokerReviewLog:null,         // {startDate, endDate} — active date range for the log
   navContextMenu:null,          // {kind:'smart'|'list', id} — which ellipsis menu is open
   showAllSmartLists:false,      // collapse toggle once there are more than 10 smart lists
   notifSettingsOpen:false,      // whether the notification-preferences modal is open
   pendingUsersModalOpen:false,
-  sidePanelWidgets:{calendar:true, weather:true, news:true, quicklinks:true},
+  sidePanelWidgets:{calendar:true, weather:true, news:true, quicklinks:true, offers:true},
   showWidgetPicker:false,
   editContactModal:null,
   editBrokerModal:null,
@@ -1035,6 +1039,152 @@ async function supaDeleteDeal(id){
   if(error){ console.error('supaDeleteDeal error:', error); flashToast('Deleted here, but syncing to the server failed. (' + error.message + ')'); render(); }
 }
 
+/* ---------------- DESIGNATED BROKER REVIEWS + OFFER TRACKER ---------------- */
+async function fetchBrokerReviewsFromSupabase(){
+  const { data, error } = await supabaseClient.from('broker_reviews').select('*');
+  if(error){ console.error('fetchBrokerReviewsFromSupabase error:', error); return; }
+  db.brokerReviews = (data||[]).map(r=>({
+    id:r.id, sourceTable:r.source_table, sourceId:r.source_id, clientId:r.client_id, dealName:r.deal_name,
+    reviewType:r.review_type, dateSigned:r.date_signed, dueDate:r.due_date, status:r.status,
+    checklist:r.checklist||null, omCompletedAt:r.om_completed_at, omCompletedBy:r.om_completed_by,
+    approvedAt:r.approved_at, approvedBy:r.approved_by, createdBy:r.created_by, createdAt:r.created_at
+  }));
+}
+async function fetchDealOffersFromSupabase(){
+  const { data, error } = await supabaseClient.from('deal_offers').select('*');
+  if(error){ console.error('fetchDealOffersFromSupabase error:', error); return; }
+  db.dealOffers = (data||[]).map(r=>({id:r.id, sourceTable:r.source_table, sourceId:r.source_id, clientId:r.client_id,
+    qualified:r.qualified, markedAt:r.marked_at, markedBy:r.marked_by}));
+}
+function brokerReviewApproved(sourceTable, sourceId, dealType){
+  const type = dealType==='lease' ? 'signedLease' : 'closedEscrow';
+  return (db.brokerReviews||[]).some(r=>r.sourceTable===sourceTable && r.sourceId===sourceId && r.reviewType===type && r.approvedAt);
+}
+const CLOSED_ESCROW_CHECKLIST_ITEMS = ['Closing Statement','Purchase of Sale','Deed','Extensions/Amendments','Ernest & receipts','FIRPTA'];
+async function createBrokerReview(reviewType, sourceTable, sourceId, clientId, dealName, dueDays){
+  const dateSigned = todayDate();
+  const dueDate = addDays(dateSigned, dueDays);
+  const row = {
+    source_table:sourceTable, source_id:sourceId, client_id:clientId, deal_name:dealName,
+    review_type:reviewType, date_signed: toLocalDateStr(dateSigned), due_date: toLocalDateStr(dueDate),
+    status: reviewType==='closedEscrow' ? 'pending' : 'pending',
+    checklist: reviewType==='closedEscrow' ? CLOSED_ESCROW_CHECKLIST_ITEMS.map(name=>({name, checked:false})) : null,
+    created_by: localUserIdToAuthId(state.currentUser.id)
+  };
+  const { data, error } = await supabaseClient.from('broker_reviews').insert(row).select().single();
+  if(error){ console.error('createBrokerReview error:', error); flashToast('Broker review could not be created (' + error.message + ')'); render(); return null; }
+  const local = {id:data.id, sourceTable, sourceId, clientId, dealName, reviewType, dateSigned:row.date_signed,
+    dueDate:row.due_date, status:row.status, checklist:row.checklist, omCompletedAt:null, approvedAt:null, createdAt:data.created_at};
+  db.brokerReviews.push(local);
+  return local;
+}
+function davidUser(){ return USERS.find(u=>u.email==='djarand@edge-re.com'); }
+function ginaUser(){ return USERS.find(u=>u.email==='gmaurer@edge-re.com'); }
+async function invokeBrokerReviewEmail(reviewId, eventType, actorLocalId){
+  try{
+    await supabaseClient.functions.invoke('notify-broker-review', {
+      body:{ reviewId, eventType, actorId: actorLocalId ? localUserIdToAuthId(actorLocalId) : null }
+    });
+  }catch(e){ console.error('invokeBrokerReviewEmail error:', e); }
+}
+// Called right after a Deal or Prospect is saved with a new stage — compares old vs new
+// and fires off whichever Designated Broker / Office Manager workflow applies.
+async function handleStageTransition(sourceTable, sourceId, clientId, dealName, dealType, oldStage, newStage){
+  if(oldStage===newStage) return;
+  const david = davidUser();
+  if(newStage==='signedLease'){
+    const rev = await createBrokerReview('signedLease', sourceTable, sourceId, clientId, dealName, 10);
+    if(rev){
+      if(david){
+        const todo = {id:crypto.randomUUID(), title:`Designated Broker Review: ${dealName}`, category:'Broker Review',
+          dueDate: new Date(rev.dueDate+'T00:00:00'), assignedTo:david.id, createdBy:state.currentUser.id,
+          type:'brokerReview', private:false, completed:false, isNew:true, brokerReviewId:rev.id,
+          notes:`Signed Lease — please review in Egnyte and mark reviewed.`,
+          listId:null, clientId, dealId: sourceTable==='deals'?sourceId:null, entryId:null, attachments:[]};
+        db.todos.push(todo); await supaCreateTodo(todo);
+      }
+      invokeBrokerReviewEmail(rev.id, 'leaseOrPsaReview', state.currentUser.id);
+    }
+  } else if(newStage==='inEscrow'){
+    const rev = await createBrokerReview('signedPSA', sourceTable, sourceId, clientId, dealName, 10);
+    if(rev){
+      if(david){
+        const todo = {id:crypto.randomUUID(), title:`Designated Broker Review: ${dealName}`, category:'Broker Review',
+          dueDate: new Date(rev.dueDate+'T00:00:00'), assignedTo:david.id, createdBy:state.currentUser.id,
+          type:'brokerReview', private:false, completed:false, isNew:true, brokerReviewId:rev.id,
+          notes:`Signed PSA / In Escrow — please review in Egnyte and mark reviewed.`,
+          listId:null, clientId, dealId: sourceTable==='deals'?sourceId:null, entryId:null, attachments:[]};
+        db.todos.push(todo); await supaCreateTodo(todo);
+      }
+      invokeBrokerReviewEmail(rev.id, 'leaseOrPsaReview', state.currentUser.id);
+    }
+  } else if(newStage==='closedEscrow'){
+    const rev = await createBrokerReview('closedEscrow', sourceTable, sourceId, clientId, dealName, 3);
+    if(rev){
+      const gina = ginaUser();
+      if(gina){
+        const todo = {id:crypto.randomUUID(), title:`Closing Documents: ${dealName}`, category:'Closing Checklist',
+          dueDate: new Date(rev.dueDate+'T00:00:00'), assignedTo:gina.id, createdBy:state.currentUser.id,
+          type:'closedEscrowChecklist', private:false, completed:false, isNew:true, brokerReviewId:rev.id,
+          notes:`Confirm each closing document is in Egnyte, then mark complete for Designated Broker review.`,
+          listId:null, clientId, dealId: sourceTable==='deals'?sourceId:null, entryId:null, attachments:[]};
+        db.todos.push(todo); await supaCreateTodo(todo);
+      }
+      invokeBrokerReviewEmail(rev.id, 'closedEscrowGinaChecklist', state.currentUser.id);
+    }
+  }
+  // Offer tracker: crossing up into LOI-or-above from below always prompts; landing
+  // specifically on 'loi' always prompts too (per Michael — simpler than tracking history).
+  const offerStages = ['loi','signedLOI','negotiating','inEscrow','closedEscrow'];
+  const wasAbove = offerStages.includes(oldStage);
+  if(newStage==='loi' || (offerStages.includes(newStage) && !wasAbove)){
+    state.qualifiedOfferPrompt = {sourceTable, sourceId, clientId, dealName};
+  }
+}
+async function markGinaChecklistComplete(reviewId){
+  const rev = (db.brokerReviews||[]).find(r=>r.id===reviewId);
+  if(!rev) return;
+  const now = new Date().toISOString();
+  rev.status='awaiting_db'; rev.omCompletedAt=now; rev.omCompletedBy=localUserIdToAuthId(state.currentUser.id);
+  const { error } = await supabaseClient.from('broker_reviews').update({status:'awaiting_db', om_completed_at:now, om_completed_by: rev.omCompletedBy}).eq('id', reviewId);
+  if(error){ console.error('markGinaChecklistComplete error:', error); flashToast('Could not save (' + error.message + ')'); render(); return; }
+  const david = davidUser();
+  if(david){
+    const todo = {id:crypto.randomUUID(), title:`Final Approval: ${rev.dealName}`, category:'Broker Review',
+      dueDate: new Date(rev.dueDate+'T00:00:00'), assignedTo:david.id, createdBy:state.currentUser.id,
+      type:'closedEscrowApproval', private:false, completed:false, isNew:true, brokerReviewId:rev.id,
+      notes:`Gina confirmed all closing documents are filed. Please give final approval.`,
+      listId:null, clientId:rev.clientId, dealId: rev.sourceTable==='deals'?rev.sourceId:null, entryId:null, attachments:[]};
+    db.todos.push(todo); await supaCreateTodo(todo);
+  }
+  invokeBrokerReviewEmail(reviewId, 'closedEscrowDavidReview', state.currentUser.id);
+}
+async function markBrokerReviewApproved(reviewId, todoId){
+  const rev = (db.brokerReviews||[]).find(r=>r.id===reviewId);
+  if(!rev) return;
+  const now = new Date().toISOString();
+  rev.status='approved'; rev.approvedAt=now; rev.approvedBy=localUserIdToAuthId(state.currentUser.id);
+  const { error } = await supabaseClient.from('broker_reviews').update({status:'approved', approved_at:now, approved_by: rev.approvedBy}).eq('id', reviewId);
+  if(error){ console.error('markBrokerReviewApproved error:', error); flashToast('Could not save (' + error.message + ')'); render(); return; }
+  if(todoId){
+    const td = db.todos.find(t=>t.id===todoId);
+    if(td){ td.completed=true; td.completedAt=new Date(); supaUpdateTodo(td); }
+  }
+  if(rev.reviewType==='signedLease'){
+    invokeBrokerReviewEmail(reviewId, 'leaseApprovedNotifyGina', state.currentUser.id);
+  }
+  flashToast('Designated Broker approval recorded.');
+  render();
+}
+async function saveQualifiedOffer(sourceTable, sourceId, clientId, qualified){
+  const row = {source_table:sourceTable, source_id:sourceId, client_id:clientId, qualified, marked_by: localUserIdToAuthId(state.currentUser.id)};
+  const { data, error } = await supabaseClient.from('deal_offers').insert(row).select().single();
+  if(error){ console.error('saveQualifiedOffer error:', error); flashToast('Could not save (' + error.message + ')'); render(); return; }
+  db.dealOffers.push({id:data.id, sourceTable, sourceId, clientId, qualified, markedAt:data.marked_at});
+  state.qualifiedOfferPrompt=null;
+  render();
+}
+
 /* ---------------- PROSPECTS (Leasing / Prospecting Report) ---------------- */
 function prospectRowToLocal(r){
   return {id:r.id, tenantName:r.tenant_name, contactId:r.contact_id, brokerId:r.broker_id, categoryId:r.category_id,
@@ -1198,6 +1348,8 @@ async function fetchAllAppDataFromSupabase(){
   await fetchPendingUsersFromSupabase();
   await fetchCompanySettingsFromSupabase();
   await fetchSmartListsFromSupabase();
+  await fetchBrokerReviewsFromSupabase();
+  await fetchDealOffersFromSupabase();
   await fetchCommissionOnlyPeople();
 }
 async function fetchCompanySettingsFromSupabase(){
@@ -1458,6 +1610,10 @@ const DEFAULT_PROPERTY_CATEGORIES = [
 // Fixed hierarchy — NOT user-editable, unlike property categories. Ordered top (most
 // advanced) to bottom, matching the board layout. "track" controls which stages a
 // deal can move between once it's Lease vs Sale.
+function roleLabel(role){
+  if(role==='FullAccess') return 'Office Manager / Designated Broker';
+  return role;
+}
 const LSR_STAGES = [
   {id:'signedLease', name:'Signed Lease', track:'lease', color:'#E8951E'},
   {id:'closedEscrow', name:'Closed Escrow', track:'sale', color:'#E8951E'},
@@ -2082,6 +2238,8 @@ function lsrCategoriesFor(listingClient){
 let db = {
   archivedClients: [],
   deletionRequests: [],
+  brokerReviews: [],
+  dealOffers: [],
   contacts: [
     {id:'c1', first:'Greg', last:'Abbott', company:'Velocity Retail Group', email:'gabbott@velocityrg.com', mobile:'(602) 555-0101', phone:'(602) 682-8181'},
     {id:'c2', first:'Kristina', last:'Abel', company:"Draper's & Damon's", email:'kristinaa@drapers.com', mobile:'(949) 555-0102', phone:'(949) 784-3109'},
@@ -2418,6 +2576,9 @@ function render(){
   if(state.commissionModal) renderCommissionModal();
   if(state.myNotesOpen) renderMyNotesModal();
   if(state.newSmartListModal) renderNewSmartListModal();
+  if(state.brokerReviewModal) renderBrokerReviewModal();
+  if(state.qualifiedOfferPrompt) renderQualifiedOfferPrompt();
+  if(state.brokerReviewLog) renderBrokerReviewLogModal();
   if(state.notifSettingsOpen) renderNotifSettingsModal();
   if(state.pendingUsersModalOpen) renderPendingUsersModal();
   if(state.manageUsersModalOpen) renderManageUsersModal();
@@ -2973,7 +3134,7 @@ function renderSidebar(){
         <div class="sidebar-avatar">${cu.initials}</div>
         <div>
           <div class="sidebar-user">${cu.name}</div>
-          <div class="sidebar-sub">${cu.role}</div>
+          <div class="sidebar-sub">${roleLabel(cu.role)}</div>
         </div>
         ${state.showUserMenu ? `
         <div class="admin-menu" style="top:100%;left:0;margin-top:6px;min-width:160px;">
@@ -3209,6 +3370,57 @@ function fetchWeatherIfNeeded(){
       render();
     })
     .catch(()=>{ weatherCache = {error:true, fetchedAt:Date.now()}; render(); });
+}
+function allClientsFlatById(id){ return allClientsFlat().find(c=>c.id===id); }
+// Splits qualified-offer credit evenly across whoever has access to the client account
+// (creator + authorized users) — Admins and Users are treated identically here; only
+// LD and Daniel are naturally excluded since they have no login/profile at all.
+function offerCreditsByUser(){
+  const now = new Date();
+  const year = now.getFullYear(), month = now.getMonth();
+  const credits = {}; // userId -> {ytd, month}
+  USERS.forEach(u=>{ credits[u.id] = {ytd:0, month:0}; });
+  (db.dealOffers||[]).filter(o=>o.qualified).forEach(o=>{
+    const c = allClientsFlatById(o.clientId);
+    if(!c) return;
+    const people = Array.from(new Set([c.createdBy, ...(c.authorizedUserIds||[])].filter(Boolean)));
+    if(!people.length) return;
+    const share = 1/people.length;
+    const marked = new Date(o.markedAt);
+    const inYear = marked.getFullYear()===year;
+    const inMonth = inYear && marked.getMonth()===month;
+    people.forEach(uid=>{
+      if(!credits[uid]) credits[uid] = {ytd:0, month:0};
+      if(inYear) credits[uid].ytd += share;
+      if(inMonth) credits[uid].month += share;
+    });
+  });
+  return credits;
+}
+function renderOfferTrackerWidget(){
+  const credits = offerCreditsByUser();
+  const rows = USERS.filter(u=>u.email!=='ledonna@edge-re.com') // commission-only people never appear here anyway (no USERS entry)
+    .map(u=>({u, ytd:credits[u.id]?credits[u.id].ytd:0, month:credits[u.id]?credits[u.id].month:0}))
+    .sort((a,b)=>b.ytd-a.ytd);
+  return `
+  <div class="widget-card">
+    <div class="widget-head"><div class="widget-title">Offer Tracker</div></div>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;">
+      <thead><tr style="text-align:left;color:var(--ink-soft);">
+        <th style="padding:4px 6px 6px 0;font-weight:600;">Broker</th>
+        <th style="padding:4px 6px 6px 0;font-weight:600;text-align:right;">This Month</th>
+        <th style="padding:4px 0 6px 6px;font-weight:600;text-align:right;">YTD</th>
+      </tr></thead>
+      <tbody>
+        ${rows.map(r=>`
+        <tr style="border-top:1px solid var(--line-soft);">
+          <td style="padding:5px 6px 5px 0;">${escapeHtml(r.u.name)}</td>
+          <td style="padding:5px 6px 5px 0;text-align:right;">${r.month.toFixed(2).replace(/\.00$/,'')}</td>
+          <td style="padding:5px 0 5px 6px;text-align:right;font-weight:600;">${r.ytd.toFixed(2).replace(/\.00$/,'')}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>
+  </div>`;
 }
 function renderWeatherWidget(){
   if(!weatherCache || weatherCache.loading) fetchWeatherIfNeeded();
@@ -3657,7 +3869,7 @@ function wireMarketingListWizard(overlay, listing, allCats){
     };
   }
 }
-const WIDGET_RENDERERS = { calendar: renderCalendarWidget, weather: renderWeatherWidget, news: renderNewsWidget, quicklinks: renderQuickLinksWidget };
+const WIDGET_RENDERERS = { calendar: renderCalendarWidget, weather: renderWeatherWidget, news: renderNewsWidget, quicklinks: renderQuickLinksWidget, offers: renderOfferTrackerWidget };
 function renderSidePanel(){
   if(state.isMobile) return ''; // widgets are desktop-only, full stop — no markup, no weather fetch
   const w = state.sidePanelWidgets;
@@ -3687,6 +3899,9 @@ function renderSidePanel(){
         </label>
         <label style="display:flex;align-items:center;gap:8px;padding:8px 12px;font-size:12.5px;cursor:pointer;">
           <input type="checkbox" data-widgettoggle="quicklinks" ${w.quicklinks?'checked':''} style="width:auto;"> Quick Links
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;padding:8px 12px;font-size:12.5px;cursor:pointer;">
+          <input type="checkbox" data-widgettoggle="offers" ${w.offers?'checked':''} style="width:auto;"> Offer Tracker
         </label>
       </div>` : ''}
     </div>
@@ -4164,7 +4379,7 @@ function renderTeamTodos(smartId){
       <div class="avatar-chip" style="width:34px;height:34px;font-size:13px;">${u.initials}</div>
       <div>
         <div style="font-weight:600;font-size:14px;">${u.name}</div>
-        <div style="font-size:11.5px;color:var(--ink-soft);">${u.role}</div>
+        <div style="font-size:11.5px;color:var(--ink-soft);">${roleLabel(u.role)}</div>
       </div>
       <div class="team-stats">
         <div class="team-stat"><div class="num">${count}</div><div class="lab">${label}</div></div>
@@ -4289,8 +4504,10 @@ function renderMobileTabbar(){
 }
 function renderAdminMenu(){
   const isAdmin = state.currentUser.role==='Admin';
+  const isDBRole = state.currentUser.role==='Admin' || state.currentUser.role==='FullAccess';
   return `
   <div class="admin-menu">
+    ${isDBRole ? `<div class="admin-item" data-action="openBrokerReviewLog">📋 Broker Review Log</div>` : ''}
     ${isAdmin ? `<div class="admin-item" data-action="adminPending">🆕 Pending User Requests ${pendingUsers.length? `<span class="nav-count urgent" style="margin-left:auto;">${pendingUsers.length}</span>`:''}</div>` : ''}
     ${isAdmin ? `<div class="admin-item" data-action="adminFullTeam">👥 Full Team To-Do's (unfiltered)</div>` : ''}
     ${!state.isMobile ? `<div class="admin-item" data-action="adminImportTodos">⬆️ Import To-Do's (CSV)</div>` : ''}
@@ -4617,7 +4834,7 @@ function attachShellHandlers(){
     flashToast(`${name} added to ${l.name}.`);
     render();
   });
-  ['adminPending','adminFullTeam','adminImportTodos','adminImportTaskFire','adminImportMaps','adminDigest','adminUsers','adminTimes','adminReset'].forEach(a=>{
+  ['adminPending','adminFullTeam','adminImportTodos','adminImportTaskFire','adminImportMaps','adminDigest','adminUsers','adminTimes','adminReset','openBrokerReviewLog'].forEach(a=>{
     const e=document.querySelector(`[data-action="${a}"]`);
     if(e) e.onclick=()=>{ state.showAdminMenu=false; handleAdminAction(a); };
   });
@@ -4689,7 +4906,7 @@ function renderManageUsersModal(){
           <div class="row-right">
             <select data-userrole="${u.id}" ${u.id===state.currentUser.id?'disabled title="Not able to change your own role"':''}>
               <option value="Admin" ${u.role==='Admin'?'selected':''}>Admin</option>
-              <option value="FullAccess" ${u.role==='FullAccess'?'selected':''}>Full Access</option>
+              <option value="FullAccess" ${u.role==='FullAccess'?'selected':''}>Office Manager / Designated Broker</option>
               <option value="User" ${u.role==='User'?'selected':''}>User</option>
             </select>
           </div>
@@ -4708,7 +4925,7 @@ function renderManageUsersModal(){
     renderPreservingScroll('.modal-body');
     const ok = await supaUpdateUserRole(u, newRole);
     if(ok){
-      flashToast(`${u.name} is now ${newRole==='FullAccess'?'Full Access':newRole}.`);
+      flashToast(`${u.name} is now ${roleLabel(newRole)}.`);
     } else {
       u.role = oldRole; // roll back the on-screen change since the write didn't actually succeed
     }
@@ -4926,6 +5143,13 @@ function renderPendingUsersModal(){
 }
 async function handleAdminAction(a){
   if(a==='adminPending'){ state.pendingUsersModalOpen=true; render(); await fetchPendingUsersFromSupabase(); render(); }
+  if(a==='openBrokerReviewLog'){
+    const today = todayDate();
+    state.brokerReviewLog = {startDate: toLocalDateStr(new Date(today.getFullYear(),0,1)), endDate: toLocalDateStr(today)};
+    render();
+    await fetchBrokerReviewsFromSupabase();
+    render();
+  }
   if(a==='adminPendingDeletions'){ state.pendingDeletionsOpen=true; }
   if(a==='adminFullTeam'){ state.mainView = {type:'smart', id:'fullTeam'}; if(state.isMobile) state.mobileScreen='main'; }
   if(a==='adminImportTodos'){ state.importTodosModal = {step:'upload'}; }
@@ -5032,6 +5256,156 @@ function allClientsFlat(){
   const out = [];
   db.lists.filter(l=>l.type==='deep').forEach(l=>l.clients.forEach(c=>out.push({id:c.id, name:c.name, listName:l.name})));
   return out;
+}
+/* ---------------- DESIGNATED BROKER REVIEW MODAL ---------------- */
+function renderBrokerReviewModal(){
+  const m = state.brokerReviewModal;
+  const rev = (db.brokerReviews||[]).find(r=>r.id===m.reviewId);
+  const overlay = document.createElement('div');
+  overlay.className='modal-overlay'; overlay.style.zIndex=280;
+  if(!rev){
+    overlay.innerHTML = `<div class="modal-card" style="max-width:420px;"><div class="modal-head"><div class="modal-title">Not found</div><button class="modal-close" data-action="closeBrokerReview">✕</button></div><div class="modal-body"><p class="tiny">This review couldn't be found — it may have been removed.</p></div></div>`;
+    document.getElementById('app').appendChild(overlay);
+    overlay.querySelector('[data-action="closeBrokerReview"]').onclick=()=>{ state.brokerReviewModal=null; render(); };
+    return;
+  }
+  const isSimple = rev.reviewType==='signedLease' || rev.reviewType==='signedPSA';
+  const label = rev.reviewType==='signedLease' ? 'Signed Lease' : (rev.reviewType==='signedPSA' ? 'Signed PSA (In Escrow)' : 'Closed Escrow');
+  if(isSimple){
+    overlay.innerHTML = `
+    <div class="modal-card" style="max-width:480px;">
+      <div class="modal-head"><div class="modal-title">${label} Review</div><button class="modal-close" data-action="closeBrokerReview">✕</button></div>
+      <div class="modal-body">
+        <div class="field"><label>Deal</label><div>${escapeHtml(rev.dealName||'')}</div></div>
+        <div class="field"><label>Date Signed</label><div>${fmtDate(new Date(rev.dateSigned+'T00:00:00'))}</div></div>
+        <div class="field"><label>Due</label><div>${fmtDate(new Date(rev.dueDate+'T00:00:00'))}</div></div>
+        <p class="tiny" style="margin-top:10px;">Review the document in Egnyte, then mark it reviewed and approved below.</p>
+      </div>
+      <div class="modal-foot">
+        <button class="btn secondary" data-action="closeBrokerReview">Save and Close</button>
+        <button class="btn" data-action="approveBrokerReview">Mark Reviewed & Approved</button>
+      </div>
+    </div>`;
+  } else {
+    const checklist = rev.checklist || CLOSED_ESCROW_CHECKLIST_ITEMS.map(name=>({name, checked:false}));
+    const isDavidStep = rev.status==='awaiting_db' || rev.status==='approved';
+    const isReadOnly = isDavidStep; // Gina's confirmed items are locked once it's David's turn
+    overlay.innerHTML = `
+    <div class="modal-card" style="max-width:520px;">
+      <div class="modal-head"><div class="modal-title">Closing Documents — ${isDavidStep?'Designated Broker Approval':'Office Manager Checklist'}</div><button class="modal-close" data-action="closeBrokerReview">✕</button></div>
+      <div class="modal-body">
+        <div class="field"><label>Deal</label><div>${escapeHtml(rev.dealName||'')}</div></div>
+        <div class="field"><label>Closed Escrow Date</label><div>${fmtDate(new Date(rev.dateSigned+'T00:00:00'))}</div></div>
+        <div class="field"><label>Due</label><div>${fmtDate(new Date(rev.dueDate+'T00:00:00'))}</div></div>
+        <div class="field">
+          <label>Documents</label>
+          ${checklist.map((item,i)=>`
+            <label style="display:flex;align-items:center;gap:8px;padding:6px 0;">
+              <input type="checkbox" data-ceitem="${i}" ${item.checked?'checked':''} ${isReadOnly?'disabled':''}>
+              <span>${escapeHtml(item.name)}</span>
+            </label>`).join('')}
+        </div>
+        ${isDavidStep ? `<p class="tiny" style="margin-top:8px;">Confirmed by Office Manager${rev.omCompletedAt?` on ${fmtDate(new Date(rev.omCompletedAt))}`:''}.</p>` : ''}
+      </div>
+      <div class="modal-foot">
+        <button class="btn secondary" data-action="closeBrokerReview">Save and Close</button>
+        ${isDavidStep
+          ? (rev.status==='approved' ? '' : `<button class="btn" data-action="approveBrokerReview">Mark Approved</button>`)
+          : `<button class="btn" data-action="ginaCompleteChecklist" ${checklist.every(i=>i.checked)?'':'disabled title="Check every item first"'}>Mark Complete for DB Review</button>`}
+      </div>
+    </div>`;
+  }
+  document.getElementById('app').appendChild(overlay);
+  overlay.querySelectorAll('[data-action="closeBrokerReview"]').forEach(b=>b.onclick=()=>{ state.brokerReviewModal=null; render(); });
+  overlay.querySelectorAll('[data-ceitem]').forEach(cb=>cb.onchange=()=>{
+    const i = parseInt(cb.dataset.ceitem);
+    rev.checklist[i].checked = cb.checked;
+    supabaseClient.from('broker_reviews').update({checklist:rev.checklist}).eq('id', rev.id).then(({error})=>{ if(error) console.error('checklist save error:', error); });
+    renderPreservingScroll('.modal-body');
+  });
+  const ginaBtn = overlay.querySelector('[data-action="ginaCompleteChecklist"]');
+  if(ginaBtn) ginaBtn.onclick=safeHandler(async ()=>{ await markGinaChecklistComplete(rev.id); state.brokerReviewModal=null; render(); });
+  const approveBtn = overlay.querySelector('[data-action="approveBrokerReview"]');
+  if(approveBtn) approveBtn.onclick=safeHandler(async ()=>{ await markBrokerReviewApproved(rev.id, m.todoId); state.brokerReviewModal=null; render(); });
+}
+function renderQualifiedOfferPrompt(){
+  const m = state.qualifiedOfferPrompt;
+  const overlay = document.createElement('div');
+  overlay.className='modal-overlay'; overlay.style.zIndex=285;
+  overlay.innerHTML = `
+  <div class="modal-card" style="max-width:420px;">
+    <div class="modal-head"><div class="modal-title">Qualified Offer?</div></div>
+    <div class="modal-body">
+      <p>${escapeHtml(m.dealName)}</p>
+      <p class="tiny" style="margin-top:6px;">Is this a qualified offer?</p>
+    </div>
+    <div class="modal-foot">
+      <button class="btn secondary" data-qualified="false">No</button>
+      <button class="btn" data-qualified="true">Yes</button>
+    </div>
+  </div>`;
+  document.getElementById('app').appendChild(overlay);
+  overlay.querySelectorAll('[data-qualified]').forEach(b=>b.onclick=safeHandler(()=>{
+    saveQualifiedOffer(m.sourceTable, m.sourceId, m.clientId, b.dataset.qualified==='true');
+  }));
+}
+function renderBrokerReviewLogModal(){
+  const m = state.brokerReviewLog;
+  const rows = (db.brokerReviews||[])
+    .filter(r=>r.approvedAt) // the log is a record of what's been signed off — pending items aren't audit entries yet
+    .filter(r=>r.dateSigned >= m.startDate && r.dateSigned <= m.endDate)
+    .sort((a,b)=> a.dateSigned < b.dateSigned ? 1 : -1);
+  const stageLabel = t=> t==='signedLease' ? 'Signed Lease' : (t==='signedPSA' ? 'Signed PSA (In Escrow)' : 'Closed Escrow');
+  const clientName = id => { const c = allClientsFlat().find(x=>x.id===id); return c ? c.name : ''; };
+  const overlay = document.createElement('div');
+  overlay.className='modal-overlay'; overlay.style.zIndex=205;
+  overlay.innerHTML = `
+  <div class="modal-card" style="max-width:720px;">
+    <div class="modal-head"><div class="modal-title">Designated Broker Review Log</div><button class="modal-close" data-action="closeBrokerReviewLog">✕</button></div>
+    <div class="modal-body">
+      <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:14px;">
+        <div class="field" style="margin:0;"><label>From</label><input type="date" id="brlStart" value="${escapeAttr(m.startDate)}"></div>
+        <div class="field" style="margin:0;"><label>To</label><input type="date" id="brlEnd" value="${escapeAttr(m.endDate)}"></div>
+        <button class="btn secondary sm" data-action="exportBrokerReviewLog">⬇️ Export CSV</button>
+      </div>
+      ${rows.length ? `
+      <table style="width:100%;border-collapse:collapse;font-size:12.5px;">
+        <thead><tr style="text-align:left;border-bottom:1px solid var(--line);">
+          <th style="padding:6px 8px;">Client</th><th style="padding:6px 8px;">Deal</th><th style="padding:6px 8px;">Stage</th>
+          <th style="padding:6px 8px;">Date Signed</th><th style="padding:6px 8px;">Approved</th><th style="padding:6px 8px;">Approval Date</th>
+        </tr></thead>
+        <tbody>
+          ${rows.map(r=>`
+          <tr style="border-bottom:1px solid var(--line-soft);">
+            <td style="padding:6px 8px;">${escapeHtml(clientName(r.clientId))}</td>
+            <td style="padding:6px 8px;">${escapeHtml(r.dealName||'')}</td>
+            <td style="padding:6px 8px;">${stageLabel(r.reviewType)}</td>
+            <td style="padding:6px 8px;">${fmtDate(new Date(r.dateSigned+'T00:00:00'))}</td>
+            <td style="padding:6px 8px;">✓ Approved</td>
+            <td style="padding:6px 8px;">${fmtDate(new Date(r.approvedAt))}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>` : `<div class="empty-state"><div class="big">No approvals in this range.</div><div class="tiny">Adjust the dates above to see more.</div></div>`}
+    </div>
+    <div class="modal-foot"><button class="btn secondary" data-action="closeBrokerReviewLog">Close</button></div>
+  </div>`;
+  document.getElementById('app').appendChild(overlay);
+  overlay.querySelectorAll('[data-action="closeBrokerReviewLog"]').forEach(b=>b.onclick=()=>{ state.brokerReviewLog=null; render(); });
+  const startEl = document.getElementById('brlStart'); if(startEl) startEl.onchange=()=>{ m.startDate = startEl.value; renderPreservingScroll('.modal-body'); };
+  const endEl = document.getElementById('brlEnd'); if(endEl) endEl.onchange=()=>{ m.endDate = endEl.value; renderPreservingScroll('.modal-body'); };
+  const exportBtn = overlay.querySelector('[data-action="exportBrokerReviewLog"]');
+  if(exportBtn) exportBtn.onclick=()=>{
+    const header = ['Client','Deal','Stage','Date Signed','Approved','Approval Date'];
+    const csvRows = rows.map(r=>[clientName(r.clientId), r.dealName||'', stageLabel(r.reviewType),
+      r.dateSigned, 'Approved', new Date(r.approvedAt).toISOString().slice(0,10)]);
+    const csv = [header, ...csvRows].map(row=>row.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+    const blob = new Blob([csv], {type:'text/csv'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `broker-review-log_${m.startDate}_to_${m.endDate}.csv`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
 }
 function renderNewSmartListModal(){
   const m = state.newSmartListModal;
@@ -5263,9 +5637,9 @@ function renderUndoToast(){
 }
 function undoLastComplete(){
   if(!state.undoToast) return;
-  const td = db.todos.find(x=>x.id===state.undoToast.id);
-  if(td){ td.completed=false; supaUpdateTodo(td); }
-  state.recentlyCompletedIds = state.recentlyCompletedIds.filter(x=>x!==state.undoToast.id);
+  const id = state.undoToast.id;
+  const td = db.todos.find(x=>x.id===id);
+  if(td && td.completed){ toggleComplete(id); }
   state.undoToast=null;
 }
 function archiveTodo(id){
@@ -5336,6 +5710,11 @@ function bulkCompleteSelected(){
 /* ---------------- TODO DETAIL / EDIT MODAL ---------------- */
 function openTodoDetail(id){
   const td = db.todos.find(x=>x.id===id);
+  if(td && (td.type==='brokerReview' || td.type==='closedEscrowChecklist' || td.type==='closedEscrowApproval')){
+    if(td.isNew && td.assignedTo===state.currentUser.id) td.isNew=false;
+    state.brokerReviewModal = {todoId:td.id, reviewId:td.brokerReviewId};
+    return;
+  }
   state.todoDetailModal = {id, originalAssignedTo: td ? td.assignedTo : null};
   if(td && td.isNew && td.assignedTo===state.currentUser.id) td.isNew=false;
 }
@@ -6383,16 +6762,23 @@ function renderCommissionModal(){
           Total: ${total.toFixed(2)}%${totalOk?' ✓':' — must equal 100%'}
         </div>
       </div>
+      ${(()=>{
+        const sourceTable = m.kind==='deal' ? 'deals' : 'prospects';
+        const approved = brokerReviewApproved(sourceTable, obj.id, obj.dealType);
+        const gateMsg = 'Cannot mark paid until the Designated Broker has approved this deal';
+        return `
       <div style="display:flex;gap:20px;margin-top:6px;">
-        <label style="display:flex;align-items:center;gap:7px;font-size:13px;">
-          <input type="checkbox" id="comm1Paid" ${obj.commission1Paid?'checked':''} style="width:auto;accent-color:var(--good);">
+        <label style="display:flex;align-items:center;gap:7px;font-size:13px;" ${approved?'':`title="${gateMsg}"`}>
+          <input type="checkbox" id="comm1Paid" ${obj.commission1Paid?'checked':''} ${approved?'':'disabled'} style="width:auto;accent-color:var(--good);">
           1st Half Paid
         </label>
-        <label style="display:flex;align-items:center;gap:7px;font-size:13px;">
-          <input type="checkbox" id="comm2Paid" ${obj.commission2Paid?'checked':''} style="width:auto;accent-color:var(--good);">
+        <label style="display:flex;align-items:center;gap:7px;font-size:13px;" ${approved?'':`title="${gateMsg}"`}>
+          <input type="checkbox" id="comm2Paid" ${obj.commission2Paid?'checked':''} ${approved?'':'disabled'} style="width:auto;accent-color:var(--good);">
           2nd Half Paid
         </label>
       </div>
+      ${approved?'':`<div class="tiny" style="color:var(--bad);margin-top:6px;">${gateMsg}</div>`}
+      `;})()}
     </div>
     <div class="modal-foot">
       <button class="btn" data-action="saveCommission">Save</button>
@@ -6699,10 +7085,10 @@ function renderLSRRowCard(p, listing, kind){
     ${kind==='prospect' ? `<button class="btn" data-lsrconvert="${p.id}" data-client="${listing.id}" data-stopprop="1" style="flex-shrink:0;margin-left:auto;">Convert to Deal →</button>` : ''}
     ${kind==='deal' && p.dealType==='lease' ? `
     <div style="width:100%;display:flex;align-items:center;gap:14px;margin-top:8px;padding-top:8px;border-top:1px solid var(--line-soft);" data-stopprop="1">
-      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-soft);">
-        <input type="checkbox" data-lsrcomm1="${p.id}" data-client="${listing.id}" ${p.commission1Paid?'checked':''} style="width:auto;accent-color:var(--good);"> 1st Half Commission Paid
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-soft);" ${brokerReviewApproved('prospects',p.id,'lease')?'':'title="Cannot mark paid until the Designated Broker has approved this deal"'}>
+        <input type="checkbox" data-lsrcomm1="${p.id}" data-client="${listing.id}" ${p.commission1Paid?'checked':''} ${brokerReviewApproved('prospects',p.id,'lease')?'':'disabled'} style="width:auto;accent-color:var(--good);"> 1st Half Commission Paid
       </label>
-      <button class="btn ${p.commission2Paid?'secondary':''} sm" data-lsrcomm2="${p.id}" data-client="${listing.id}">
+      <button class="btn ${p.commission2Paid?'secondary':''} sm" data-lsrcomm2="${p.id}" data-client="${listing.id}" ${brokerReviewApproved('prospects',p.id,'lease')?'':'disabled title="Cannot mark paid until the Designated Broker has approved this deal"'}>
         ${p.commission2Paid? '✓ 2nd Half Paid':'2nd Half Commission Paid'}
       </button>
       ${!lsrDealIsActive(p) ? `<span class="pill gray">Fully Closed</span>`:''}
@@ -6947,6 +7333,7 @@ function renderLSRConvertModal(){
     p.tiAllowance = document.getElementById('cvTI').value.trim();
     state.lsrConvertModal=null;
     supaUpdateProspect(p, listing.id);
+    handleStageTransition('prospects', p.id, listing.id, `${listing.name} — ${p.tenantName}`, p.dealType, 'contacted', 'loi').then(render);
     flashToast(`${p.tenantName} converted to an LOI (${m.dealType==='sale'?'Sale':'Lease'}).`);
     render();
   };
@@ -7151,6 +7538,7 @@ function wireLSRProspectBodyHandlers(root, l, listing, p){
   };
   const saveBtn = root.querySelector('[data-action="lsrSaveProspect"]'); if(saveBtn) saveBtn.onclick=()=>{
     const prevTracker = p.edgeTracker;
+    const oldStage = p.stage;
     p.tenantName = document.getElementById('lpName').value.trim()||p.tenantName;
     p.categoryId = document.getElementById('lpCategory').value;
     p.dateOfContact = parseNaturalDate(document.getElementById('lpDate').value.trim());
@@ -7168,6 +7556,9 @@ function wireLSRProspectBodyHandlers(root, l, listing, p){
     }
     supaUpdateProspect(p, listing.id);
     if(p.edgeTracker !== prevTracker) notifyNewLSRTracker(p.edgeTracker, p, listing);
+    if(oldStage!==p.stage){
+      handleStageTransition('prospects', p.id, listing.id, `${listing.name} — ${p.tenantName}`, p.dealType, oldStage, p.stage).then(render);
+    }
     flashToast('Saved.');
     render();
   };
@@ -7221,6 +7612,7 @@ function renderEntryModalBody(l,e){
 }
 
 function saveDealTermsFromForm(l, c, d){
+  const oldStage = d._stageBeforeEdit!==undefined ? d._stageBeforeEdit : d.stage;
   const stageEl = document.getElementById('dtStage');
   if(stageEl) d.stage = stageEl.value || null; // empty is fine — it just means "Prospects" in the grouped view
   const categorySelect = document.getElementById('dtCategory');
@@ -7235,6 +7627,10 @@ function saveDealTermsFromForm(l, c, d){
   const tiEl = document.getElementById('dtTI'); if(tiEl) d.tiAllowance = tiEl.value.trim();
   const notesEl = document.getElementById('dtNotes'); if(notesEl) d.notes = notesEl.value.trim();
   supaUpdateDeal(d, c.id);
+  if(oldStage!==d.stage){
+    handleStageTransition('deals', d.id, c.id, `${c.name} — ${d.name}`, d.dealType, oldStage, d.stage).then(render);
+  }
+  delete d._stageBeforeEdit;
 }
 function attachModalHandlers(root){
   root.querySelectorAll('[data-crumb]').forEach(el=>el.onclick=()=>{
@@ -7504,7 +7900,10 @@ function attachModalHandlers(root){
     const termEl = document.getElementById('dtTerm'); if(termEl) termEl.oninput=()=>{ d.term = termEl.value; };
     const tiEl = document.getElementById('dtTI'); if(tiEl) tiEl.oninput=()=>{ d.tiAllowance = tiEl.value; };
     const notesEl = document.getElementById('dtNotes'); if(notesEl) notesEl.oninput=()=>{ d.notes = notesEl.value; };
-    const stageEl = document.getElementById('dtStage'); if(stageEl) stageEl.onchange=()=>{ d.stage = stageEl.value; };
+    const stageEl = document.getElementById('dtStage'); if(stageEl) stageEl.onchange=()=>{
+      if(d._stageBeforeEdit===undefined) d._stageBeforeEdit = d.stage;
+      d.stage = stageEl.value;
+    };
     const openForBizEl = document.getElementById('dtOpenForBusiness'); if(openForBizEl) openForBizEl.onchange=()=>{
       d.complete = openForBizEl.checked;
       supaUpdateDeal(d, c.id);
