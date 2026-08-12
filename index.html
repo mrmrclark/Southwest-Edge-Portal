@@ -1138,9 +1138,7 @@ async function handleStageTransition(sourceTable, sourceId, clientId, dealName, 
 // Fires the instant a stage dropdown crosses into LOI-or-above — called directly
 // from the dropdown's onchange, not deferred until Save.
 function checkOfferPrompt(sourceTable, sourceId, clientId, dealName, oldStage, newStage){
-  const offerStages = ['loi','signedLOI','negotiating','inEscrow','closedEscrow'];
-  const wasAbove = offerStages.includes(oldStage);
-  if(newStage==='loi' || (offerStages.includes(newStage) && !wasAbove)){
+  if(newStage==='loi' && oldStage!=='loi'){
     state.qualifiedOfferPrompt = {sourceTable, sourceId, clientId, dealName};
   }
 }
@@ -1156,6 +1154,7 @@ function checkFileServerReminder(oldStage, newStage){
   }
 }
 async function markGinaChecklistComplete(reviewId){
+  if(state.currentUser.email!=='gmaurer@edge-re.com'){ flashToast('Only the Office Manager can complete this checklist.'); return; }
   const rev = (db.brokerReviews||[]).find(r=>r.id===reviewId);
   if(!rev) return;
   const now = new Date().toISOString();
@@ -1174,6 +1173,7 @@ async function markGinaChecklistComplete(reviewId){
   invokeBrokerReviewEmail(reviewId, 'closedEscrowDavidReview', state.currentUser.id);
 }
 async function markBrokerReviewApproved(reviewId, todoId){
+  if(state.currentUser.email!=='djarand@edge-re.com'){ flashToast('Only the Designated Broker can approve this.'); return; }
   const rev = (db.brokerReviews||[]).find(r=>r.id===reviewId);
   if(!rev) return;
   const now = new Date().toISOString();
@@ -2692,7 +2692,7 @@ function renderEmailClientPicker(){
     state.pendingLoginUser=null;
     state.currentUser=u; state.screen='app'; if(!appStateWasLoaded) seedAll();
     await fetchAllAppDataFromSupabase();
-    checkTodoDeepLink();
+    checkTodoDeepLink(); checkBrokerReviewDeepLink();
     render();
   });
 }
@@ -3059,7 +3059,7 @@ function attachLoginHandlers(){
     state.currentUser=u; state.screen='app'; if(!appStateWasLoaded) seedAll(); state.loginTarget=null;
     try{
       await fetchAllAppDataFromSupabase();
-      checkTodoDeepLink();
+      checkTodoDeepLink(); checkBrokerReviewDeepLink();
     } catch(e){
       console.error('Post-login data load failed (still letting the user in):', e);
       flashToast("Signed in, but something went wrong loading your data. Try refreshing — if this keeps happening, tell an admin.");
@@ -5270,6 +5270,10 @@ function allClientsFlat(){
   db.lists.filter(l=>l.type==='deep').forEach(l=>l.clients.forEach(c=>out.push({id:c.id, name:c.name, listName:l.name})));
   return out;
 }
+function findListIdForClient(clientId){
+  const list = db.lists.filter(l=>l.type==='deep').find(l=>l.clients.some(c=>c.id===clientId));
+  return list ? list.id : null;
+}
 /* ---------------- DESIGNATED BROKER REVIEW MODAL ---------------- */
 function renderBrokerReviewModal(){
   const m = state.brokerReviewModal;
@@ -5284,6 +5288,8 @@ function renderBrokerReviewModal(){
   }
   const isSimple = rev.reviewType==='signedLease' || rev.reviewType==='signedPSA';
   const label = rev.reviewType==='signedLease' ? 'Signed Lease' : (rev.reviewType==='signedPSA' ? 'Signed PSA (In Escrow)' : 'Closed Escrow');
+  const isDavid = state.currentUser.email==='djarand@edge-re.com';
+  const isGina = state.currentUser.email==='gmaurer@edge-re.com';
   if(isSimple){
     overlay.innerHTML = `
     <div class="modal-card" style="max-width:480px;">
@@ -5293,16 +5299,17 @@ function renderBrokerReviewModal(){
         <div class="field"><label>Date Signed</label><div>${fmtDate(new Date(rev.dateSigned+'T00:00:00'))}</div></div>
         <div class="field"><label>Due</label><div>${fmtDate(new Date(rev.dueDate+'T00:00:00'))}</div></div>
         <p class="tiny" style="margin-top:10px;">Review the document in Egnyte, then mark it reviewed and approved below.</p>
+        ${!isDavid ? `<p class="tiny" style="margin-top:8px;color:var(--ink-soft);">Only the Designated Broker can mark this reviewed.</p>` : ''}
       </div>
       <div class="modal-foot">
         <button class="btn secondary" data-action="closeBrokerReview">Save and Close</button>
-        <button class="btn" data-action="approveBrokerReview">Mark Reviewed & Approved</button>
+        ${isDavid ? `<button class="btn" data-action="approveBrokerReview">Mark Reviewed & Approved</button>` : ''}
       </div>
     </div>`;
   } else {
     const checklist = rev.checklist || CLOSED_ESCROW_CHECKLIST_ITEMS.map(name=>({name, checked:false}));
     const isDavidStep = rev.status==='awaiting_db' || rev.status==='approved';
-    const isReadOnly = isDavidStep; // Gina's confirmed items are locked once it's David's turn
+    const isReadOnly = isDavidStep || !isGina; // Gina's confirmed items are locked once it's David's turn, and non-Gina can't edit at all
     overlay.innerHTML = `
     <div class="modal-card" style="max-width:520px;">
       <div class="modal-head"><div class="modal-title">Closing Documents — ${isDavidStep?'Designated Broker Approval':'Office Manager Checklist'}</div><button class="modal-close" data-action="closeBrokerReview">✕</button></div>
@@ -5319,12 +5326,14 @@ function renderBrokerReviewModal(){
             </label>`).join('')}
         </div>
         ${isDavidStep ? `<p class="tiny" style="margin-top:8px;">Confirmed by Office Manager${rev.omCompletedAt?` on ${fmtDate(new Date(rev.omCompletedAt))}`:''}.</p>` : ''}
+        ${isDavidStep && !isDavid ? `<p class="tiny" style="margin-top:8px;color:var(--ink-soft);">Only the Designated Broker can give final approval.</p>` : ''}
+        ${!isDavidStep && !isGina ? `<p class="tiny" style="margin-top:8px;color:var(--ink-soft);">Only the Office Manager can complete this checklist.</p>` : ''}
       </div>
       <div class="modal-foot">
         <button class="btn secondary" data-action="closeBrokerReview">Save and Close</button>
         ${isDavidStep
-          ? (rev.status==='approved' ? '' : `<button class="btn" data-action="approveBrokerReview">Mark Approved</button>`)
-          : `<button class="btn" data-action="ginaCompleteChecklist" ${checklist.every(i=>i.checked)?'':'disabled title="Check every item first"'}>Mark Complete for DB Review</button>`}
+          ? (rev.status==='approved' || !isDavid ? '' : `<button class="btn" data-action="approveBrokerReview">Mark Approved</button>`)
+          : (isGina ? `<button class="btn" data-action="ginaCompleteChecklist" ${checklist.every(i=>i.checked)?'':'disabled title="Check every item first"'}>Mark Complete for DB Review</button>` : '')}
       </div>
     </div>`;
   }
@@ -5762,6 +5771,31 @@ function attemptCloseTodoDetail(td){
   }
   state.todoDetailModal = null;
   return true;
+}
+function checkBrokerReviewDeepLink(){
+  const params = new URLSearchParams(window.location.search);
+  const reviewId = params.get('brokerReview');
+  if(!reviewId) return;
+  history.replaceState(null, '', window.location.pathname);
+  const rev = (db.brokerReviews||[]).find(r=>r.id===reviewId);
+  if(!rev){
+    flashToast("That review couldn't be found — it may have been removed.");
+    return;
+  }
+  const listId = findListIdForClient(rev.clientId);
+  if(listId){
+    try{
+      if(rev.sourceTable==='deals'){
+        openClientModal(listId, rev.clientId);
+        openDealModal(listId, rev.clientId, rev.sourceId);
+      } else {
+        openClientModal(listId, rev.clientId);
+        openLSRProspect(rev.clientId, rev.sourceId);
+      }
+    }catch(e){ console.error('Broker review deep-link navigation failed:', e); }
+  }
+  const matchingTodo = db.todos.find(t=>t.brokerReviewId===reviewId && t.assignedTo===state.currentUser.id && !t.completed);
+  state.brokerReviewModal = {todoId: matchingTodo ? matchingTodo.id : null, reviewId: rev.id};
 }
 function checkTodoDeepLink(){
   const params = new URLSearchParams(window.location.search);
@@ -10213,7 +10247,7 @@ render();
     state.screen = 'app';
     if(!appStateWasLoaded) seedAll();
     await fetchAllAppDataFromSupabase();
-    checkTodoDeepLink();
+    checkTodoDeepLink(); checkBrokerReviewDeepLink();
     render();
   } catch(e){ console.error('Session check failed:', e); }
 })();
