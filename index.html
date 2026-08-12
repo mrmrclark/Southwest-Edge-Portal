@@ -4520,7 +4520,6 @@ function renderAdminMenu(){
   const isDBRole = state.currentUser.role==='Admin' || state.currentUser.role==='FullAccess';
   return `
   <div class="admin-menu">
-    ${isDBRole ? `<div class="admin-item" data-action="openBrokerReviewLog">📋 Broker Review Log</div>` : ''}
     ${isAdmin ? `<div class="admin-item" data-action="adminPending">🆕 Pending User Requests ${pendingUsers.length? `<span class="nav-count urgent" style="margin-left:auto;">${pendingUsers.length}</span>`:''}</div>` : ''}
     ${isAdmin ? `<div class="admin-item" data-action="adminFullTeam">👥 Full Team To-Do's (unfiltered)</div>` : ''}
     ${!state.isMobile ? `<div class="admin-item" data-action="adminImportTodos">⬆️ Import To-Do's (CSV)</div>` : ''}
@@ -4530,6 +4529,7 @@ function renderAdminMenu(){
     ${isAdmin ? `<div class="admin-item" data-action="adminUsers">👥 Manage Users</div>` : ''}
     ${isAdmin ? `<div class="admin-item" data-action="adminTimes">⏱️ Email Send Times</div>` : ''}
     ${isAdmin ? `<div class="admin-item" data-action="adminReset">🔑 Reset a Password</div>` : ''}
+    ${isDBRole ? `<div class="admin-item" data-action="openBrokerReviewLog">📋 Broker Review Log</div>` : ''}
   </div>`;
 }
 
@@ -5298,12 +5298,12 @@ function renderBrokerReviewModal(){
         <div class="field"><label>Deal</label><div>${escapeHtml(rev.dealName||'')}</div></div>
         <div class="field"><label>Date Signed</label><div>${fmtDate(new Date(rev.dateSigned+'T00:00:00'))}</div></div>
         <div class="field"><label>Due</label><div>${fmtDate(new Date(rev.dueDate+'T00:00:00'))}</div></div>
-        <p class="tiny" style="margin-top:10px;">Review the document in Egnyte, then mark it reviewed and approved below.</p>
-        ${!isDavid ? `<p class="tiny" style="margin-top:8px;color:var(--ink-soft);">Only the Designated Broker can mark this reviewed.</p>` : ''}
+        <p class="tiny" style="margin-top:10px;">${rev.approvedAt ? `✓ Approved by Designated Broker on ${fmtDate(new Date(rev.approvedAt))}.` : 'Review the document in Egnyte, then mark it reviewed and approved below.'}</p>
+        ${(!isDavid && !rev.approvedAt) ? `<p class="tiny" style="margin-top:8px;color:var(--ink-soft);">Only the Designated Broker can mark this reviewed.</p>` : ''}
       </div>
       <div class="modal-foot">
         <button class="btn secondary" data-action="closeBrokerReview">Save and Close</button>
-        ${isDavid ? `<button class="btn" data-action="approveBrokerReview">Mark Reviewed & Approved</button>` : ''}
+        ${(isDavid && !rev.approvedAt) ? `<button class="btn" data-action="approveBrokerReview">Mark Reviewed & Approved</button>` : ''}
       </div>
     </div>`;
   } else {
@@ -6897,6 +6897,34 @@ function renderCommissionModal(){
     render();
   };
 }
+// Shown at the bottom of a Deal or Prospect page — one row per broker review event tied
+// to this record, each with a button to reopen the review modal. Visible to everyone;
+// the modal itself gates who can actually act.
+function renderBrokerReviewSection(sourceTable, sourceId){
+  const revs = (db.brokerReviews||[]).filter(r=>r.sourceTable===sourceTable && r.sourceId===sourceId);
+  if(!revs.length) return '';
+  const labelFor = rev=>{
+    if(rev.reviewType==='signedLease') return 'Signed Lease Review';
+    if(rev.reviewType==='signedPSA') return 'Signed PSA (In Escrow) Review';
+    return rev.status==='pending' ? 'Closing Documents — Office Manager Checklist' : 'Closing Documents — Designated Broker Approval';
+  };
+  const btnLabelFor = rev=>{
+    if(rev.reviewType!=='closedEscrow') return 'Designated Broker Approval';
+    return rev.status==='pending' ? 'Office Manager Checklist' : 'Designated Broker Approval';
+  };
+  return `
+  <div class="field" style="margin-top:16px;padding-top:14px;border-top:1px solid var(--line-soft);">
+    <label>Designated Broker / Office Manager Review</label>
+    ${revs.map(rev=>`
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;">
+        <div>
+          <div style="font-size:13px;font-weight:600;">${escapeHtml(labelFor(rev))}</div>
+          <div class="tiny" style="color:var(--ink-soft);">${rev.approvedAt ? `✓ Approved on ${fmtDate(new Date(rev.approvedAt))}` : (rev.status==='awaiting_db' ? 'Awaiting Designated Broker' : 'Pending')}</div>
+        </div>
+        <button class="btn ${rev.approvedAt?'secondary':''} sm" data-openbrokerreview="${rev.id}">${btnLabelFor(rev)}</button>
+      </div>`).join('')}
+  </div>`;
+}
 function renderDealModalBody(l,c,d){
   const todos = db.todos.filter(t=>t.dealId===d.id).filter(visibleTodo);
   const caExecuted = d.caExecuted!==undefined ? d.caExecuted : (l.id==='listings');
@@ -6984,6 +7012,7 @@ function renderDealModalBody(l,c,d){
   </div>
   <div class="field"><label>Notes</label><textarea id="dtNotes" rows="3" ${ro}>${escapeHtml(d.notes||'')}</textarea></div>
   ${canEdit ? `<button class="btn sm" data-action="saveDealTerms" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}" style="margin-bottom:6px;">Save Deal Terms</button>` : ''}
+  ${renderBrokerReviewSection('deals', d.id)}
   ${state.currentUser.role==='Admin' ? `
   <div style="margin-top:24px;padding-top:16px;border-top:1px solid var(--line-soft);">
     <button class="btn danger sm" data-action="deleteDeal" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">🗑️ Delete this Deal</button>
@@ -7216,6 +7245,7 @@ function renderLSRProspectBody(l, listing, p){
   ` : ''}
   ${(p.stage==='dead'||p.stage==='notInterested') ? `<div class="field"><div class="lsr-dead-date">Marked ${p.stage==='dead'?'Dead':'Not Interested'} on ${p.deadDate?fmtDate(p.deadDate):'—'}</div></div>` : ''}
   <button class="btn" data-action="lsrSaveProspect" style="margin-top:8px;width:100%;">Save Changes</button>
+  ${renderBrokerReviewSection('prospects', p.id)}
   `;
 }
 
@@ -7813,6 +7843,12 @@ function attachModalHandlers(root){
     const k=el.dataset.dealgrouptoggle; const currentlyCollapsed = state.dealGroupCollapsed[k] !== false;
     state.dealGroupCollapsed[k]=!currentlyCollapsed;
     renderPreservingScroll('.modal-body');
+  }));
+  root.querySelectorAll('[data-openbrokerreview]').forEach(el=>el.onclick=safeHandler(()=>{
+    const reviewId = el.dataset.openbrokerreview;
+    const matchingTodo = db.todos.find(t=>t.brokerReviewId===reviewId && t.assignedTo===state.currentUser.id && !t.completed);
+    state.brokerReviewModal = {todoId: matchingTodo ? matchingTodo.id : null, reviewId};
+    render();
   }));
   root.querySelectorAll('[data-togglecaexec]').forEach(el=>el.onclick=safeHandler((ev)=>{
     ev.stopPropagation();
