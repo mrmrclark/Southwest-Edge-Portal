@@ -1133,8 +1133,10 @@ async function handleStageTransition(sourceTable, sourceId, clientId, dealName, 
       invokeBrokerReviewEmail(rev.id, 'closedEscrowGinaChecklist', state.currentUser.id);
     }
   }
-  // Offer tracker: crossing up into LOI-or-above from below always prompts; landing
-  // specifically on 'loi' always prompts too (per Michael — simpler than tracking history).
+}
+// Fires the Qualified Offer? popup the instant a stage dropdown crosses into LOI-or-above —
+// called directly from the dropdown's onchange, not deferred until Save.
+function checkOfferPrompt(sourceTable, sourceId, clientId, dealName, oldStage, newStage){
   const offerStages = ['loi','signedLOI','negotiating','inEscrow','closedEscrow'];
   const wasAbove = offerStages.includes(oldStage);
   if(newStage==='loi' || (offerStages.includes(newStage) && !wasAbove)){
@@ -6623,7 +6625,7 @@ function renderDealGroupSection(l, c, g, rows){
   }
   return `
   <div style="margin-bottom:12px;">
-    <button class="row-card" data-dealgrouptoggle="${key}" style="cursor:pointer;border-left:4px solid ${g.color};width:100%;text-align:left;background:#fff;">
+    <button type="button" class="row-card" data-dealgrouptoggle="${key}" style="cursor:pointer;border-left:4px solid ${g.color};width:100%;text-align:left;background:#fff;">
       <div class="row-body">
         <div class="row-title" style="color:${g.color};">${collapsed?'▸':'▾'} ${escapeHtml(g.title)}
           <span style="color:var(--ink-soft);font-weight:400;font-size:12px;">(${rows.length})</span>
@@ -7334,6 +7336,7 @@ function renderLSRConvertModal(){
     state.lsrConvertModal=null;
     supaUpdateProspect(p, listing.id);
     handleStageTransition('prospects', p.id, listing.id, `${listing.name} — ${p.tenantName}`, p.dealType, 'contacted', 'loi').then(render);
+    checkOfferPrompt('prospects', p.id, listing.id, `${listing.name} — ${p.tenantName}`, 'contacted', 'loi');
     flashToast(`${p.tenantName} converted to an LOI (${m.dealType==='sale'?'Sale':'Lease'}).`);
     render();
   };
@@ -7536,9 +7539,16 @@ function wireLSRProspectBodyHandlers(root, l, listing, p){
     openNewTodoModal({category: p.tenantName});
     render();
   };
+  const stageSelEl = root.querySelector('#lpStage'); if(stageSelEl) stageSelEl.onchange=()=>{
+    if(!Object.prototype.hasOwnProperty.call(p, '_stageBeforeEdit')) p._stageBeforeEdit = p.stage;
+    const prevStage = p.stage;
+    p.stage = stageSelEl.value;
+    checkOfferPrompt('prospects', p.id, listing.id, `${listing.name} — ${p.tenantName}`, prevStage, p.stage);
+    if(state.qualifiedOfferPrompt) render();
+  };
   const saveBtn = root.querySelector('[data-action="lsrSaveProspect"]'); if(saveBtn) saveBtn.onclick=()=>{
     const prevTracker = p.edgeTracker;
-    const oldStage = p.stage;
+    const oldStage = Object.prototype.hasOwnProperty.call(p, '_stageBeforeEdit') ? p._stageBeforeEdit : p.stage;
     p.tenantName = document.getElementById('lpName').value.trim()||p.tenantName;
     p.categoryId = document.getElementById('lpCategory').value;
     p.dateOfContact = parseNaturalDate(document.getElementById('lpDate').value.trim());
@@ -7559,6 +7569,7 @@ function wireLSRProspectBodyHandlers(root, l, listing, p){
     if(oldStage!==p.stage){
       handleStageTransition('prospects', p.id, listing.id, `${listing.name} — ${p.tenantName}`, p.dealType, oldStage, p.stage).then(render);
     }
+    delete p._stageBeforeEdit;
     flashToast('Saved.');
     render();
   };
@@ -7740,11 +7751,11 @@ function attachModalHandlers(root){
   root.querySelectorAll('[data-opendeal]').forEach(el=>el.onclick=()=>{
     openDealModal(el.dataset.listid, el.dataset.client, el.dataset.opendeal); render();
   });
-  root.querySelectorAll('[data-dealgrouptoggle]').forEach(el=>el.onclick=()=>{
+  root.querySelectorAll('[data-dealgrouptoggle]').forEach(el=>el.onclick=safeHandler(()=>{
     const k=el.dataset.dealgrouptoggle; const currentlyCollapsed = state.dealGroupCollapsed[k] !== false;
     state.dealGroupCollapsed[k]=!currentlyCollapsed;
     renderPreservingScroll('.modal-body');
-  });
+  }));
   root.querySelectorAll('[data-togglecaexec]').forEach(el=>el.onclick=safeHandler((ev)=>{
     ev.stopPropagation();
     const l=db.lists.find(x=>x.id===el.dataset.listid); const c=l && l.clients.find(x=>x.id===el.dataset.client);
@@ -7902,7 +7913,10 @@ function attachModalHandlers(root){
     const notesEl = document.getElementById('dtNotes'); if(notesEl) notesEl.oninput=()=>{ d.notes = notesEl.value; };
     const stageEl = document.getElementById('dtStage'); if(stageEl) stageEl.onchange=()=>{
       if(!Object.prototype.hasOwnProperty.call(d, '_stageBeforeEdit')) d._stageBeforeEdit = d.stage;
+      const prevStage = d.stage;
       d.stage = stageEl.value;
+      checkOfferPrompt('deals', d.id, c.id, `${c.name} — ${d.name}`, prevStage, d.stage);
+      if(state.qualifiedOfferPrompt) render(); else renderPreservingScroll('.modal-body');
     };
     const openForBizEl = document.getElementById('dtOpenForBusiness'); if(openForBizEl) openForBizEl.onchange=()=>{
       d.complete = openForBizEl.checked;
