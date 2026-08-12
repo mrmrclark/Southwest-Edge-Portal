@@ -7707,6 +7707,10 @@ function renderEntryModalBody(l,e){
     <div class="field"><label>Latest Feedback / Notes</label><textarea rows="2" data-edit="feedback" data-entry="${e.id}" data-listid="${l.id}">${escapeHtml(e.feedback||'')}</textarea></div>
   </div>
   ${accessHtml}
+  ${state.currentUser.role==='Admin' ? `
+  <div style="margin-top:24px;padding-top:16px;border-top:1px solid var(--line-soft);">
+    <button class="btn danger sm" data-action="deleteEntry" data-listid="${l.id}" data-entry="${e.id}">🗑️ Delete</button>
+  </div>` : ''}
   `;
 }
 
@@ -8043,6 +8047,19 @@ function attachModalHandlers(root){
       supaDeleteDeal(d.id);
       state.modalStack.pop();
       flashToast(`${d.name} deleted.`);
+      render();
+    }
+  });
+  const deleteEntryBtn = root.querySelector('[data-action="deleteEntry"]'); if(deleteEntryBtn) deleteEntryBtn.onclick=safeHandler(()=>{
+    const l = db.lists.find(x=>x.id===deleteEntryBtn.dataset.listid);
+    const e = l && l.entries.find(x=>x.id===deleteEntryBtn.dataset.entry);
+    if(!e){ flashToast("Couldn't find this entry — it may already be gone."); render(); return; }
+    if(confirm(`Delete "${e.name}"? This can't be undone. Any to-do's under it will be detached, not deleted, so they aren't silently lost.`)){
+      db.todos.filter(t=>t.entryId===e.id).forEach(t=>{ t.entryId=null; supaUpdateTodo(t); });
+      l.entries = l.entries.filter(x=>x.id!==e.id);
+      supaDeleteEntry(e.id);
+      state.modalStack.pop();
+      flashToast(`${e.name} deleted.`);
       render();
     }
   });
