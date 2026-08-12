@@ -549,6 +549,7 @@ let state = {
   newSmartListModal:null,       // filter-builder state when creating a custom smart list
   brokerReviewModal:null,       // {todoId, reviewId} — Designated Broker / Office Manager review modal
   qualifiedOfferPrompt:null,    // {sourceTable, sourceId, clientId, dealName} — LOI qualified-offer popup
+  stageReminderPrompt:null,     // string message — File Server document reminder, OK-only
   brokerReviewLogOpen:false,    // hamburger menu: audit log screen for David/Gina/Admin
   brokerReviewLog:null,         // {startDate, endDate} — active date range for the log
   navContextMenu:null,          // {kind:'smart'|'list', id} — which ellipsis menu is open
@@ -1134,13 +1135,24 @@ async function handleStageTransition(sourceTable, sourceId, clientId, dealName, 
     }
   }
 }
-// Fires the Qualified Offer? popup the instant a stage dropdown crosses into LOI-or-above —
-// called directly from the dropdown's onchange, not deferred until Save.
+// Fires the instant a stage dropdown crosses into LOI-or-above — called directly
+// from the dropdown's onchange, not deferred until Save.
 function checkOfferPrompt(sourceTable, sourceId, clientId, dealName, oldStage, newStage){
   const offerStages = ['loi','signedLOI','negotiating','inEscrow','closedEscrow'];
   const wasAbove = offerStages.includes(oldStage);
   if(newStage==='loi' || (offerStages.includes(newStage) && !wasAbove)){
     state.qualifiedOfferPrompt = {sourceTable, sourceId, clientId, dealName};
+  }
+}
+// Simple "documents in the File Server" reminder — fires immediately on the dropdown
+// change, OK-only, no checklist. Separate from the David/Gina broker review workflow.
+function checkFileServerReminder(oldStage, newStage){
+  if(newStage===oldStage) return;
+  if(newStage==='signedLease'){
+    state.stageReminderPrompt = 'Please ensure that your Signed Lease and Signed Commission Agreement are in the File Server.';
+  } else if(newStage==='closedEscrow'){
+    state.stageReminderPrompt = 'Please ensure that all documents necessary for processing payment are in the File Server, including '
+      + CLOSED_ESCROW_CHECKLIST_ITEMS.join(', ') + ', and the Commission Agreement.';
   }
 }
 async function markGinaChecklistComplete(reviewId){
@@ -2580,6 +2592,7 @@ function render(){
   if(state.newSmartListModal) renderNewSmartListModal();
   if(state.brokerReviewModal) renderBrokerReviewModal();
   if(state.qualifiedOfferPrompt) renderQualifiedOfferPrompt();
+  if(state.stageReminderPrompt) renderStageReminderPrompt();
   if(state.brokerReviewLog) renderBrokerReviewLogModal();
   if(state.notifSettingsOpen) renderNotifSettingsModal();
   if(state.pendingUsersModalOpen) renderPendingUsersModal();
@@ -3403,7 +3416,7 @@ function renderOfferTrackerWidget(){
   const credits = offerCreditsByUser();
   const rows = USERS.filter(u=>u.email!=='ledonna@edge-re.com') // commission-only people never appear here anyway (no USERS entry)
     .map(u=>({u, ytd:credits[u.id]?credits[u.id].ytd:0, month:credits[u.id]?credits[u.id].month:0}))
-    .sort((a,b)=>b.ytd-a.ytd);
+    .sort((a,b)=>b.month-a.month);
   return `
   <div class="widget-card">
     <div class="widget-head"><div class="widget-title">Offer Tracker</div></div>
@@ -5329,6 +5342,18 @@ function renderBrokerReviewModal(){
   if(ginaBtn) ginaBtn.onclick=safeHandler(async ()=>{ await markGinaChecklistComplete(rev.id); state.brokerReviewModal=null; render(); });
   const approveBtn = overlay.querySelector('[data-action="approveBrokerReview"]');
   if(approveBtn) approveBtn.onclick=safeHandler(async ()=>{ await markBrokerReviewApproved(rev.id, m.todoId); state.brokerReviewModal=null; render(); });
+}
+function renderStageReminderPrompt(){
+  const overlay = document.createElement('div');
+  overlay.className='modal-overlay'; overlay.style.zIndex=286;
+  overlay.innerHTML = `
+  <div class="modal-card" style="max-width:420px;">
+    <div class="modal-head"><div class="modal-title">Reminder</div></div>
+    <div class="modal-body"><p>${escapeHtml(state.stageReminderPrompt)}</p></div>
+    <div class="modal-foot"><button class="btn" data-action="closeStageReminder">OK</button></div>
+  </div>`;
+  document.getElementById('app').appendChild(overlay);
+  overlay.querySelector('[data-action="closeStageReminder"]').onclick=()=>{ state.stageReminderPrompt=null; render(); };
 }
 function renderQualifiedOfferPrompt(){
   const m = state.qualifiedOfferPrompt;
@@ -7544,7 +7569,8 @@ function wireLSRProspectBodyHandlers(root, l, listing, p){
     const prevStage = p.stage;
     p.stage = stageSelEl.value;
     checkOfferPrompt('prospects', p.id, listing.id, `${listing.name} — ${p.tenantName}`, prevStage, p.stage);
-    if(state.qualifiedOfferPrompt) render();
+    checkFileServerReminder(prevStage, p.stage);
+    if(state.qualifiedOfferPrompt || state.stageReminderPrompt) render();
   };
   const saveBtn = root.querySelector('[data-action="lsrSaveProspect"]'); if(saveBtn) saveBtn.onclick=()=>{
     const prevTracker = p.edgeTracker;
@@ -7916,7 +7942,8 @@ function attachModalHandlers(root){
       const prevStage = d.stage;
       d.stage = stageEl.value;
       checkOfferPrompt('deals', d.id, c.id, `${c.name} — ${d.name}`, prevStage, d.stage);
-      if(state.qualifiedOfferPrompt) render(); else renderPreservingScroll('.modal-body');
+      checkFileServerReminder(prevStage, d.stage);
+      if(state.qualifiedOfferPrompt || state.stageReminderPrompt) render(); else renderPreservingScroll('.modal-body');
     };
     const openForBizEl = document.getElementById('dtOpenForBusiness'); if(openForBizEl) openForBizEl.onchange=()=>{
       d.complete = openForBizEl.checked;
