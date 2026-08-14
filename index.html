@@ -1046,7 +1046,7 @@ async function fetchBrokerReviewsFromSupabase(){
   if(error){ console.error('fetchBrokerReviewsFromSupabase error:', error); return; }
   db.brokerReviews = (data||[]).map(r=>({
     id:r.id, sourceTable:r.source_table, sourceId:r.source_id, clientId:r.client_id, dealName:r.deal_name,
-    reviewType:r.review_type, dateSigned:r.date_signed, dueDate:r.due_date, status:r.status,
+    reviewType:r.review_type, dateSigned:r.date_signed, dueDate:r.due_date, dbDueDate:r.db_due_date, status:r.status,
     checklist:r.checklist||null, omCompletedAt:r.om_completed_at, omCompletedBy:r.om_completed_by,
     approvedAt:r.approved_at, approvedBy:r.approved_by, createdBy:r.created_by, createdAt:r.created_at
   }));
@@ -1064,10 +1064,13 @@ function brokerReviewApproved(sourceTable, sourceId, dealType){
 const CLOSED_ESCROW_CHECKLIST_ITEMS = ['Closing Statement','Purchase of Sale','Deed','Extensions/Amendments','Ernest & receipts','FIRPTA'];
 async function createBrokerReview(reviewType, sourceTable, sourceId, clientId, dealName, dueDays){
   const dateSigned = todayDate();
-  const dueDate = addDays(dateSigned, dueDays);
+  // Designated Broker due dates (10 days) are BUSINESS days; Gina's 3-day checklist stays calendar.
+  const dueDate = reviewType==='closedEscrow' ? addDays(dateSigned, dueDays) : addBusinessDays(dateSigned, dueDays);
+  const dbDueDate = reviewType==='closedEscrow' ? addBusinessDays(dateSigned, 10) : null;
   const row = {
     source_table:sourceTable, source_id:sourceId, client_id:clientId, deal_name:dealName,
     review_type:reviewType, date_signed: toLocalDateStr(dateSigned), due_date: toLocalDateStr(dueDate),
+    db_due_date: dbDueDate ? toLocalDateStr(dbDueDate) : null,
     status: reviewType==='closedEscrow' ? 'pending' : 'pending',
     checklist: reviewType==='closedEscrow' ? CLOSED_ESCROW_CHECKLIST_ITEMS.map(name=>({name, checked:false})) : null,
     created_by: localUserIdToAuthId(state.currentUser.id)
@@ -1075,7 +1078,7 @@ async function createBrokerReview(reviewType, sourceTable, sourceId, clientId, d
   const { data, error } = await supabaseClient.from('broker_reviews').insert(row).select().single();
   if(error){ console.error('createBrokerReview error:', error); flashToast('Broker review could not be created (' + error.message + ')'); render(); return null; }
   const local = {id:data.id, sourceTable, sourceId, clientId, dealName, reviewType, dateSigned:row.date_signed,
-    dueDate:row.due_date, status:row.status, checklist:row.checklist, omCompletedAt:null, approvedAt:null, createdAt:data.created_at};
+    dueDate:row.due_date, dbDueDate:row.db_due_date, status:row.status, checklist:row.checklist, omCompletedAt:null, approvedAt:null, createdAt:data.created_at};
   db.brokerReviews.push(local);
   return local;
 }
@@ -1164,7 +1167,7 @@ async function markGinaChecklistComplete(reviewId){
   const david = davidUser();
   if(david){
     const todo = {id:crypto.randomUUID(), title:`Final Approval: ${rev.dealName}`, category:'Broker Review',
-      dueDate: new Date(rev.dueDate+'T00:00:00'), assignedTo:david.id, createdBy:state.currentUser.id,
+      dueDate: new Date(rev.dbDueDate+'T00:00:00'), assignedTo:david.id, createdBy:state.currentUser.id,
       type:'closedEscrowApproval', private:false, completed:false, isNew:true, brokerReviewId:rev.id,
       notes:`Gina confirmed all closing documents are filed. Please give final approval.`,
       listId:null, clientId:rev.clientId, dealId: rev.sourceTable==='deals'?rev.sourceId:null, entryId:null, attachments:[]};
@@ -1459,6 +1462,16 @@ function toLocalDateStr(d){
   return `${y}-${m}-${day}`;
 }
 function addDays(d,n){ const r=new Date(d); r.setDate(r.getDate()+n); return r; }
+function addBusinessDays(d,n){
+  const r=new Date(d);
+  let added=0;
+  while(added<n){
+    r.setDate(r.getDate()+1);
+    const day=r.getDay();
+    if(day!==0 && day!==6) added++;
+  }
+  return r;
+}
 function fmtDate(d){
   if(!d) return null;
   const opts={month:'short',day:'numeric'};
@@ -5316,7 +5329,7 @@ function renderBrokerReviewModal(){
       <div class="modal-body">
         <div class="field"><label>Deal</label><div>${escapeHtml(rev.dealName||'')}</div></div>
         <div class="field"><label>Closed Escrow Date</label><div>${fmtDate(new Date(rev.dateSigned+'T00:00:00'))}</div></div>
-        <div class="field"><label>Due</label><div>${fmtDate(new Date(rev.dueDate+'T00:00:00'))}</div></div>
+        <div class="field"><label>Due</label><div>${fmtDate(new Date((isDavidStep?rev.dbDueDate:rev.dueDate)+'T00:00:00'))}</div></div>
         <div class="field">
           <label>Documents</label>
           ${checklist.map((item,i)=>`
