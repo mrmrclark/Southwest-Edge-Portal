@@ -842,7 +842,7 @@ function dealRowToLocal(r){
           dealTermsEverSaved: !!r.deal_terms_ever_saved,
           rent:r.rent||'', price:r.price||'', term:r.term||'', tiAllowance:r.ti_allowance||'',
           totalFee:r.total_fee||'', splits:r.splits||[], commissionStructure:r.commission_structure||'',
-          commission1Paid:r.commission1_paid, commission2Paid:r.commission2_paid, notes:r.notes||''};
+          commission1Paid:r.commission1_paid, commission2Paid:r.commission2_paid, notes:r.notes||'', egnyteLink:r.egnyte_link||''};
 }
 function dealLocalToRow(d, clientId){
   return {id:d.id, client_id:clientId, name:d.name, complete:!!d.complete, active_deal:!!d.activeDeal,
@@ -852,7 +852,7 @@ function dealLocalToRow(d, clientId){
           deal_terms_ever_saved: !!d.dealTermsEverSaved,
           rent:d.rent||null, price:d.price||null, term:d.term||null, ti_allowance:d.tiAllowance||null,
           total_fee:d.totalFee||null, splits:d.splits||[], commission_structure:d.commissionStructure||null,
-          commission1_paid:!!d.commission1Paid, commission2_paid:!!d.commission2Paid, notes:d.notes||null};
+          commission1_paid:!!d.commission1Paid, commission2_paid:!!d.commission2Paid, notes:d.notes||null, egnyte_link:d.egnyteLink||null};
 }
 async function fetchListsClientsDealsFromSupabase(){
   const { data:lists, error:e1 } = await supabaseClient.from('lists').select('*');
@@ -1147,14 +1147,18 @@ function checkOfferPrompt(sourceTable, sourceId, clientId, dealName, oldStage, n
 }
 // Simple "documents in the File Server" reminder — fires immediately on the dropdown
 // change, OK-only, no checklist. Separate from the David/Gina broker review workflow.
-function checkFileServerReminder(oldStage, newStage){
+function checkFileServerReminder(oldStage, newStage, ref, saveFn){
   if(newStage===oldStage) return;
+  let message = null;
   if(newStage==='signedLease'){
-    state.stageReminderPrompt = 'Please ensure that your Signed Lease and Signed Commission Agreement are in the File Server.';
+    message = 'Please ensure that your Signed Lease and Signed Commission Agreement are in the File Server.';
+  } else if(newStage==='inEscrow'){
+    message = 'Please ensure that your Signed PSA and Signed Commission Agreement are in the File Server.';
   } else if(newStage==='closedEscrow'){
-    state.stageReminderPrompt = 'Please ensure that all documents necessary for processing payment are in the File Server, including '
+    message = 'Please ensure that all documents necessary for processing payment are in the File Server, including '
       + CLOSED_ESCROW_CHECKLIST_ITEMS.join(', ') + ', and the Commission Agreement.';
   }
+  if(message) state.stageReminderPrompt = {message, ref, saveFn, link: ref.egnyteLink||''};
 }
 async function markGinaChecklistComplete(reviewId){
   if(state.currentUser.email!=='gmaurer@edge-re.com'){ flashToast('Only the Office Manager can complete this checklist.'); return; }
@@ -1210,7 +1214,7 @@ function prospectRowToLocal(r){
     deadDate:r.dead_date? new Date(r.dead_date):null, building:r.building||'', spaceNum:r.space_num||'', size:r.size||'',
     rent:r.rent||'', price:r.price||'', term:r.term||'', tiAllowance:r.ti_allowance||'',
     totalFee:r.total_fee||'', splits:r.splits||'', commissionStructure:r.commission_structure||'',
-    commission1Paid:r.commission1_paid, commission2Paid:r.commission2_paid, inTradeArea:r.in_trade_area, attachments:[]};
+    commission1Paid:r.commission1_paid, commission2Paid:r.commission2_paid, inTradeArea:r.in_trade_area, attachments:[], egnyteLink:r.egnyte_link||''};
 }
 function prospectLocalToRow(p, listingId){
   return {id:p.id, listing_id:listingId, tenant_name:p.tenantName, contact_id:p.contactId||null, broker_id:p.brokerId||null,
@@ -1220,7 +1224,7 @@ function prospectLocalToRow(p, listingId){
     building:p.building||null, space_num:p.spaceNum||null, size:p.size||null, rent:p.rent||null, price:p.price||null,
     term:p.term||null, ti_allowance:p.tiAllowance||null, total_fee:p.totalFee||null, splits:p.splits||null,
     commission_structure:p.commissionStructure||null,
-    commission1_paid:!!p.commission1Paid, commission2_paid:!!p.commission2Paid, in_trade_area:!!p.inTradeArea};
+    commission1_paid:!!p.commission1Paid, commission2_paid:!!p.commission2Paid, in_trade_area:!!p.inTradeArea, egnyte_link:p.egnyteLink||null};
 }
 async function fetchProspectsFromSupabase(){
   const { data, error } = await supabaseClient.from('prospects').select('*');
@@ -5288,6 +5292,16 @@ function findListIdForClient(clientId){
   return list ? list.id : null;
 }
 /* ---------------- DESIGNATED BROKER REVIEW MODAL ---------------- */
+function findSourceRecord(sourceTable, sourceId){
+  for(const l of db.lists){
+    if(!l.clients) continue;
+    for(const c of l.clients){
+      if(sourceTable==='deals' && c.deals){ const d = c.deals.find(x=>x.id===sourceId); if(d) return {ref:d, saveFn:()=>supaUpdateDeal(d, c.id)}; }
+      if(sourceTable==='prospects' && c.prospects){ const pr = c.prospects.find(x=>x.id===sourceId); if(pr) return {ref:pr, saveFn:()=>supaUpdateProspect(pr, c.id)}; }
+    }
+  }
+  return null;
+}
 function renderBrokerReviewModal(){
   const m = state.brokerReviewModal;
   const rev = (db.brokerReviews||[]).find(r=>r.id===m.reviewId);
@@ -5303,6 +5317,12 @@ function renderBrokerReviewModal(){
   const label = rev.reviewType==='signedLease' ? 'Signed Lease' : (rev.reviewType==='signedPSA' ? 'Signed PSA (In Escrow)' : 'Closed Escrow');
   const isDavid = state.currentUser.email==='djarand@edge-re.com';
   const isGina = state.currentUser.email==='gmaurer@edge-re.com';
+  const canEditLink = isDavid || isGina || state.currentUser.role==='Admin';
+  const src = findSourceRecord(rev.sourceTable, rev.sourceId);
+  const egnyteLink = src ? (src.ref.egnyteLink||'') : '';
+  const egnyteHtml = canEditLink
+    ? `<div class="field"><label>Egnyte Link</label><input type="text" id="brEgnyteLink" placeholder="Paste the Egnyte folder link here" value="${escapeAttr(egnyteLink)}"></div>`
+    : `<div class="field"><label>Egnyte Link</label>${egnyteLink ? `<div><a href="${escapeAttr(egnyteLink)}" target="_blank" rel="noopener" style="color:var(--edge);">${escapeHtml(egnyteLink)}</a></div>` : `<div class="tiny" style="color:var(--ink-soft);">Not provided</div>`}</div>`;
   if(isSimple){
     overlay.innerHTML = `
     <div class="modal-card" style="max-width:480px;">
@@ -5311,6 +5331,7 @@ function renderBrokerReviewModal(){
         <div class="field"><label>Deal</label><div>${escapeHtml(rev.dealName||'')}</div></div>
         <div class="field"><label>Date Signed</label><div>${fmtDate(new Date(rev.dateSigned+'T00:00:00'))}</div></div>
         <div class="field"><label>Due</label><div>${fmtDate(new Date(rev.dueDate+'T00:00:00'))}</div></div>
+        ${egnyteHtml}
         <p class="tiny" style="margin-top:10px;">${rev.approvedAt ? `✓ Approved by Designated Broker on ${fmtDate(new Date(rev.approvedAt))}.` : 'Review the document in Egnyte, then mark it reviewed and approved below.'}</p>
         ${(!isDavid && !rev.approvedAt) ? `<p class="tiny" style="margin-top:8px;color:var(--ink-soft);">Only the Designated Broker can mark this reviewed.</p>` : ''}
       </div>
@@ -5330,6 +5351,7 @@ function renderBrokerReviewModal(){
         <div class="field"><label>Deal</label><div>${escapeHtml(rev.dealName||'')}</div></div>
         <div class="field"><label>Closed Escrow Date</label><div>${fmtDate(new Date(rev.dateSigned+'T00:00:00'))}</div></div>
         <div class="field"><label>Due</label><div>${fmtDate(new Date((isDavidStep?rev.dbDueDate:rev.dueDate)+'T00:00:00'))}</div></div>
+        ${egnyteHtml}
         <div class="field">
           <label>Documents</label>
           ${checklist.map((item,i)=>`
@@ -5351,7 +5373,11 @@ function renderBrokerReviewModal(){
     </div>`;
   }
   document.getElementById('app').appendChild(overlay);
-  overlay.querySelectorAll('[data-action="closeBrokerReview"]').forEach(b=>b.onclick=()=>{ state.brokerReviewModal=null; render(); });
+  overlay.querySelectorAll('[data-action="closeBrokerReview"]').forEach(b=>b.onclick=()=>{
+    const linkEl = document.getElementById('brEgnyteLink');
+    if(linkEl && src && linkEl.value.trim()!==egnyteLink){ src.ref.egnyteLink = linkEl.value.trim(); src.saveFn(); }
+    state.brokerReviewModal=null; render();
+  });
   overlay.querySelectorAll('[data-ceitem]').forEach(cb=>cb.onchange=()=>{
     const i = parseInt(cb.dataset.ceitem);
     rev.checklist[i].checked = cb.checked;
@@ -5364,16 +5390,31 @@ function renderBrokerReviewModal(){
   if(approveBtn) approveBtn.onclick=safeHandler(async ()=>{ await markBrokerReviewApproved(rev.id, m.todoId); state.brokerReviewModal=null; render(); });
 }
 function renderStageReminderPrompt(){
+  const m = state.stageReminderPrompt;
   const overlay = document.createElement('div');
   overlay.className='modal-overlay'; overlay.style.zIndex=286;
   overlay.innerHTML = `
-  <div class="modal-card" style="max-width:420px;">
+  <div class="modal-card" style="max-width:460px;">
     <div class="modal-head"><div class="modal-title">Reminder</div></div>
-    <div class="modal-body"><p>${escapeHtml(state.stageReminderPrompt)}</p></div>
+    <div class="modal-body">
+      <p>${escapeHtml(m.message)}</p>
+      <div class="field" style="margin-top:14px;">
+        <label>Egnyte Link to This Deal</label>
+        <input type="text" id="stageReminderEgnyte" placeholder="Paste the Egnyte folder link here" value="${escapeAttr(m.link||'')}">
+      </div>
+      <div class="tiny" id="stageReminderEgnyteErr" style="color:var(--bad);display:none;margin-top:4px;">A link is required so David/Gina can find the folder.</div>
+    </div>
     <div class="modal-foot"><button class="btn" data-action="closeStageReminder">OK</button></div>
   </div>`;
   document.getElementById('app').appendChild(overlay);
-  overlay.querySelector('[data-action="closeStageReminder"]').onclick=()=>{ state.stageReminderPrompt=null; render(); };
+  overlay.querySelector('[data-action="closeStageReminder"]').onclick=()=>{
+    const val = document.getElementById('stageReminderEgnyte').value.trim();
+    if(!val){ document.getElementById('stageReminderEgnyteErr').style.display='block'; return; }
+    m.ref.egnyteLink = val;
+    m.saveFn();
+    state.stageReminderPrompt=null;
+    render();
+  };
 }
 function renderQualifiedOfferPrompt(){
   const m = state.qualifiedOfferPrompt;
@@ -7644,7 +7685,7 @@ function wireLSRProspectBodyHandlers(root, l, listing, p){
     const prevStage = p.stage;
     p.stage = stageSelEl.value;
     checkOfferPrompt('prospects', p.id, listing.id, `${listing.name} — ${p.tenantName}`, prevStage, p.stage);
-    checkFileServerReminder(prevStage, p.stage);
+    checkFileServerReminder(prevStage, p.stage, p, ()=>supaUpdateProspect(p, listing.id));
     if(state.qualifiedOfferPrompt || state.stageReminderPrompt) render();
   };
   const saveBtn = root.querySelector('[data-action="lsrSaveProspect"]'); if(saveBtn) saveBtn.onclick=()=>{
@@ -8027,7 +8068,7 @@ function attachModalHandlers(root){
       const prevStage = d.stage;
       d.stage = stageEl.value;
       checkOfferPrompt('deals', d.id, c.id, `${c.name} — ${d.name}`, prevStage, d.stage);
-      checkFileServerReminder(prevStage, d.stage);
+      checkFileServerReminder(prevStage, d.stage, d, ()=>supaUpdateDeal(d, c.id));
       if(state.qualifiedOfferPrompt || state.stageReminderPrompt) render(); else renderPreservingScroll('.modal-body');
     };
     const openForBizEl = document.getElementById('dtOpenForBusiness'); if(openForBizEl) openForBizEl.onchange=()=>{
