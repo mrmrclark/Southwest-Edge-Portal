@@ -552,6 +552,7 @@ let state = {
   stageReminderPrompt:null,     // string message — File Server document reminder, OK-only
   brokerReviewLogOpen:false,    // hamburger menu: audit log screen for David/Gina/Admin
   brokerReviewLog:null,         // {startDate, endDate} — active date range for the log
+  pipelineView:null,            // {viewUserId} — 'office' or a specific user id
   navContextMenu:null,          // {kind:'smart'|'list', id} — which ellipsis menu is open
   showAllSmartLists:false,      // collapse toggle once there are more than 10 smart lists
   notifSettingsOpen:false,      // whether the notification-preferences modal is open
@@ -2611,6 +2612,7 @@ function render(){
   if(state.qualifiedOfferPrompt) renderQualifiedOfferPrompt();
   if(state.stageReminderPrompt) renderStageReminderPrompt();
   if(state.brokerReviewLog) renderBrokerReviewLogModal();
+  if(state.pipelineView) renderPipelineModal();
   if(state.notifSettingsOpen) renderNotifSettingsModal();
   if(state.pendingUsersModalOpen) renderPendingUsersModal();
   if(state.manageUsersModalOpen) renderManageUsersModal();
@@ -3402,16 +3404,67 @@ function fetchWeatherIfNeeded(){
     .catch(()=>{ weatherCache = {error:true, fetchedAt:Date.now()}; render(); });
 }
 function allClientsFlatById(id){ return allClientsFlat().find(c=>c.id===id); }
+function findClientById(clientId){
+  for(const l of db.lists){
+    if(!l.clients) continue;
+    const c = l.clients.find(x=>x.id===clientId);
+    if(c) return c;
+  }
+  return null;
+}
 // Splits qualified-offer credit evenly across whoever has access to the client account
 // (creator + authorized users) — Admins and Users are treated identically here; only
 // LD and Daniel are naturally excluded since they have no login/profile at all.
+// --- Pipeline View: weighted-average commission pipeline ---
+// Stage -> % likelihood, per Michael's table. Prospect and Dead are excluded entirely
+// (0% and no chance of ever paying, respectively) by simply not appearing in this map.
+const PIPELINE_STAGE_WA = {
+  loi: 0.25, signedLOI: 0.50, negotiating: 0.70, signedLease: 1.00, inEscrow: 0.70, closedEscrow: 1.00
+};
+// Every deal/prospect (Clients & Listings only — Prospects on the LSR board have no
+// value yet) that's still owed commission, broken into one row per person on the split.
+// "Still owed" already accounts for a clean 50/50 first/second half: once a half is
+// marked paid, only the remaining half's dollars count, and the deal drops out of the
+// pipeline entirely once both halves are paid.
+function pipelineRows(){
+  const rows = [];
+  db.lists.filter(l=>l.type==='deep').forEach(l=>{
+    l.clients.forEach(c=>{
+      const items = [
+        ...(c.deals||[]).map(d=>({rec:d, sourceTable:'deals'})),
+        ...(c.prospects||[]).map(p=>({rec:p, sourceTable:'prospects'}))
+      ];
+      items.forEach(({rec:d, sourceTable})=>{
+        const wa = PIPELINE_STAGE_WA[d.stage];
+        if(!wa) return; // not in the map = Prospect/Dead/no stage — excluded
+        const totalFee = parseFloat(d.totalFee) || 0;
+        if(totalFee<=0) return;
+        let remaining = totalFee;
+        if(d.commission1Paid) remaining -= totalFee/2;
+        if(d.commission2Paid) remaining -= totalFee/2;
+        if(remaining<=0) return; // both halves paid — out of the pipeline
+        (d.splits||[]).forEach(split=>{
+          const pct = parseFloat(split.pct) || 0;
+          if(pct<=0) return;
+          const waValue = remaining * (pct/100) * wa;
+          if(waValue<=0) return;
+          rows.push({
+            userId: split.userId, clientId: c.id, clientName: c.name, dealName: d.name,
+            stage: d.stage, totalFee, pct, waValue, sourceTable, sourceId: d.id
+          });
+        });
+      });
+    });
+  });
+  return rows;
+}
 function offerCreditsByUser(){
   const now = new Date();
   const year = now.getFullYear(), month = now.getMonth();
   const credits = {}; // userId -> {ytd, month}
   USERS.forEach(u=>{ credits[u.id] = {ytd:0, month:0}; });
   (db.dealOffers||[]).filter(o=>o.qualified).forEach(o=>{
-    const c = allClientsFlatById(o.clientId);
+    const c = findClientById(o.clientId);
     if(!c) return;
     const people = Array.from(new Set([c.createdBy, ...(c.authorizedUserIds||[])].filter(Boolean)));
     if(!people.length) return;
@@ -4547,6 +4600,7 @@ function renderAdminMenu(){
     ${isAdmin ? `<div class="admin-item" data-action="adminTimes">⏱️ Email Send Times</div>` : ''}
     ${isAdmin ? `<div class="admin-item" data-action="adminReset">🔑 Reset a Password</div>` : ''}
     ${isDBRole ? `<div class="admin-item" data-action="openBrokerReviewLog">📋 Broker Review Log</div>` : ''}
+    <div class="admin-item" data-action="openPipelineView">📈 Pipeline View</div>
   </div>`;
 }
 
@@ -4864,7 +4918,7 @@ function attachShellHandlers(){
     flashToast(`${name} added to ${l.name}.`);
     render();
   });
-  ['adminPending','adminFullTeam','adminImportTodos','adminImportTaskFire','adminImportMaps','adminDigest','adminUsers','adminTimes','adminReset','openBrokerReviewLog'].forEach(a=>{
+  ['adminPending','adminFullTeam','adminImportTodos','adminImportTaskFire','adminImportMaps','adminDigest','adminUsers','adminTimes','adminReset','openBrokerReviewLog','openPipelineView'].forEach(a=>{
     const e=document.querySelector(`[data-action="${a}"]`);
     if(e) e.onclick=()=>{ state.showAdminMenu=false; handleAdminAction(a); };
   });
@@ -5180,6 +5234,10 @@ async function handleAdminAction(a){
     await fetchBrokerReviewsFromSupabase();
     render();
   }
+  if(a==='openPipelineView'){
+    state.pipelineView = {viewUserId: state.currentUser.id};
+    render();
+  }
   if(a==='adminPendingDeletions'){ state.pendingDeletionsOpen=true; }
   if(a==='adminFullTeam'){ state.mainView = {type:'smart', id:'fullTeam'}; if(state.isMobile) state.mobileScreen='main'; }
   if(a==='adminImportTodos'){ state.importTodosModal = {step:'upload'}; }
@@ -5436,6 +5494,92 @@ function renderQualifiedOfferPrompt(){
   overlay.querySelectorAll('[data-qualified]').forEach(b=>b.onclick=safeHandler(()=>{
     saveQualifiedOffer(m.sourceTable, m.sourceId, m.clientId, b.dataset.qualified==='true');
   }));
+}
+function nameForSplitUserId(id){
+  const u = USERS.find(x=>x.id===id);
+  if(u) return u.name;
+  const co = (commissionOnlyPeople||[]).find(x=>x.id===id);
+  return co ? co.name : 'Unknown';
+}
+function renderPipelineModal(){
+  const m = state.pipelineView;
+  const isDBRole = state.currentUser.role==='Admin' || state.currentUser.role==='FullAccess';
+  const allRows = pipelineRows();
+  const isOffice = m.viewUserId==='office';
+  const rows = isOffice ? allRows : allRows.filter(r=>r.userId===m.viewUserId);
+  const total = rows.reduce((s,r)=>s+r.waValue, 0);
+  const stageLabel = s => LSR_STAGE_MAP[s] ? LSR_STAGE_MAP[s].name : s;
+  const viewLabel = isOffice ? 'Office Total' : nameForSplitUserId(m.viewUserId);
+  const overlay = document.createElement('div');
+  overlay.className='modal-overlay'; overlay.style.zIndex=206;
+  overlay.innerHTML = `
+  <div class="modal-card" style="max-width:820px;">
+    <div class="modal-head"><div class="modal-title">📈 Pipeline View</div><button class="modal-close" data-action="closePipelineView">✕</button></div>
+    <div class="modal-body">
+      ${isDBRole ? `
+      <div class="field" style="margin-bottom:14px;max-width:280px;">
+        <label>Viewing</label>
+        <select id="pipelineViewSelect">
+          <option value="${state.currentUser.id}" ${m.viewUserId===state.currentUser.id?'selected':''}>My Pipeline</option>
+          <option value="office" ${isOffice?'selected':''}>Office Total</option>
+          ${USERS.filter(u=>u.id!==state.currentUser.id).map(u=>`<option value="${u.id}" ${m.viewUserId===u.id?'selected':''}>${escapeHtml(u.name)}</option>`).join('')}
+        </select>
+      </div>` : ''}
+      <div style="font-size:20px;font-weight:700;color:var(--edge);margin-bottom:14px;">
+        ${escapeHtml(viewLabel)} — ${total.toLocaleString('en-US',{style:'currency',currency:'USD'})}
+      </div>
+      ${rows.length ? `
+      <table style="width:100%;border-collapse:collapse;font-size:12.5px;">
+        <thead><tr style="text-align:left;border-bottom:1px solid var(--line);">
+          <th style="padding:6px 8px;">Client</th><th style="padding:6px 8px;">Deal</th>
+          ${isOffice ? `<th style="padding:6px 8px;">Broker</th>` : ''}
+          <th style="padding:6px 8px;">Stage</th><th style="padding:6px 8px;text-align:right;">Total Commission</th>
+          <th style="padding:6px 8px;text-align:right;">Split %</th><th style="padding:6px 8px;text-align:right;">WA Pipeline</th>
+        </tr></thead>
+        <tbody>
+          ${rows.sort((a,b)=>b.waValue-a.waValue).map(r=>`
+          <tr style="border-bottom:1px solid var(--line-soft);">
+            <td style="padding:6px 8px;">${escapeHtml(r.clientName)}</td>
+            <td style="padding:6px 8px;">${escapeHtml(r.dealName)}</td>
+            ${isOffice ? `<td style="padding:6px 8px;">${escapeHtml(nameForSplitUserId(r.userId))}</td>` : ''}
+            <td style="padding:6px 8px;">${escapeHtml(stageLabel(r.stage))} (${Math.round(PIPELINE_STAGE_WA[r.stage]*100)}%)</td>
+            <td style="padding:6px 8px;text-align:right;">${r.totalFee.toLocaleString('en-US',{style:'currency',currency:'USD'})}</td>
+            <td style="padding:6px 8px;text-align:right;">${r.pct}%</td>
+            <td style="padding:6px 8px;text-align:right;font-weight:600;">${r.waValue.toLocaleString('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0})}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>` : `<div class="empty-state"><div class="big">Nothing in the pipeline right now.</div><div class="tiny">Nothing here is weighted above $0 for this view.</div></div>`}
+    </div>
+    <div class="modal-foot">
+      <button class="btn secondary sm" data-action="exportPipelineView">⬇️ Export to Excel</button>
+      <button class="btn secondary" data-action="closePipelineView">Close</button>
+    </div>
+  </div>`;
+  document.getElementById('app').appendChild(overlay);
+  overlay.querySelectorAll('[data-action="closePipelineView"]').forEach(b=>b.onclick=()=>{ state.pipelineView=null; render(); });
+  const selectEl = document.getElementById('pipelineViewSelect');
+  if(selectEl) selectEl.onchange=()=>{ m.viewUserId = selectEl.value; render(); };
+  const exportBtn = overlay.querySelector('[data-action="exportPipelineView"]');
+  if(exportBtn) exportBtn.onclick=()=>{
+    const header = isOffice
+      ? ['Client','Deal','Broker','Stage','% Likelihood','Total Commission','Split %','WA Pipeline']
+      : ['Client','Deal','Stage','% Likelihood','Total Commission','Split %','WA Pipeline'];
+    const csvRows = rows.sort((a,b)=>b.waValue-a.waValue).map(r=>{
+      const base = [r.clientName, r.dealName];
+      if(isOffice) base.push(nameForSplitUserId(r.userId));
+      base.push(stageLabel(r.stage), `${Math.round(PIPELINE_STAGE_WA[r.stage]*100)}%`, r.totalFee.toFixed(2), `${r.pct}%`, r.waValue.toFixed(2));
+      return base;
+    });
+    csvRows.push([]);
+    csvRows.push([isOffice ? 'Office Total' : `${viewLabel} Total`, '', ...(isOffice?['','','','','']:['','','','']), total.toFixed(2)]);
+    const csv = [header, ...csvRows].map(row=>row.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+    const blob = new Blob([csv], {type:'text/csv'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `pipeline_${isOffice?'office':viewLabel.replace(/\s+/g,'_')}_${toLocalDateStr(todayDate())}.csv`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
 }
 function renderBrokerReviewLogModal(){
   const m = state.brokerReviewLog;
@@ -6860,18 +7004,28 @@ function renderSplitRowHtml(row,i){
 }
 function renderCommissionModal(){
   const m = state.commissionModal;
-  let obj, saveFn;
+  let obj, saveFn, c;
   if(m.kind==='deal'){
-    const l = db.lists.find(x=>x.id===m.listId); const c = l.clients.find(x=>x.id===m.clientId);
+    const l = db.lists.find(x=>x.id===m.listId); c = l.clients.find(x=>x.id===m.clientId);
     obj = c.deals.find(x=>x.id===m.dealId);
     saveFn = ()=>supaUpdateDeal(obj, c.id);
   } else {
-    const l = db.lists.find(x=>x.id==='listings'); const c = l.clients.find(x=>x.id===m.clientId);
+    const l = db.lists.find(x=>x.id==='listings'); c = l.clients.find(x=>x.id===m.clientId);
     obj = c.prospects.find(x=>x.id===m.prospectId);
     saveFn = ()=>supaUpdateProspect(obj, c.id);
   }
   if(!obj){ state.commissionModal=null; return; }
-  if(!m.splitsDraft) m.splitsDraft = (Array.isArray(obj.splits) ? obj.splits : []).map(s=>({...s}));
+  if(!m.splitsDraft){
+    if(Array.isArray(obj.splits) && obj.splits.length){
+      m.splitsDraft = obj.splits.map(s=>({...s}));
+    } else {
+      // Default the split rows to whoever has access to this account — usually right,
+      // but percentages are always left blank since those are negotiated per person,
+      // not assumed. Easy to remove a row or add a different person if it doesn't apply.
+      const accountUserIds = Array.from(new Set([c.createdBy, ...(c.authorizedUserIds||[])].filter(Boolean)));
+      m.splitsDraft = accountUserIds.map(userId=>({userId, pct:null}));
+    }
+  }
   const draft = m.splitsDraft;
   const total = draft.reduce((s,row)=>s + (parseFloat(row.pct)||0), 0);
   const totalOk = Math.abs(total-100) < 0.02;
@@ -10250,6 +10404,8 @@ document.addEventListener('keydown', (ev)=>{
   if(state.contactModal){ state.contactModal=null; render(); return; }
   if(state.pendingUsersModalOpen){ state.pendingUsersModalOpen=false; render(); return; }
   if(state.pendingDeletionsOpen){ state.pendingDeletionsOpen=false; render(); return; }
+  if(state.pipelineView){ state.pipelineView=null; render(); return; }
+  if(state.brokerReviewLog){ state.brokerReviewLog=null; render(); return; }
   if(state.contactImportReview){
     if(confirm('Stop reviewing? Nothing has been imported yet, and progress in this session will be lost.')){ state.contactImportReview=null; render(); }
     return;
