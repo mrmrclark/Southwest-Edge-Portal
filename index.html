@@ -6455,6 +6455,31 @@ function closeModalStack(){
   state.modalStack=[]; render();
 }
 function popModalTo(index){ state.modalStack = state.modalStack.slice(0, index+1); render(); }
+// Shared by the ✕ button and the Escape key — always steps back exactly ONE level of
+// the Client/Deal/Prospect/Entry hierarchy (never collapses the whole stack), and if
+// that level has real fields that only save on an explicit button click (Deal Terms,
+// Prospect edit), asks first so a Yes/No mis-click or a stray Escape can't be silently lost.
+function closeTopModalFrame(){
+  if(state.modalStack.length > 1){
+    const closingFrame = state.modalStack[state.modalStack.length-1];
+    if(closingFrame.kind==='deal' || closingFrame.kind==='lsrProspect'){
+      if(confirm('Save your changes before going back?')){
+        const saveBtn = document.querySelector(closingFrame.kind==='deal' ? '[data-action="saveDealTerms"]' : '[data-action="lsrSaveProspect"]');
+        if(saveBtn) saveBtn.click();
+      }
+    }
+    state.modalStack.pop();
+    render();
+    if(typeof closingFrame.parentScrollTop==='number'){
+      requestAnimationFrame(()=>{
+        const scroller = document.querySelector('.modal-body');
+        if(scroller) scroller.scrollTop = closingFrame.parentScrollTop;
+      });
+    }
+  } else {
+    closeModalStack();
+  }
+}
 
 function breadcrumbFor(stack){
   const crumbs=[{label:'Home', idx:-1}];
@@ -6604,9 +6629,6 @@ function renderClientModalBody(l,c,viewMode,pendingDel){
   return `
   ${!canEdit ? `<div style="background:#F3F1EC;border:1px solid var(--line);border-radius:8px;padding:8px 14px;font-size:12.5px;color:var(--ink-soft);margin-bottom:14px;">👁️ View-only — you have Full Access visibility but aren't personally added to this ${l.id==='listings'?'listing':'client'}, so editing is turned off.</div>` : ''}
   ${showDeals ? `
-  <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
-    ${canEdit ? `<button class="btn sm" data-action="addDeal" data-client="${c.id}">+ Add site / deal</button>` : ''}
-  </div>
   <div style="display:flex;gap:14px;margin-bottom:14px;flex-wrap:wrap;">
     <div class="contact-card" style="flex:1;min-width:220px;">
       <div class="label">Primary Contact</div>
@@ -6630,6 +6652,7 @@ function renderClientModalBody(l,c,viewMode,pendingDel){
   ${canEdit ? `<button class="btn secondary sm" data-action="newAccountTodo" data-listid="${l.id}" data-client="${c.id}" style="margin-bottom:10px;">+ New To-Do</button>` : ''}
   ${renderTodoList(db.todos.filter(t=>t.clientId===c.id && !t.dealId).filter(visibleTodo), true)}
   <div class="section-label" style="margin-top:18px;">Sites / Deals</div>
+  ${canEdit ? `<button class="btn sm" data-action="addDeal" data-client="${c.id}" style="margin-bottom:10px;">+ Add site / deal</button>` : ''}
   ${renderDealGroupsInClient(l,c)}
   ` : ''}
   ${showProspecting ? renderLSRInline(c, state.leasingReportMode || viewMode) : ''}
@@ -7663,17 +7686,17 @@ function wireLSRProspectBodyHandlers(root, l, listing, p){
     if(confirm(`Delete ${p.tenantName}? This can't be undone.`)){
       listing.prospects = listing.prospects.filter(x=>x.id!==p.id);
       supaDeleteProspect(p.id);
-      state.modalStack.pop(); render();
+      state.modalStack.pop(); renderPreservingScroll('.modal-body');
     }
   };
   const markDeadBtn = root.querySelector('[data-action="lsrMarkDead"]'); if(markDeadBtn) markDeadBtn.onclick=()=>{
-    p.stage='dead'; p.deadDate=new Date(); supaUpdateProspect(p, listing.id); state.modalStack.pop(); flashToast(`${p.tenantName} marked Dead.`); render();
+    p.stage='dead'; p.deadDate=new Date(); supaUpdateProspect(p, listing.id); state.modalStack.pop(); flashToast(`${p.tenantName} marked Dead.`); renderPreservingScroll('.modal-body');
   };
   const markNI = root.querySelector('[data-action="lsrMarkNotInterested"]'); if(markNI) markNI.onclick=()=>{
-    p.stage='notInterested'; p.deadDate=new Date(); supaUpdateProspect(p, listing.id); state.modalStack.pop(); flashToast(`${p.tenantName} marked Not Interested.`); render();
+    p.stage='notInterested'; p.deadDate=new Date(); supaUpdateProspect(p, listing.id); state.modalStack.pop(); flashToast(`${p.tenantName} marked Not Interested.`); renderPreservingScroll('.modal-body');
   };
   const reviveBtn = root.querySelector('[data-action="lsrRevive"]'); if(reviveBtn) reviveBtn.onclick=()=>{
-    p.stage='interested'; p.deadDate=null; supaUpdateProspect(p, listing.id); flashToast(`${p.tenantName} revived to Interested Prospect.`); render();
+    p.stage='interested'; p.deadDate=null; supaUpdateProspect(p, listing.id); flashToast(`${p.tenantName} revived to Interested Prospect.`); renderPreservingScroll('.modal-body');
   };
   const todoBtn = root.querySelector('[data-action="lsrCreateTodo"]'); if(todoBtn) todoBtn.onclick=()=>{
     state.modalStack.pop();
@@ -7795,21 +7818,7 @@ function attachModalHandlers(root){
     if(idx===-1) closeModalStack(); else popModalTo(idx);
   });
   const closeBtn = root.querySelector('[data-action="closeModal"]'); if(closeBtn) closeBtn.onclick=()=>{
-    // Closing a nested Deal (or similar) should reveal its parent Client/Listing,
-    // not wipe all the way back out to the main list — only actually exit
-    // everything once you're already at the outermost frame.
-    if(state.modalStack.length > 1){
-      const closingFrame = state.modalStack[state.modalStack.length-1];
-      state.modalStack.pop();
-      render();
-      if(typeof closingFrame.parentScrollTop==='number'){
-        requestAnimationFrame(()=>{
-          const scroller = document.querySelector('.modal-body');
-          if(scroller) scroller.scrollTop = closingFrame.parentScrollTop;
-        });
-      }
-    }
-    else closeModalStack();
+    closeTopModalFrame();
   };
   const saveCloseBtn = root.querySelector('[data-action="saveAndCloseDeal"]'); if(saveCloseBtn) saveCloseBtn.onclick=safeHandler(()=>{
     const frame = state.modalStack[state.modalStack.length-1];
@@ -10190,6 +10199,29 @@ document.addEventListener('keydown', (ev)=>{
   if(ev.key!=='Escape') return;
   // Closest/smallest overlays first, so repeated Escape presses peel back one
   // layer at a time — same order a person would naturally click their way out.
+  // These three sit above everything else (highest z-index), so they're checked first.
+  if(state.qualifiedOfferPrompt){ state.qualifiedOfferPrompt=null; render(); return; }
+  if(state.stageReminderPrompt){
+    const linkEl = document.getElementById('stageReminderEgnyte');
+    const val = linkEl ? linkEl.value.trim() : '';
+    if(val && confirm('Save this Egnyte link before closing?')){
+      state.stageReminderPrompt.ref.egnyteLink = val;
+      state.stageReminderPrompt.saveFn();
+    }
+    state.stageReminderPrompt=null; render(); return;
+  }
+  if(state.brokerReviewModal){
+    const linkEl = document.getElementById('brEgnyteLink');
+    if(linkEl){
+      const rev = (db.brokerReviews||[]).find(r=>r.id===state.brokerReviewModal.reviewId);
+      const src = rev ? findSourceRecord(rev.sourceTable, rev.sourceId) : null;
+      const val = linkEl.value.trim();
+      if(src && val!==(src.ref.egnyteLink||'') && confirm('Save this Egnyte link before closing?')){
+        src.ref.egnyteLink = val; src.saveFn();
+      }
+    }
+    state.brokerReviewModal=null; render(); return;
+  }
   if(state.duplicatePrompt){ state.duplicatePrompt=null; render(); return; }
   if(state.brokerPickerOpen){ state.brokerPickerOpen=null; render(); return; }
   if(state.contactPickerOpen){ state.contactPickerOpen=null; render(); return; }
@@ -10223,7 +10255,7 @@ document.addEventListener('keydown', (ev)=>{
     return;
   }
   if(state.taskfireImport){ state.taskfireImport=null; render(); return; }
-  if(state.modalStack.length){ closeModalStack(); return; }
+  if(state.modalStack.length){ closeTopModalFrame(); return; }
   // Small dropdowns/menus — already had Escape support, kept as the final fallback.
   let changed=false;
   if(state.showAdminMenu){ state.showAdminMenu=false; changed=true; }
