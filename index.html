@@ -6734,13 +6734,25 @@ function contactRow(contactId){
 }
 function brokerRow(brokerId){
   const b = PHOENIX_BROKER_LIST.find(x=>x.id===brokerId);
-  if(!b) return `<div class="tiny" style="color:var(--ink-soft);font-size:12px;">No broker attached.</div>`;
-  return `
-  <div class="contact-line"><span>Name</span><b>${escapeHtml(b.name)}</b></div>
-  <div class="contact-line"><span>Company</span><b>${escapeHtml(b.company||'—')}</b></div>
-  <div class="contact-line"><span>Email</span><b>${b.email? `<a href="mailto:${escapeAttr(b.email)}" style="color:var(--edge);text-decoration:none;">${escapeHtml(b.email)}</a>` : '—'}</b></div>
-  <div class="contact-line"><span>Mobile</span><b>${escapeHtml(b.mobile||'—')}</b></div>
-  <div class="contact-line"><span>Phone</span><b>${escapeHtml(b.phone||'—')}</b></div>`;
+  if(b){
+    return `
+    <div class="contact-line"><span>Name</span><b>${escapeHtml(b.name)}</b></div>
+    <div class="contact-line"><span>Company</span><b>${escapeHtml(b.company||'—')}</b></div>
+    <div class="contact-line"><span>Email</span><b>${b.email? `<a href="mailto:${escapeAttr(b.email)}" style="color:var(--edge);text-decoration:none;">${escapeHtml(b.email)}</a>` : '—'}</b></div>
+    <div class="contact-line"><span>Mobile</span><b>${escapeHtml(b.mobile||'—')}</b></div>
+    <div class="contact-line"><span>Phone</span><b>${escapeHtml(b.phone||'—')}</b></div>`;
+  }
+  const c = db.contacts.find(x=>x.id===brokerId);
+  if(c){
+    const name = `${c.first||''} ${c.last||''}`.trim();
+    return `
+    <div class="contact-line"><span>Name</span><b>${escapeHtml(name)}</b></div>
+    <div class="contact-line"><span>Company</span><b>${escapeHtml(c.company||'—')}</b></div>
+    <div class="contact-line"><span>Email</span><b>${c.email? `<a href="mailto:${escapeAttr(c.email)}" style="color:var(--edge);text-decoration:none;">${escapeHtml(c.email)}</a>` : '—'}</b></div>
+    <div class="contact-line"><span>Mobile</span><b>${escapeHtml(c.mobile||'—')}</b></div>
+    <div class="contact-line"><span>Phone</span><b>${escapeHtml(c.phone||'—')}</b></div>`;
+  }
+  return `<div class="tiny" style="color:var(--ink-soft);font-size:12px;">No broker attached.</div>`;
 }
 function renderClientModalBody(l,c,viewMode,pendingDel){
   viewMode = viewMode || 'all';
@@ -8346,30 +8358,42 @@ function openContactPicker(ctx){
 function openBrokerPicker(ctx){
   state.brokerPickerOpen = ctx; state.brokerPickerQuery='';
 }
+function searchBrokerCandidates(q){
+  if(!q) return [];
+  const phoenixMatches = PHOENIX_BROKER_LIST.filter(b=>b.name.toLowerCase().includes(q) || (b.company||'').toLowerCase().includes(q));
+  const myContactMatches = db.contacts
+    .filter(c=>c.createdBy===state.currentUser.authId)
+    .filter(c=>{
+      const name = `${c.first||''} ${c.last||''}`.trim().toLowerCase();
+      return name.includes(q) || (c.company||'').toLowerCase().includes(q);
+    })
+    .map(c=>({id:c.id, name:`${c.first||''} ${c.last||''}`.trim(), company:c.company, mobile:c.mobile, phone:c.phone, isMyContact:true}));
+  return [...phoenixMatches, ...myContactMatches];
+}
 function renderBrokerSuggestListHtml(matches){
   if(!matches.length) return '';
   return `<div class="suggest-list">${matches.map(b=>`
     <div class="suggest-item" data-selectbroker="${b.id}">
       <b>${escapeHtml(b.name)}</b>
-      <div class="sub">${escapeHtml(b.company||'No company')} · ${escapeHtml(b.mobile||b.phone||'No number')}</div>
+      <div class="sub">${escapeHtml(b.company||'No company')} · ${escapeHtml(b.mobile||b.phone||'No number')} ${b.isMyContact ? '· <span style="color:var(--edge);">My Contact</span>' : ''}</div>
     </div>`).join('')}</div>`;
 }
 function renderBrokerPickerPanel(){
   if(!state.brokerPickerOpen) return '';
   const q = state.brokerPickerQuery.toLowerCase();
-  const matches = q ? PHOENIX_BROKER_LIST.filter(b=>b.name.toLowerCase().includes(q) || (b.company||'').toLowerCase().includes(q)) : [];
+  const matches = searchBrokerCandidates(q);
   return `
   <div class="modal-overlay" style="z-index:600;" id="brokerPickerOverlay">
     <div class="modal-card">
       <div class="modal-head"><div class="modal-title">Attach Broker</div><button class="modal-close" data-action="closeBrokerPicker">✕</button></div>
       <div class="modal-body">
         <div class="field autocomplete-box">
-          <label>Search the Phoenix Broker List</label>
+          <label>Search the Phoenix Broker List or Your Own Contacts</label>
           <input id="brokerSearchInput" placeholder="Start typing a name or company…" value="${escapeAttr(state.brokerPickerQuery)}">
           <div id="brokerSuggestList">${renderBrokerSuggestListHtml(matches)}</div>
         </div>
         <div style="margin-top:14px;border-top:1px solid var(--line);padding-top:14px;">
-          <div style="font-size:12px;font-weight:600;color:var(--ink-soft);margin-bottom:8px;">Or add a new broker to the list</div>
+          <div style="font-size:12px;font-weight:600;color:var(--ink-soft);margin-bottom:8px;">Or add a new broker to the shared Phoenix list</div>
           <div class="field"><label>Name</label><input id="newBrokerName"></div>
           <div class="field"><label>Company</label><input id="newBrokerCompany"></div>
           <div class="field-row">
@@ -10301,7 +10325,7 @@ render = function(){
       input.oninput=()=>{
         state.brokerPickerQuery=input.value;
         const q = state.brokerPickerQuery.toLowerCase();
-        const newMatches = q ? PHOENIX_BROKER_LIST.filter(b=>b.name.toLowerCase().includes(q) || (b.company||'').toLowerCase().includes(q)) : [];
+        const newMatches = searchBrokerCandidates(q);
         const listBox = document.getElementById('brokerSuggestList');
         if(listBox){
           listBox.innerHTML = renderBrokerSuggestListHtml(newMatches);
