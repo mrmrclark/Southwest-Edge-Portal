@@ -823,14 +823,14 @@ function clientRowToLocal(r){
   return {id:r.id, name:r.name, primary:r.primary_contact_id, secondContactId:null, thirdContactId:null, deals:[],
           propertyType:r.property_type, squareFootage:r.square_footage, askingRate:r.asking_rate,
           createdBy: authIdToLocalUserId(r.created_by) || r.created_by, authorizedUserIds:[],
-          hashtags: r.hashtags || '',
+          hashtags: r.hashtags || '', notes: r.notes || '',
           elaStartDate: r.ela_start_date ? new Date(r.ela_start_date+'T00:00:00') : null,
           elaEndDate: r.ela_end_date ? new Date(r.ela_end_date+'T00:00:00') : null,
           archivedAt: r.archived_at ? new Date(r.archived_at) : null};
 }
 function clientLocalToRow(c, listId){
   return {id:c.id, list_id:listId, name:c.name, primary_contact_id:c.primary||null, created_by: localUserIdToAuthId(c.createdBy),
-          hashtags: c.hashtags || null,
+          hashtags: c.hashtags || null, notes: c.notes || null,
           ela_start_date: c.elaStartDate ? toLocalDateStr(c.elaStartDate) : null,
           ela_end_date: c.elaEndDate ? toLocalDateStr(c.elaEndDate) : null,
           archived_at: c.archivedAt ? c.archivedAt.toISOString() : null};
@@ -6803,6 +6803,11 @@ function renderClientModalBody(l,c,viewMode,pendingDel){
   ${showDeals ? accessHtml : ''}
   ${l.id==='listings' ? renderElaCard(c, canEdit) : ''}
   <div class="contact-card" style="margin-top:20px;">
+    <div class="label">Notes</div>
+    <textarea id="clientNotes" rows="4" ${canEdit?'':'disabled'} style="width:100%;font-size:14px;padding:12px 14px;border:1px solid var(--line);border-radius:8px;color:var(--ink);background:#fff;box-sizing:border-box;resize:vertical;">${escapeHtml(c.notes||'')}</textarea>
+    ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="saveClientNotes" data-listid="${l.id}" data-client="${c.id}">Save Notes</button>` : ''}
+  </div>
+  <div class="contact-card" style="margin-top:20px;">
     <div class="label">Tags</div>
     <div style="font-size:12.5px;color:var(--ink-soft);margin:4px 0 8px;">Comma-separated, e.g. #Freddys, #SouthwestEdgeRocks, #PortalPower</div>
     <input id="clientHashtags" value="${escapeAttr(c.hashtags||'')}" placeholder="#Freddys, #SouthwestEdgeRocks" ${canEdit?'':'disabled'} style="width:100%;font-size:19px;padding:16px 14px;border:1px solid var(--line);border-radius:8px;color:var(--ink);background:#fff;box-sizing:border-box;">
@@ -8169,6 +8174,14 @@ function attachModalHandlers(root){
     d.dealType = newType;
     render();
   }));
+  const saveNotesBtn = root.querySelector('[data-action="saveClientNotes"]'); if(saveNotesBtn) saveNotesBtn.onclick=safeHandler(()=>{
+    const l=db.lists.find(x=>x.id===saveNotesBtn.dataset.listid); const c=l && l.clients.find(x=>x.id===saveNotesBtn.dataset.client);
+    if(!c){ flashToast("Couldn't find this client."); render(); return; }
+    c.notes = document.getElementById('clientNotes').value;
+    supaUpdateClientContact(c, l.id);
+    flashToast('Notes saved.');
+    render();
+  });
   const saveHashtagsBtn = root.querySelector('[data-action="saveHashtags"]'); if(saveHashtagsBtn) saveHashtagsBtn.onclick=safeHandler(()=>{
     const frame = state.modalStack[state.modalStack.length-1];
     const l=db.lists.find(x=>x.id===frame.listId); const c=l && l.clients.find(x=>x.id===saveHashtagsBtn.dataset.client);
