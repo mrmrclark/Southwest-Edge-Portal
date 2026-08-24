@@ -8585,6 +8585,13 @@ function renderNtpAccountListHtml(matches){
       <div class="row-body"><div class="row-title">${escapeHtml(a.name)}</div><div class="row-meta"><span>${escapeHtml(a.listName)}</span></div></div>
     </div>`).join('');
 }
+function renderNtpDealListHtml(matches){
+  if(!matches.length) return `<div class="tiny" style="color:var(--ink-soft);padding:10px 0;">No deals match.</div>`;
+  return matches.map(d=>`
+    <div class="row-card" data-action="ntpPickDeal" data-dealid="${d.id}" style="cursor:pointer;margin-bottom:6px;">
+      <div class="row-body"><div class="row-title">${escapeHtml(d.name)}</div></div>
+    </div>`).join('');
+}
 function renderNewTodoPickerModal(){
   const p = state.newTodoPicker;
   const overlay = document.createElement('div');
@@ -8609,15 +8616,13 @@ function renderNewTodoPickerModal(){
   } else if(p.step==='chooseDealOrStop'){
     const acct = p.pickedAccount;
     title = acct.name;
+    const dq = (p.dealQuery||'').trim().toLowerCase();
+    const dealMatches = acct.deals.filter(d=>!dq || d.name.toLowerCase().includes(dq));
     body = `
       <button class="btn" data-action="ntpStopAtAccount" style="width:100%;margin-bottom:16px;">Not associated with a Deal — create it under ${escapeHtml(acct.name)}</button>
       <div class="section-label">Or pick a specific deal:</div>
-      <div style="max-height:280px;overflow-y:auto;">
-        ${acct.deals.length ? acct.deals.map(d=>`
-          <div class="row-card" data-action="ntpPickDeal" data-dealid="${d.id}" style="cursor:pointer;margin-bottom:6px;">
-            <div class="row-body"><div class="row-title">${escapeHtml(d.name)}</div></div>
-          </div>`).join('') : `<div class="tiny" style="color:var(--ink-soft);padding:10px 0;">No deals yet on this account.</div>`}
-      </div>`;
+      ${acct.deals.length ? `<input id="ntpDealSearch" placeholder="🔍 Search deals under ${escapeAttr(acct.name)}…" value="${escapeAttr(p.dealQuery||'')}" style="margin-bottom:10px;">` : ''}
+      <div id="ntpDealList" style="max-height:280px;overflow-y:auto;">${acct.deals.length ? renderNtpDealListHtml(dealMatches) : `<div class="tiny" style="color:var(--ink-soft);padding:10px 0;">No deals yet on this account.</div>`}</div>`;
   } else if(p.step==='chooseEntryType'){
     title = 'Hit List or Hot List?';
     body = `
@@ -8678,14 +8683,14 @@ function renderNewTodoPickerModal(){
       listBox.innerHTML = renderNtpAccountListHtml(newMatches);
       listBox.querySelectorAll('[data-action="ntpPickAccount"]').forEach(b=>b.onclick=()=>{
         p.pickedAccount = accountsFlatForPicker().find(a=>a.id===b.dataset.accountid);
-        p.step='chooseDealOrStop';
+        p.step='chooseDealOrStop'; p.dealQuery='';
         render();
       });
     }
   };
   overlay.querySelectorAll('[data-action="ntpPickAccount"]').forEach(b=>b.onclick=()=>{
     p.pickedAccount = accountsFlatForPicker().find(a=>a.id===b.dataset.accountid);
-    p.step='chooseDealOrStop';
+    p.step='chooseDealOrStop'; p.dealQuery='';
     render();
   });
   const stopBtn = overlay.querySelector('[data-action="ntpStopAtAccount"]'); if(stopBtn) stopBtn.onclick=()=>{
@@ -8695,14 +8700,29 @@ function renderNewTodoPickerModal(){
     state.newTodoModal.navigateAfterSave = {kind:'client', listId:acct.listId, clientId:acct.id};
     render();
   };
-  overlay.querySelectorAll('[data-action="ntpPickDeal"]').forEach(b=>b.onclick=()=>{
+  const wireNtpPickDeal = ()=>{
+    document.querySelectorAll('[data-action="ntpPickDeal"]').forEach(b=>b.onclick=()=>{
+      const acct = p.pickedAccount;
+      const d = acct.deals.find(x=>x.id===b.dataset.dealid);
+      state.newTodoPicker=null;
+      openNewTodoModal({listId:acct.listId, clientId:acct.id, dealId:d.id});
+      state.newTodoModal.navigateAfterSave = {kind:'deal', listId:acct.listId, clientId:acct.id, dealId:d.id};
+      render();
+    });
+  };
+  wireNtpPickDeal();
+  const dealSearchEl = document.getElementById('ntpDealSearch');
+  if(dealSearchEl) dealSearchEl.oninput=()=>{
+    p.dealQuery = dealSearchEl.value;
+    const dq = p.dealQuery.trim().toLowerCase();
     const acct = p.pickedAccount;
-    const d = acct.deals.find(x=>x.id===b.dataset.dealid);
-    state.newTodoPicker=null;
-    openNewTodoModal({listId:acct.listId, clientId:acct.id, dealId:d.id});
-    state.newTodoModal.navigateAfterSave = {kind:'deal', listId:acct.listId, clientId:acct.id, dealId:d.id};
-    render();
-  });
+    const newMatches = acct.deals.filter(d=>!dq || d.name.toLowerCase().includes(dq));
+    const listBox = document.getElementById('ntpDealList');
+    if(listBox){
+      listBox.innerHTML = renderNtpDealListHtml(newMatches);
+      wireNtpPickDeal();
+    }
+  };
 
   const entrySearchEl = document.getElementById('ntpEntrySearch');
   if(entrySearchEl) entrySearchEl.oninput=()=>{
@@ -8734,7 +8754,7 @@ function renderNewTodoPickerModal(){
   });
 }
 function openNewTodoModal(context){
-  state.newTodoModal={ context, title:'', category: context.category||'', status:'Not Started', dueInput:'', notes:'', type:'task', assignTo:state.currentUser.id, attachments:[], checklistItems:[] };
+  state.newTodoModal={ context, title:'', category: context.category||'', status:'Not Started', dueInput: toLocalDateStr(todayDate()), notes:'', type:'task', assignTo:state.currentUser.id, attachments:[], checklistItems:[] };
 }
 // A Project shows up here if the current person created it, is assigned to it directly,
 // or is assigned any child To Do living inside it — matching how "who can see a Project"
