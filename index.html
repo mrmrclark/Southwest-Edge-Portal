@@ -6233,12 +6233,12 @@ function renderChecklistSection(td){
     <label>Checklist${td.checklistItems.length? ` <span style="font-weight:400;color:var(--ink-soft);">(${doneCount}/${td.checklistItems.length} done)</span>`:''}</label>
     <div id="checklistItemsList">
       ${td.checklistItems.map((item,idx)=>`
-        <div style="display:flex;align-items:center;gap:8px;padding:4px 0;">
-          <input type="checkbox" data-checkitem="${item.id}" ${item.done?'checked':''} style="width:auto;">
-          <input data-checklistitemtext="${item.id}" value="${escapeAttr(item.text)}" placeholder="Item ${idx+1}" style="flex:1;font-size:13.5px;${item.done?'text-decoration:line-through;color:var(--ink-soft);':''}">
-          <input type="date" data-checklistitemdue="${item.id}" value="${item.dueDate?toLocalDateStr(item.dueDate):''}" title="Date 1 (optional)" style="width:135px;font-size:12.5px;color:var(--ink-soft);">
-          <input type="date" data-checklistitemdue2="${item.id}" value="${item.dueDate2?toLocalDateStr(item.dueDate2):''}" title="Date 2 (optional)" style="width:135px;font-size:12.5px;color:var(--ink-soft);">
-          <button class="row-trash" data-removeitem="${item.id}" style="opacity:.5;">✕</button>
+        <div style="display:flex;align-items:center;gap:8px;padding:6px 0;flex-wrap:wrap;">
+          <input type="checkbox" data-checkitem="${item.id}" ${item.done?'checked':''} style="width:auto;flex:none;">
+          <input data-checklistitemtext="${item.id}" value="${escapeAttr(item.text)}" placeholder="Item ${idx+1}" style="flex:1 1 160px;min-width:120px;font-size:13.5px;${item.done?'text-decoration:line-through;color:var(--ink-soft);':''}">
+          <input type="date" data-checklistitemdue="${item.id}" value="${item.dueDate?toLocalDateStr(item.dueDate):''}" title="Date 1 (optional)" style="flex:1 1 130px;min-width:110px;font-size:12.5px;color:var(--ink-soft);">
+          <input type="date" data-checklistitemdue2="${item.id}" value="${item.dueDate2?toLocalDateStr(item.dueDate2):''}" title="Date 2 (optional)" style="flex:1 1 130px;min-width:110px;font-size:12.5px;color:var(--ink-soft);">
+          <button class="row-trash" data-removeitem="${item.id}" style="opacity:.5;flex:none;">✕</button>
         </div>`).join('')}
     </div>
     <button class="btn secondary sm" data-action="addChecklistItem" style="margin-top:6px;">+ Add item</button>
