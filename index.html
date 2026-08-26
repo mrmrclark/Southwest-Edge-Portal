@@ -4323,8 +4323,9 @@ function renderTodoList(list, compact, dateOnly){
   if(dateOnly){
     // Pure soonest-first sort, no assignee grouping at all — used for personal
     // date-ordered views (e.g. All - Me) where grouping by assignee would break
-    // up the chronological order.
+    // up the chronological order. Completed items still sort to the bottom first.
     const sorted = list.slice().sort((a,b)=>{
+      if(!!a.completed !== !!b.completed) return a.completed ? 1 : -1;
       if(!a.dueDate && !b.dueDate) return 0;
       if(!a.dueDate) return 1;
       if(!b.dueDate) return -1;
@@ -4333,9 +4334,12 @@ function renderTodoList(list, compact, dateOnly){
     const allIds = sorted.map(td=>td.id);
     return todoRowLegend(allIds) + sorted.map(td=>renderTodoRow(td)).join('');
   }
+  // Completed items always sort to the bottom of whatever list they're in — a checked
+  // item should stay visible and land at the end, never disappear or jump around.
   // Group by assignee — mine first, then each teammate in turn — and within each
   // group, new/unseen assignments float up, then soonest due date first.
   const sorted = list.slice().sort((a,b)=>{
+    if(!!a.completed !== !!b.completed) return a.completed ? 1 : -1;
     const ra=assigneeRank(a), rb=assigneeRank(b);
     if(ra!==rb) return ra-rb;
     if(ra===0){
@@ -6228,11 +6232,15 @@ function renderMoveTodoPicker(){
 // "+ Add item" grows it one at a time after that.
 function renderChecklistSection(td){
   const doneCount = td.checklistItems.filter(i=>i.done).length;
+  const sortedChecklistItems = td.checklistItems.map((item,idx)=>({item,idx})).sort((a,b)=>{
+    if(!!a.item.done !== !!b.item.done) return a.item.done ? 1 : -1;
+    return a.idx - b.idx;
+  });
   return `
   <div class="field">
     <label>Checklist${td.checklistItems.length? ` <span style="font-weight:400;color:var(--ink-soft);">(${doneCount}/${td.checklistItems.length} done)</span>`:''}</label>
     <div id="checklistItemsList">
-      ${td.checklistItems.map((item,idx)=>`
+      ${sortedChecklistItems.map(({item,idx})=>`
         <div style="display:flex;align-items:center;gap:8px;padding:6px 0;flex-wrap:wrap;">
           <input type="checkbox" data-checkitem="${item.id}" ${item.done?'checked':''} style="width:auto;flex:none;">
           <input data-checklistitemtext="${item.id}" value="${escapeAttr(item.text)}" placeholder="Item ${idx+1}" style="flex:1 1 160px;min-width:120px;font-size:13.5px;${item.done?'text-decoration:line-through;color:var(--ink-soft);':''}">
