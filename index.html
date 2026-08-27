@@ -4044,7 +4044,6 @@ function renderAllDealsMain(){
     : `<div class="empty-state"><div class="big">No open deals of yours right now.</div><div class="tiny">Closed Escrow and Open for Business deals are left out of this list on purpose.</div></div>`;
 
   if(!state.allDealsAccountOpen) state.allDealsAccountOpen = {};
-  if(!state.allDealsStageOpen) state.allDealsStageOpen = {};
   const renderSection = (listId, sectionTitle)=>{
     const sectionRows = rows.filter(r=>r.listId===listId);
     if(!sectionRows.length) return '';
@@ -4077,25 +4076,16 @@ function renderAllDealsMain(){
             const stageName = stageInfo ? stageInfo.name : 'No stage';
             const stageColor = stageInfo ? stageInfo.color : 'var(--ink-soft)';
             const stageDeals = byStage[stageKey];
-            const stageToggleKey = g.client.id + '|' + stageKey;
-            const stageOpen = !!state.allDealsStageOpen[stageToggleKey];
             return `
-            <div class="row-card" data-action="toggleAllDealsStage" data-stagekey="${escapeAttr(stageToggleKey)}" style="cursor:pointer;margin-bottom:6px;flex-direction:column;align-items:stretch;background:var(--canvas);">
-              <div style="display:flex;align-items:center;">
-                <div class="nav-icon" style="font-size:14px;">${stageOpen?'▾':'▸'}</div>
-                <div class="row-body">
-                  <div class="row-title" style="font-size:13px;"><span class="pill" style="background:${stageColor}22;color:${stageColor};">${escapeHtml(stageName)}</span></div>
-                  <div class="row-meta"><span>${stageDeals.length} deal${stageDeals.length===1?'':'s'}</span></div>
-                </div>
-              </div>
-              ${stageOpen ? `<div style="margin:8px 0 2px 26px;">
+            <div style="margin-bottom:14px;">
+              <div style="font-size:13px;font-weight:600;margin-bottom:6px;"><span class="pill" style="background:${stageColor}22;color:${stageColor};">${escapeHtml(stageName)}</span></div>
+              <div style="display:flex;flex-wrap:wrap;gap:8px;">
                 ${stageDeals.map(d=>`
-                <div class="row-card" data-opendealdirect="${d.id}" data-client="${g.client.id}" data-listid="${listId}" style="margin-bottom:6px;">
-                  <div class="row-body">
-                    <div class="row-title">${escapeHtml(d.name)}</div>
-                  </div>
-                </div>`).join('')}
-              </div>` : ''}
+                <button type="button" data-opendealdirect="${d.id}" data-client="${g.client.id}" data-listid="${listId}"
+                  style="border:1.5px solid ${stageColor};background:${stageColor}15;color:${stageColor};border-radius:999px;padding:6px 14px;font-size:12.5px;font-weight:600;cursor:pointer;">
+                  ${escapeHtml(d.name)}
+                </button>`).join('')}
+              </div>
             </div>`;
           }).join('')}
         </div>` : ''}
@@ -4732,17 +4722,9 @@ function attachShellHandlers(){
     render();
   });
   document.querySelectorAll('[data-action="toggleAllDealsAccount"]').forEach(el=>el.onclick=(ev)=>{
-    if(ev.target.closest('[data-action="toggleAllDealsStage"]')) return; // let the nested stage handler deal with its own click
     const id = el.dataset.accountid;
     if(!state.allDealsAccountOpen) state.allDealsAccountOpen = {};
     state.allDealsAccountOpen[id] = !state.allDealsAccountOpen[id];
-    renderPreservingScroll('.content');
-  });
-  document.querySelectorAll('[data-action="toggleAllDealsStage"]').forEach(el=>el.onclick=(ev)=>{
-    ev.stopPropagation();
-    const key = el.dataset.stagekey;
-    if(!state.allDealsStageOpen) state.allDealsStageOpen = {};
-    state.allDealsStageOpen[key] = !state.allDealsStageOpen[key];
     renderPreservingScroll('.content');
   });
   document.querySelectorAll('[data-action="toggleArchivedDealsAccount"]').forEach(el=>el.onclick=()=>{
