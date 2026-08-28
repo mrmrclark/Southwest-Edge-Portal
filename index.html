@@ -346,6 +346,14 @@
     align-items:center;justify-content:center;z-index:80;
   }
   .fab:hover{background:var(--edge-dark);}
+  .voice-fab{
+    position:fixed;bottom:26px;right:30px;width:52px;height:52px;border-radius:50%;background:var(--ink);
+    color:#fff;font-size:22px;border:none;box-shadow:0 8px 22px rgba(0,0,0,0.35);display:flex;
+    align-items:center;justify-content:center;z-index:80;
+  }
+  .voice-fab.recording{background:var(--bad);animation:voicePulse 1.2s ease-in-out infinite;}
+  @keyframes voicePulse{0%,100%{transform:scale(1);}50%{transform:scale(1.08);}}
+  @media (max-width:820px){ .fab{bottom:88px;} .voice-fab{bottom:88px;} }
 
   /* ---------- MODALS ---------- */
   .modal-overlay{
@@ -2613,6 +2621,8 @@ function render(){
   if(state.stageReminderPrompt) renderStageReminderPrompt();
   if(state.brokerReviewLog) renderBrokerReviewLogModal();
   if(state.pipelineView) renderPipelineModal();
+  if(state.loiImport) renderLoiImportModal();
+  if(state.voiceNoteAmbiguous) renderVoiceNoteAmbiguousModal();
   if(state.notifSettingsOpen) renderNotifSettingsModal();
   if(state.pendingUsersModalOpen) renderPendingUsersModal();
   if(state.manageUsersModalOpen) renderManageUsersModal();
@@ -3300,12 +3310,13 @@ function renderTopbar(){
       <input id="listSearchBox" placeholder="🔍 Search this list…" value="${escapeAttr(state.listSearchQuery||'')}"
         style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px;">
     </div>` : ''}
-    <div class="topbar-spacer"></div>
-    <div class="autocomplete-box" style="position:relative;width:280px;">
+    <div class="autocomplete-box" style="position:relative;width:280px;${showListSearch?'margin-left:8px;':'margin-left:18px;'}">
       <input id="globalSearchBox" placeholder="🔍 Search everything…" value="${escapeAttr(state.globalSearchQuery||'')}"
         style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px;">
       <div id="globalSearchResultsBox">${renderGlobalSearchResultsHtml()}</div>
     </div>
+    ${(state.currentUser.email==='mclark@edge-re.com' && !state.isMobile) ? `<button class="icon-btn" data-action="openLoiImport" title="Import LOI (AI)" style="margin-left:8px;font-size:17px;">✨</button>` : ''}
+    <div class="topbar-spacer"></div>
     ${showTodoToggle ? `
     <div class="segmented">
       <button class="${state.todoView==='mine'?'active':''}" data-action="todoViewMine">My To-Do's</button>
@@ -3403,7 +3414,323 @@ function fetchWeatherIfNeeded(){
     })
     .catch(()=>{ weatherCache = {error:true, fetchedAt:Date.now()}; render(); });
 }
-function allClientsFlatById(id){ return allClientsFlat().find(c=>c.id===id); }
+// Normalizes text for fuzzy matching — treats &, /, "and", + as interchangeable separators,
+// strips punctuation and extra whitespace, lowercases. This is the "WAG" (wild-ass guess)
+// feature: "Main & Main - SEC" and "Main / Main - SEC" become identical before comparing.
+function normalizeForMatch(str){
+  if(!str) return '';
+  return str.toLowerCase()
+    .replace(/\band\b/g, '&')
+    .replace(/[\/+]/g, '&')
+    .replace(/[^a-z0-9&]/g, '')
+    .trim();
+}
+function fuzzyTextMatch(a, b){
+  const na = normalizeForMatch(a), nb = normalizeForMatch(b);
+  if(!na || !nb) return false;
+  return na===nb || na.includes(nb) || nb.includes(na);
+}
+// --- Voice Note feature (Michael only) ---
+function startVoiceNoteRecording(){
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if(!SpeechRecognition){
+    flashToast("Voice recognition isn't supported in this browser — try Chrome or Safari.");
+    return;
+  }
+  const recognition = new SpeechRecognition();
+  recognition.lang = 'en-US';
+  recognition.interimResults = false;
+  recognition.maxAlternatives = 1;
+  state.voiceNoteRecording = true;
+  render();
+  recognition.onresult = (event)=>{
+    const transcript = event.results[0][0].transcript;
+    state.voiceNoteRecording = false;
+    render();
+    processVoiceNoteTranscript(transcript);
+  };
+  recognition.onerror = (event)=>{
+    console.error('Speech recognition error:', event.error);
+    state.voiceNoteRecording = false;
+    flashToast("Didn't catch that — please try again.");
+    render();
+  };
+  recognition.onend = ()=>{ if(state.voiceNoteRecording){ state.voiceNoteRecording=false; render(); } };
+  state._activeSpeechRecognition = recognition;
+  recognition.start();
+}
+function toggleVoiceNoteRecording(){
+  if(state.voiceNoteRecording){
+    if(state._activeSpeechRecognition) state._activeSpeechRecognition.stop();
+    state.voiceNoteRecording = false;
+    render();
+  } else {
+    startVoiceNoteRecording();
+  }
+}
+async function processVoiceNoteTranscript(transcript){
+  flashToast('Processing voice note…');
+  try{
+    const { data: sessionData } = await supabaseClient.auth.getSession();
+    const jwt = sessionData?.session?.access_token;
+    const teamNames = USERS.map(u=>u.name.split(' ')[0]);
+    const res = await fetch(`https://ugtlyzwvnhmcphtqkbke.supabase.co/functions/v1/parse-voice-note`, {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json', 'Authorization': `Bearer ${jwt}` },
+      body: JSON.stringify({ transcript, teamNames, today: toLocalDateStr(todayDate()) })
+    });
+    const body = await res.json();
+    if(!res.ok || body.error){ flashToast(body.error || "Couldn't process that voice note."); render(); return; }
+    await resolveAndSaveVoiceNote(body.parsed);
+  }catch(e){
+    console.error('processVoiceNoteTranscript error:', e);
+    flashToast("Something went wrong processing that voice note.");
+    render();
+  }
+}
+async function resolveAndSaveVoiceNote(parsed){
+  if(!parsed.accountName){
+    flashToast("Couldn't tell which account that was for — please try again and name it clearly.");
+    render();
+    return;
+  }
+  const clientsList = db.lists.find(x=>x.id==='clients');
+  const matchedClientRec = clientsList.clients.find(c=>fuzzyTextMatch(c.name, parsed.accountName));
+  let clientDealCandidate = null;
+  if(matchedClientRec){
+    const deals = matchedClientRec.deals||[];
+    clientDealCandidate = parsed.propertyDescription
+      ? deals.find(d=>fuzzyTextMatch(d.building||d.name, parsed.propertyDescription))
+      : (deals.length===1 ? deals[0] : null);
+  }
+  const listingsList = db.lists.find(x=>x.id==='listings');
+  let listingMatch=null, prospectMatch=null;
+  if(parsed.propertyDescription){
+    const listing = listingsList.clients.find(l=>fuzzyTextMatch(l.name, parsed.propertyDescription));
+    if(listing){
+      const prospects = listing.prospects||[];
+      const prospect = prospects.find(p=>fuzzyTextMatch(p.tenantName, parsed.accountName)) || (prospects.length===1?prospects[0]:null);
+      if(prospect){ listingMatch=listing; prospectMatch=prospect; }
+    }
+  }
+  if(!listingMatch){
+    const matches = [];
+    listingsList.clients.forEach(l=>{ (l.prospects||[]).forEach(p=>{ if(fuzzyTextMatch(p.tenantName, parsed.accountName)) matches.push({listing:l, prospect:p}); }); });
+    if(matches.length===1){ listingMatch=matches[0].listing; prospectMatch=matches[0].prospect; }
+    else if(matches.length>1){ state.voiceNoteAmbiguous = {type:'listingPick', candidates:matches, parsed}; render(); return; }
+  }
+  const haveClientResult = !!(matchedClientRec && clientDealCandidate);
+  const haveListingResult = !!(listingMatch && prospectMatch);
+  if(haveClientResult && haveListingResult){
+    state.voiceNoteAmbiguous = {type:'sidePick', clientResult:{client:matchedClientRec, deal:clientDealCandidate}, listingResult:{listing:listingMatch, prospect:prospectMatch}, parsed};
+    render();
+    return;
+  }
+  if(haveListingResult){ await saveVoiceNoteToTarget('listings', listingMatch, prospectMatch, parsed); return; }
+  if(haveClientResult){ await saveVoiceNoteToTarget('clients', matchedClientRec, clientDealCandidate, parsed); return; }
+  flashToast(`Couldn't find a matching deal for "${parsed.accountName}"${parsed.propertyDescription?` at ${parsed.propertyDescription}`:''} — nothing was saved.`);
+  render();
+}
+async function saveVoiceNoteToTarget(side, accountRec, rec, parsed){
+  const dateStr = fmtDate(todayDate());
+  const existingNotes = rec.notes || '';
+  rec.notes = existingNotes ? `${existingNotes}\n\n[${dateStr}] ${parsed.noteText}` : `[${dateStr}] ${parsed.noteText}`;
+  if(side==='clients') await supaUpdateDeal(rec, accountRec.id);
+  else await supaUpdateProspect(rec, accountRec.id);
+  let todoMsg = '';
+  if(parsed.followUpDate){
+    let assignee = state.currentUser;
+    if(parsed.assigneeName){
+      const found = USERS.find(u=>u.name.toLowerCase().startsWith(parsed.assigneeName.toLowerCase()));
+      if(found) assignee = found;
+    }
+    const targetName = side==='clients' ? rec.name : rec.tenantName;
+    const todo = {id:crypto.randomUUID(), title:`Follow up: ${targetName}`,
+      dueDate:new Date(parsed.followUpDate+'T00:00:00'), assignedTo:assignee.id, createdBy:state.currentUser.id,
+      type:'task', private:false, completed:false, isNew:true, notes: parsed.noteText,
+      listId:null, clientId:accountRec.id, dealId: side==='clients'?rec.id:null, entryId:null, attachments:[]};
+    db.todos.push(todo);
+    await supaCreateTodo(todo);
+    todoMsg = ` To-do created for ${assignee.name.split(' ')[0]}, due ${fmtDate(new Date(parsed.followUpDate+'T00:00:00'))}.`;
+  }
+  state.voiceNoteAmbiguous = null;
+  flashToast(`Note added to ${side==='clients'?rec.name:rec.tenantName}.${todoMsg}`);
+  render();
+}
+function renderVoiceNoteAmbiguousModal(){
+  const m = state.voiceNoteAmbiguous;
+  const overlay = document.createElement('div');
+  overlay.className='modal-overlay'; overlay.style.zIndex=208;
+  let body = '';
+  if(m.type==='sidePick'){
+    body = `
+      <p class="tiny" style="margin-bottom:14px;">Found "${escapeHtml(m.parsed.accountName)}" on both sides — which one?</p>
+      <button class="btn" data-action="voicePickListing" style="width:100%;margin-bottom:8px;">Listing Side — ${escapeHtml(m.listingResult.listing.name)}</button>
+      <button class="btn secondary" data-action="voicePickClient" style="width:100%;">Client Side — ${escapeHtml(m.clientResult.client.name)}</button>
+    `;
+  } else {
+    body = `
+      <p class="tiny" style="margin-bottom:14px;">Found "${escapeHtml(m.parsed.accountName)}" under more than one Listing — which one?</p>
+      ${m.candidates.map((c,i)=>`<button class="btn secondary" data-pickambig="${i}" style="width:100%;margin-bottom:8px;">${escapeHtml(c.listing.name)}</button>`).join('')}
+    `;
+  }
+  overlay.innerHTML = `<div class="modal-card" style="max-width:420px;"><div class="modal-head"><div class="modal-title">Which account?</div></div><div class="modal-body">${body}</div></div>`;
+  document.getElementById('app').appendChild(overlay);
+  const listingBtn = overlay.querySelector('[data-action="voicePickListing"]');
+  if(listingBtn) listingBtn.onclick=safeHandler(()=>saveVoiceNoteToTarget('listings', m.listingResult.listing, m.listingResult.prospect, m.parsed));
+  const clientBtn = overlay.querySelector('[data-action="voicePickClient"]');
+  if(clientBtn) clientBtn.onclick=safeHandler(()=>saveVoiceNoteToTarget('clients', m.clientResult.client, m.clientResult.deal, m.parsed));
+  overlay.querySelectorAll('[data-pickambig]').forEach(b=>b.onclick=safeHandler(()=>{
+    const c = m.candidates[parseInt(b.dataset.pickambig)];
+    saveVoiceNoteToTarget('listings', c.listing, c.prospect, m.parsed);
+  }));
+}
+const LOI_COUNTER_CODES = {
+  'clients-lease': {code:'LLC', label:'Landlord Counter (LLC)'},
+  'clients-sale': {code:'SC', label:'Seller Counter (SC)'},
+  'listings-lease': {code:'TC', label:'Tenant Counter (TC)'},
+  'listings-sale': {code:'BC', label:'Buyer Counter (BC)'},
+};
+function computeEgnyteFilename(docType, accountName, propertyDescription, counterCode){
+  const cleanName = (accountName||'Unknown').replace(/[^a-zA-Z0-9]/g,'');
+  // Split "Street & Street - SEC" into the two arterials plus an optional corner suffix.
+  const parts = (propertyDescription||'').split('-');
+  const streetsPart = parts[0]||'';
+  const corner = parts.length>1 ? parts[1].trim().toUpperCase().replace(/[^A-Z]/g,'') : '';
+  const streets = streetsPart.split(/&|\/|\band\b/i).map(s=>s.trim().replace(/[^a-zA-Z0-9]/g,'')).filter(Boolean);
+  const streetPart = streets.length ? streets.join('_') : 'UnknownLocation';
+  const cornerPart = corner ? '_'+corner : '';
+  const codePart = counterCode ? '_'+counterCode : '';
+  const datePart = toLocalDateStr(todayDate()).replace(/-/g,'');
+  return `${docType}_${cleanName}_${streetPart}${cornerPart}${codePart}_${datePart}`;
+}
+async function readFileAsBase64(file){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onload = ()=> resolve(reader.result.split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+function detectLoiFileType(file){
+  if(!file) return null;
+  if(file.type==='application/pdf' || /\.pdf$/i.test(file.name)) return 'pdf';
+  if(file.type==='application/vnd.openxmlformats-officedocument.wordprocessingml.document' || /\.docx$/i.test(file.name)) return 'docx';
+  if(file.type==='application/msword' || /\.doc$/i.test(file.name)) return 'doc';
+  return null;
+}
+async function processLoiFile(file, dropSide){
+  const m = state.loiImport;
+  const fileType = detectLoiFileType(file);
+  if(!file || !fileType){
+    m.error = 'Only PDF and Word documents (.pdf, .docx, .doc) are supported.';
+    render();
+    return;
+  }
+  m.dropSide = dropSide;
+  m.fileName = file.name;
+  m.loading = true;
+  m.error = null;
+  render();
+  try{
+    const base64 = await readFileAsBase64(file);
+    const { data: sessionData } = await supabaseClient.auth.getSession();
+    const jwt = sessionData?.session?.access_token;
+    const res = await fetch(`https://ugtlyzwvnhmcphtqkbke.supabase.co/functions/v1/extract-loi-terms`, {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json', 'Authorization': `Bearer ${jwt}` },
+      body: JSON.stringify({ fileBase64: base64, fileType })
+    });
+    const body = await res.json();
+    if(!res.ok || body.error){
+      m.error = body.error || 'AI extraction failed — please try again.';
+      m.loading = false;
+      render();
+      return;
+    }
+    m.extracted = body.extracted;
+    m.lowConfidenceFileFormat = !!body.lowConfidenceFileFormat;
+    matchLoiToAccount();
+    m.loading = false;
+    m.step = 'review';
+    render();
+  }catch(e){
+    console.error('processLoiFile error:', e);
+    m.error = "Something went wrong reading that file — please try again.";
+    m.loading = false;
+    render();
+  }
+}
+// Finds the matching Client/Listing (hard requirement) and, within it, the matching
+// Deal/Prospect (soft — falls back to a pick-list + Create New if no confident match).
+function matchLoiToAccount(){
+  const m = state.loiImport;
+  const ex = m.extracted;
+  if(m.dropSide==='clients'){
+    const l = db.lists.find(x=>x.id==='clients');
+    const client = l.clients.find(c=>fuzzyTextMatch(c.name, ex.accountName));
+    if(!client){ m.matchedClient=null; m.matchedDeal=null; m.candidateDeals=[]; return; }
+    m.matchedClient = client;
+    const candidates = client.deals||[];
+    m.candidateDeals = candidates;
+    const confident = candidates.find(d=>fuzzyTextMatch(d.building||d.name, ex.propertyDescription));
+    m.matchedDeal = confident || null;
+    m.isNewDeal = !confident;
+  } else {
+    const l = db.lists.find(x=>x.id==='listings');
+    const client = l.clients.find(c=>fuzzyTextMatch(c.name, ex.propertyDescription));
+    if(!client){ m.matchedClient=null; m.matchedDeal=null; m.candidateDeals=[]; return; }
+    m.matchedClient = client;
+    const candidates = client.prospects||[];
+    m.candidateDeals = candidates;
+    const confident = candidates.find(p=>fuzzyTextMatch(p.tenantName, ex.accountName));
+    m.matchedDeal = confident || null;
+    m.isNewDeal = !confident;
+  }
+}
+async function confirmLoiImport(){
+  const m = state.loiImport;
+  const ex = m.extracted;
+  const isSale = ex.transactionType==='sale';
+  const l = db.lists.find(x=>x.id===(m.dropSide==='clients'?'clients':'listings'));
+  const c = m.matchedClient;
+  if(m.dropSide==='clients'){
+    let d = m.matchedDeal;
+    if(m.isNewDeal || !d){
+      d = {id:crypto.randomUUID(), name: ex.propertyDescription||'New Deal', complete:false, activeDeal:false, dueDate:null,
+        caExecuted:false, dealType: isSale?'sale':'lease', building: ex.propertyDescription||'', stage:'loi',
+        splits:[], commission1Paid:false, commission2Paid:false};
+      c.deals.push(d);
+    }
+    d.building = ex.propertyDescription || d.building;
+    if(isSale) d.price = ex.rentOrPrice||d.price; else d.rent = ex.rentOrPrice||d.rent;
+    d.term = ex.term || d.term;
+    d.tiAllowance = ex.tiAllowance || d.tiAllowance;
+    d.size = ex.size || d.size;
+    await (m.isNewDeal ? supaCreateDeal(d, c.id) : supaUpdateDeal(d, c.id));
+    m.savedName = `${c.name} — ${d.name}`;
+  } else {
+    let p = m.matchedDeal;
+    if(m.isNewDeal || !p){
+      p = {id:crypto.randomUUID(), tenantName: ex.accountName||'New Prospect', stage:'loi', dealType: isSale?'sale':'lease',
+        dateOfContact: todayDate(), notes:'', edgeTracker:null, attachments:[], commission1Paid:false, commission2Paid:false};
+      c.prospects = c.prospects || [];
+      c.prospects.push(p);
+    }
+    if(isSale) p.price = ex.rentOrPrice||p.price; else p.rent = ex.rentOrPrice||p.rent;
+    p.term = ex.term || p.term;
+    p.tiAllowance = ex.tiAllowance || p.tiAllowance;
+    p.size = ex.size || p.size;
+    await (m.isNewDeal ? supaCreateProspect(p, c.id) : supaUpdateProspect(p, c.id));
+    m.savedName = `${c.name} — ${p.tenantName}`;
+  }
+  const key = `${m.dropSide}-${isSale?'sale':'lease'}`;
+  const counterInfo = m.counterChoice==='none' ? null : LOI_COUNTER_CODES[key];
+  const accountNameForFile = m.dropSide==='clients' ? c.name : ex.accountName;
+  m.computedFilename = computeEgnyteFilename(ex.documentType||'LOI', accountNameForFile, ex.propertyDescription, counterInfo?counterInfo.code:null);
+  m.step = 'done';
+  render();
+}
 function findClientById(clientId){
   for(const l of db.lists){
     if(!l.clients) continue;
@@ -4565,6 +4892,7 @@ function renderShell(){
     </div>
   </div>
   <button class="fab" data-action="newTodo" title="New To-Do">+</button>
+  ${state.currentUser.email==='mclark@edge-re.com' ? `<button class="voice-fab ${state.voiceNoteRecording?'recording':''}" data-action="voiceNoteToggle" title="Voice Note">${state.voiceNoteRecording?'⏹':'🎙️'}</button>` : ''}
   ${state.isMobile ? renderMobileTabbar() : ''}
   ${state.showAdminMenu ? renderAdminMenu() : ''}
   `;
@@ -4582,6 +4910,7 @@ function renderMobileTabbar(){
 function renderAdminMenu(){
   const isAdmin = state.currentUser.role==='Admin';
   const isDBRole = state.currentUser.role==='Admin' || state.currentUser.role==='FullAccess';
+  const isMichael = state.currentUser.email==='mclark@edge-re.com';
   return `
   <div class="admin-menu">
     ${isAdmin ? `<div class="admin-item" data-action="adminPending">🆕 Pending User Requests ${pendingUsers.length? `<span class="nav-count urgent" style="margin-left:auto;">${pendingUsers.length}</span>`:''}</div>` : ''}
@@ -4595,6 +4924,7 @@ function renderAdminMenu(){
     ${isAdmin ? `<div class="admin-item" data-action="adminReset">🔑 Reset a Password</div>` : ''}
     ${isDBRole ? `<div class="admin-item" data-action="openBrokerReviewLog">📋 Broker Review Log</div>` : ''}
     <div class="admin-item" data-action="openPipelineView">📈 Pipeline View</div>
+    ${isMichael && !state.isMobile ? `<div class="admin-item" data-action="openLoiImport">✨ Import LOI (AI)</div>` : ''}
   </div>`;
 }
 
@@ -4748,6 +5078,7 @@ function attachShellHandlers(){
   const mine=document.querySelector('[data-action="todoViewMine"]'); if(mine) mine.onclick=()=>{state.todoView='mine'; render();};
   const team=document.querySelector('[data-action="todoViewTeam"]'); if(team) team.onclick=()=>{state.todoView='team'; render();};
   const fab=document.querySelector('[data-action="newTodo"]'); if(fab) fab.onclick=()=>{ state.newTodoPicker={step:'chooseType'}; render(); };
+  const voiceFab=document.querySelector('[data-action="voiceNoteToggle"]'); if(voiceFab) voiceFab.onclick=()=>toggleVoiceNoteRecording();
   const admin=document.querySelector('[data-action="toggleAdmin"]'); if(admin) admin.onclick=(ev)=>{ ev.stopPropagation(); state.showUserMenu=false; state.showAdminMenu=!state.showAdminMenu; render(); };
   const userMenuBtn=document.querySelector('[data-action="toggleUserMenu"]'); if(userMenuBtn) userMenuBtn.onclick=(ev)=>{ ev.stopPropagation(); state.showAdminMenu=false; state.showUserMenu=!state.showUserMenu; render(); };
   const logout=document.querySelector('[data-action="logout"]'); if(logout) logout.onclick=async ()=>{
@@ -4904,9 +5235,8 @@ function attachShellHandlers(){
     flashToast(`${name} added to ${l.name}.`);
     render();
   });
-  ['adminPending','adminFullTeam','adminImportTodos','adminImportTaskFire','adminImportMaps','adminDigest','adminUsers','adminTimes','adminReset','openBrokerReviewLog','openPipelineView'].forEach(a=>{
-    const e=document.querySelector(`[data-action="${a}"]`);
-    if(e) e.onclick=()=>{ state.showAdminMenu=false; handleAdminAction(a); };
+  ['adminPending','adminFullTeam','adminImportTodos','adminImportTaskFire','adminImportMaps','adminDigest','adminUsers','adminTimes','adminReset','openBrokerReviewLog','openPipelineView','openLoiImport'].forEach(a=>{
+    document.querySelectorAll(`[data-action="${a}"]`).forEach(e=>{ e.onclick=()=>{ state.showAdminMenu=false; handleAdminAction(a); }; });
   });
 }
 
@@ -5224,6 +5554,10 @@ async function handleAdminAction(a){
     state.pipelineView = {viewUserId: state.currentUser.id};
     render();
   }
+  if(a==='openLoiImport'){
+    state.loiImport = {step:'drop', dropSide:null, file:null, fileName:null, extracted:null, matchedClient:null, matchedDeal:null, isNewDeal:false, error:null, loading:false};
+    render();
+  }
   if(a==='adminPendingDeletions'){ state.pendingDeletionsOpen=true; }
   if(a==='adminFullTeam'){ state.mainView = {type:'smart', id:'fullTeam'}; if(state.isMobile) state.mobileScreen='main'; }
   if(a==='adminImportTodos'){ state.importTodosModal = {step:'upload'}; }
@@ -5486,6 +5820,145 @@ function nameForSplitUserId(id){
   if(u) return u.name;
   const co = (commissionOnlyPeople||[]).find(x=>x.id===id);
   return co ? co.name : 'Unknown';
+}
+function renderLoiImportModal(){
+  const m = state.loiImport;
+  const overlay = document.createElement('div');
+  overlay.className='modal-overlay'; overlay.style.zIndex=207;
+  let body = '';
+
+  if(m.step==='drop'){
+    body = `
+      <p class="tiny" style="margin-bottom:14px;color:var(--ink-soft);">Drag an LOI (PDF or Word) onto the side that matches who Edge represents on this deal.</p>
+      <div style="display:flex;gap:14px;">
+        <div id="loiDropClients" style="flex:1;border:2px dashed var(--line);border-radius:10px;padding:32px 14px;text-align:center;cursor:pointer;">
+          <div style="font-size:28px;margin-bottom:8px;">📄</div>
+          <div style="font-weight:600;">Clients</div>
+          <div class="tiny" style="color:var(--ink-soft);">Edge represents the Tenant/Buyer</div>
+        </div>
+        <div id="loiDropListings" style="flex:1;border:2px dashed var(--line);border-radius:10px;padding:32px 14px;text-align:center;cursor:pointer;">
+          <div style="font-size:28px;margin-bottom:8px;">📄</div>
+          <div style="font-weight:600;">Listings</div>
+          <div class="tiny" style="color:var(--ink-soft);">Edge represents the Landlord/Seller</div>
+        </div>
+      </div>
+      ${m.error ? `<div class="tiny" style="color:var(--bad);margin-top:12px;">${escapeHtml(m.error)}</div>` : ''}
+      ${m.loading ? `<div class="tiny" style="margin-top:12px;">Reading ${escapeHtml(m.fileName||'file')}, this can take a few seconds…</div>` : ''}
+    `;
+  } else if(m.step==='review'){
+    const ex = m.extracted;
+    if(!m.matchedClient){
+      body = `
+        <div class="tiny" style="color:var(--ink-soft);margin-bottom:10px;">Extracted from ${escapeHtml(m.fileName)}: <b>${escapeHtml(ex.accountName||'—')}</b> at <b>${escapeHtml(ex.propertyDescription||'—')}</b></div>
+        <div class="empty-state"><div class="big">${m.dropSide==='clients'?'Client':'Listing'} not found.</div>
+        <div class="tiny">You must create a ${m.dropSide==='clients'?'Client':'Listing'} before a new deal can be created.</div></div>
+        <button class="btn secondary" data-action="loiStartOver" style="margin-top:14px;">Start Over</button>
+      `;
+    } else {
+      const key = `${m.dropSide}-${ex.transactionType==='sale'?'sale':'lease'}`;
+      const counterInfo = LOI_COUNTER_CODES[key];
+      body = `
+        <div class="tiny" style="color:var(--ink-soft);margin-bottom:10px;">Confidence: <b>${escapeHtml(ex.confidence||'—')}</b> · Matched to <b>${escapeHtml(m.matchedClient.name)}</b></div>
+        ${m.lowConfidenceFileFormat ? `<div class="tiny" style="color:var(--bad);margin-bottom:10px;">⚠️ This was an old .doc file — text extraction is less reliable for this format. Double-check every field carefully before saving.</div>` : ''}
+        <div class="field"><label>Document Type</label><input id="loiDocType" value="${escapeAttr(ex.documentType||'LOI')}"></div>
+        <div class="field"><label>${ex.transactionType==='sale'?'Price':'Rent'}</label><input id="loiRentPrice" value="${escapeAttr(ex.rentOrPrice||'')}"></div>
+        ${ex.transactionType!=='sale' ? `<div class="field"><label>Term</label><input id="loiTerm" value="${escapeAttr(ex.term||'')}"></div>` : ''}
+        <div class="field"><label>TI Allowance</label><input id="loiTI" value="${escapeAttr(ex.tiAllowance||'')}"></div>
+        <div class="field"><label>Size</label><input id="loiSize" value="${escapeAttr(ex.size||'')}"></div>
+        <div class="field"><label>Property Description</label><input id="loiProperty" value="${escapeAttr(ex.propertyDescription||'')}"></div>
+        <div class="field">
+          <label>Who is this document from?</label>
+          <select id="loiCounterChoice">
+            <option value="none">Edge's own draft (no counter code)</option>
+            <option value="counter">${escapeHtml(counterInfo.label)}</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>${m.dropSide==='clients'?'Deal':'Prospect'}</label>
+          ${m.matchedDeal ? `
+            <div class="tiny" style="color:var(--good);">✓ Matched: ${escapeHtml(m.dropSide==='clients'?m.matchedDeal.name:m.matchedDeal.tenantName)}</div>
+          ` : ''}
+          ${(!m.matchedDeal && m.candidateDeals.length) ? `
+            <div class="tiny" style="margin-bottom:6px;">No confident match — choose one below or create new:</div>
+            ${m.candidateDeals.map((d,i)=>`
+              <div class="row-card" data-pickcandidate="${i}" style="cursor:pointer;margin-bottom:6px;">
+                <div class="row-body"><div class="row-title">${escapeHtml(m.dropSide==='clients'?d.name:d.tenantName)}</div></div>
+              </div>`).join('')}
+          ` : ''}
+          ${!m.matchedDeal ? `<button class="btn secondary sm" data-action="loiCreateNew">+ Create New ${m.dropSide==='clients'?'Deal':'Prospect'}</button>` : `<button class="btn secondary sm" data-action="loiCreateNew">Actually, create a new one instead</button>`}
+        </div>
+        <button class="btn" data-action="loiConfirm" style="width:100%;margin-top:10px;">Confirm & Save</button>
+        <button class="btn secondary" data-action="loiStartOver" style="width:100%;margin-top:8px;">Start Over</button>
+      `;
+    }
+  } else if(m.step==='done'){
+    body = `
+      <div class="empty-state"><div class="big">✓ Saved to ${escapeHtml(m.savedName)}</div></div>
+      <div class="field">
+        <label>Egnyte Filing</label>
+        <div class="tiny" style="color:var(--ink-soft);margin-bottom:8px;">Egnyte isn't connected yet, so this couldn't be filed automatically. Once it's set up, this step happens on its own — for now, here's the file renamed to the standard convention, ready to save manually:</div>
+        <div style="font-family:monospace;background:var(--canvas);padding:10px;border-radius:6px;font-size:13px;">${escapeHtml(m.computedFilename)}.pdf</div>
+      </div>
+      <button class="btn" data-action="loiStartOver" style="width:100%;margin-top:10px;">Import Another</button>
+      <button class="btn secondary" data-action="closeLoiImport" style="width:100%;margin-top:8px;">Close</button>
+    `;
+  }
+
+  overlay.innerHTML = `
+  <div class="modal-card" style="max-width:520px;">
+    <div class="modal-head"><div class="modal-title">✨ Import LOI (AI)</div><button class="modal-close" data-action="closeLoiImport">✕</button></div>
+    <div class="modal-body">${body}</div>
+  </div>`;
+  document.getElementById('app').appendChild(overlay);
+  overlay.querySelectorAll('[data-action="closeLoiImport"]').forEach(b=>b.onclick=()=>{ state.loiImport=null; render(); });
+  overlay.querySelectorAll('[data-action="loiStartOver"]').forEach(b=>b.onclick=()=>{
+    state.loiImport = {step:'drop', dropSide:null, file:null, fileName:null, extracted:null, matchedClient:null, matchedDeal:null, isNewDeal:false, error:null, loading:false};
+    render();
+  });
+
+  if(m.step==='drop'){
+    const wireDrop = (elId, side)=>{
+      const el = document.getElementById(elId); if(!el) return;
+      el.ondragover = (ev)=>{ ev.preventDefault(); el.style.borderColor='var(--edge)'; };
+      el.ondragleave = ()=>{ el.style.borderColor='var(--line)'; };
+      el.ondrop = (ev)=>{
+        ev.preventDefault();
+        el.style.borderColor='var(--line)';
+        const file = ev.dataTransfer.files[0];
+        processLoiFile(file, side);
+      };
+      el.onclick = ()=>{
+        const input = document.createElement('input');
+        input.type='file'; input.accept='.pdf,.docx,.doc,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword';
+        input.onchange = ()=>processLoiFile(input.files[0], side);
+        input.click();
+      };
+    };
+    wireDrop('loiDropClients','clients');
+    wireDrop('loiDropListings','listings');
+  }
+
+  if(m.step==='review' && m.matchedClient){
+    overlay.querySelectorAll('[data-pickcandidate]').forEach(el=>el.onclick=()=>{
+      const idx = parseInt(el.dataset.pickcandidate);
+      m.matchedDeal = m.candidateDeals[idx];
+      m.isNewDeal = false;
+      render();
+    });
+    const createNewBtn = overlay.querySelector('[data-action="loiCreateNew"]');
+    if(createNewBtn) createNewBtn.onclick=()=>{ m.matchedDeal=null; m.isNewDeal=true; render(); };
+    const confirmBtn = overlay.querySelector('[data-action="loiConfirm"]');
+    if(confirmBtn) confirmBtn.onclick=safeHandler(async ()=>{
+      m.extracted.documentType = document.getElementById('loiDocType').value.trim();
+      m.extracted.rentOrPrice = document.getElementById('loiRentPrice').value.trim();
+      const termEl = document.getElementById('loiTerm'); if(termEl) m.extracted.term = termEl.value.trim();
+      m.extracted.tiAllowance = document.getElementById('loiTI').value.trim();
+      m.extracted.size = document.getElementById('loiSize').value.trim();
+      m.extracted.propertyDescription = document.getElementById('loiProperty').value.trim();
+      m.counterChoice = document.getElementById('loiCounterChoice').value;
+      await confirmLoiImport();
+    });
+  }
 }
 function renderPipelineModal(){
   const m = state.pipelineView;
@@ -10452,6 +10925,8 @@ document.addEventListener('keydown', (ev)=>{
   if(state.pendingUsersModalOpen){ state.pendingUsersModalOpen=false; render(); return; }
   if(state.pendingDeletionsOpen){ state.pendingDeletionsOpen=false; render(); return; }
   if(state.pipelineView){ state.pipelineView=null; render(); return; }
+  if(state.loiImport){ state.loiImport=null; render(); return; }
+  if(state.voiceNoteAmbiguous){ state.voiceNoteAmbiguous=null; flashToast('Cancelled — nothing was saved.'); render(); return; }
   if(state.brokerReviewLog){ state.brokerReviewLog=null; render(); return; }
   if(state.contactImportReview){
     if(confirm('Stop reviewing? Nothing has been imported yet, and progress in this session will be lost.')){ state.contactImportReview=null; render(); }
