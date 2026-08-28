@@ -4006,7 +4006,7 @@ function allDealsList(){
   db.lists.filter(l=>l.type==='deep').forEach(l=>{
     l.clients.forEach(c=>{
       c.deals.forEach(d=>{
-        if(!d.stage || d.stage==='prospect') return; // Prospects — excluded, this list is deals only
+        if(!d.stage || d.stage==='prospect' || d.stage==='dead') return; // Prospects and Dead — excluded, this list is active deals only
         const isDone = d.complete || d.stage==='closedEscrow'; // Open for Business or Closed Escrow
         const fullyPaid = !!(d.commission1Paid && d.commission2Paid);
         if(isDone && fullyPaid) return; // truly finished, nothing left to track — excluded
