@@ -349,7 +349,7 @@
   .voice-fab{
     position:fixed;bottom:26px;right:30px;width:52px;height:52px;border-radius:50%;background:var(--ink);
     color:#fff;font-size:22px;border:none;box-shadow:0 8px 22px rgba(0,0,0,0.35);display:flex;
-    align-items:center;justify-content:center;z-index:80;
+    align-items:center;justify-content:center;z-index:110;
   }
   .voice-fab.recording{background:var(--bad);animation:voicePulse 1.2s ease-in-out infinite;}
   @keyframes voicePulse{0%,100%{transform:scale(1);}50%{transform:scale(1.08);}}
@@ -561,6 +561,8 @@ let state = {
   brokerReviewLogOpen:false,    // hamburger menu: audit log screen for David/Gina/Admin
   brokerReviewLog:null,         // {startDate, endDate} — active date range for the log
   pipelineView:null,            // {viewUserId} — 'office' or a specific user id
+  signCallModal:null,           // {isNew, signCall} — Sign Call add/edit modal
+  signCallsCollapsed:true,      // Sign Calls section on a Listing page — closed by default
   navContextMenu:null,          // {kind:'smart'|'list', id} — which ellipsis menu is open
   showAllSmartLists:false,      // collapse toggle once there are more than 10 smart lists
   notifSettingsOpen:false,      // whether the notification-preferences modal is open
@@ -624,6 +626,36 @@ async function fetchCommissionOnlyPeople(){
   const { data, error } = await supabaseClient.from('commission_only_people').select('*').order('name');
   if(error){ console.error('fetchCommissionOnlyPeople error:', error); return; }
   commissionOnlyPeople = data.map(r=>({id:r.id, name:r.name}));
+}
+function signCallRowToLocal(r){
+  return {id:r.id, listingId:r.listing_id, name:r.name||'', phone:r.phone||'', notes:r.notes||'',
+    contactId:r.contact_id||null, convertedToProspectId:r.converted_to_prospect_id||null,
+    createdBy: authIdToLocalUserId(r.created_by)||r.created_by, createdAt: r.created_at? new Date(r.created_at):null};
+}
+async function fetchSignCallsFromSupabase(){
+  const { data, error } = await supabaseClient.from('sign_calls').select('*').order('created_at', {ascending:false});
+  if(error){ console.error('fetchSignCallsFromSupabase error:', error); return; }
+  db.signCalls = (data||[]).map(signCallRowToLocal);
+}
+async function supaCreateSignCall(sc){
+  const row = {listing_id:sc.listingId, name:sc.name||null, phone:sc.phone||null, notes:sc.notes||null,
+    contact_id:sc.contactId||null, created_by: localUserIdToAuthId(state.currentUser.id)};
+  const { data, error } = await supabaseClient.from('sign_calls').insert(row).select().single();
+  if(error){ console.error('supaCreateSignCall error:', error); flashToast("Couldn't save that sign call — try again."); return null; }
+  const local = signCallRowToLocal(data);
+  db.signCalls.unshift(local);
+  return local;
+}
+async function supaUpdateSignCall(sc){
+  const { error } = await supabaseClient.from('sign_calls').update({
+    name:sc.name||null, phone:sc.phone||null, notes:sc.notes||null, contact_id:sc.contactId||null,
+    converted_to_prospect_id: sc.convertedToProspectId||null
+  }).eq('id', sc.id);
+  if(error){ console.error('supaUpdateSignCall error:', error); flashToast("Couldn't save changes — try again."); }
+}
+async function supaDeleteSignCall(id){
+  const { error } = await supabaseClient.from('sign_calls').delete().eq('id', id);
+  if(error) console.error('supaDeleteSignCall error:', error);
 }
 async function supaCreateCommissionOnlyPerson(name){
   const { data, error } = await supabaseClient.from('commission_only_people').insert({name, created_by: state.currentUser.authId}).select().single();
@@ -1380,6 +1412,7 @@ async function fetchAllAppDataFromSupabase(){
   await fetchSmartListsFromSupabase();
   await fetchBrokerReviewsFromSupabase();
   await fetchDealOffersFromSupabase();
+  await fetchSignCallsFromSupabase();
   await fetchCommissionOnlyPeople();
 }
 async function fetchCompanySettingsFromSupabase(){
@@ -2280,6 +2313,7 @@ let db = {
   deletionRequests: [],
   brokerReviews: [],
   dealOffers: [],
+  signCalls: [],
   contacts: [
     {id:'c1', first:'Greg', last:'Abbott', company:'Velocity Retail Group', email:'gabbott@velocityrg.com', mobile:'(602) 555-0101', phone:'(602) 682-8181'},
     {id:'c2', first:'Kristina', last:'Abel', company:"Draper's & Damon's", email:'kristinaa@drapers.com', mobile:'(949) 555-0102', phone:'(949) 784-3109'},
@@ -2623,6 +2657,7 @@ function render(){
   if(state.pipelineView) renderPipelineModal();
   if(state.loiImport) renderLoiImportModal();
   if(state.voiceNoteAmbiguous) renderVoiceNoteAmbiguousModal();
+  if(state.signCallModal) renderSignCallModal();
   if(state.notifSettingsOpen) renderNotifSettingsModal();
   if(state.pendingUsersModalOpen) renderPendingUsersModal();
   if(state.manageUsersModalOpen) renderManageUsersModal();
@@ -3422,13 +3457,32 @@ function normalizeForMatch(str){
   return str.toLowerCase()
     .replace(/\band\b/g, '&')
     .replace(/[\/+]/g, '&')
-    .replace(/[^a-z0-9&]/g, '')
+    .replace(/[^a-z0-9&\s]/g, '')
+    .replace(/\s+/g, ' ')
     .trim();
 }
+function tokenizeForMatch(str){
+  return normalizeForMatch(str).split(/[\s&]+/).filter(Boolean);
+}
+// Tolerates both formatting differences ("&" vs "/" vs "and") AND a misheard word from
+// voice-to-text (e.g. "Kino" heard as "Keno") — compared word-by-word so an extra suffix
+// like "NEC" doesn't throw off the comparison on the word that actually matters.
 function fuzzyTextMatch(a, b){
   const na = normalizeForMatch(a), nb = normalizeForMatch(b);
   if(!na || !nb) return false;
-  return na===nb || na.includes(nb) || nb.includes(na);
+  const naJoined = na.replace(/\s+/g,''), nbJoined = nb.replace(/\s+/g,'');
+  if(naJoined===nbJoined || naJoined.includes(nbJoined) || nbJoined.includes(naJoined)) return true;
+  const tokensA = tokenizeForMatch(a), tokensB = tokenizeForMatch(b);
+  if(!tokensA.length || !tokensB.length) return false;
+  const [shortTokens, longTokens] = tokensA.length <= tokensB.length ? [tokensA, tokensB] : [tokensB, tokensA];
+  return shortTokens.every(tok=>{
+    if(tok.length < 3) return longTokens.includes(tok);
+    return longTokens.some(t2=>{
+      if(t2===tok || t2.includes(tok) || tok.includes(t2)) return true;
+      const maxDistance = Math.max(1, Math.floor(Math.max(tok.length, t2.length) * 0.25));
+      return levenshteinDistance(tok, t2) <= maxDistance;
+    });
+  });
 }
 // --- Voice Note feature (Michael only) ---
 function startVoiceNoteRecording(){
@@ -3443,25 +3497,40 @@ function startVoiceNoteRecording(){
   recognition.maxAlternatives = 1;
   state.voiceNoteRecording = true;
   render();
+  const clearSafety = ()=>{ if(state._voiceNoteSafetyTimer){ clearTimeout(state._voiceNoteSafetyTimer); state._voiceNoteSafetyTimer=null; } };
   recognition.onresult = (event)=>{
+    clearSafety();
     const transcript = event.results[0][0].transcript;
     state.voiceNoteRecording = false;
     render();
     processVoiceNoteTranscript(transcript);
   };
   recognition.onerror = (event)=>{
+    clearSafety();
     console.error('Speech recognition error:', event.error);
     state.voiceNoteRecording = false;
     flashToast("Didn't catch that — please try again.");
     render();
   };
-  recognition.onend = ()=>{ if(state.voiceNoteRecording){ state.voiceNoteRecording=false; render(); } };
+  recognition.onend = ()=>{ clearSafety(); if(state.voiceNoteRecording){ state.voiceNoteRecording=false; render(); } };
   state._activeSpeechRecognition = recognition;
+  // Safety net: some mobile browsers can leave a recording session hanging (e.g. an
+  // accidental bump that doesn't register a second tap to stop). This guarantees it
+  // can never stay stuck listening for more than 20 seconds, no matter what.
+  state._voiceNoteSafetyTimer = setTimeout(()=>{
+    if(state.voiceNoteRecording){
+      try{ recognition.abort(); }catch(e){}
+      state.voiceNoteRecording = false;
+      flashToast("Voice recording timed out — please try again.");
+      render();
+    }
+  }, 20000);
   recognition.start();
 }
 function toggleVoiceNoteRecording(){
   if(state.voiceNoteRecording){
-    if(state._activeSpeechRecognition) state._activeSpeechRecognition.stop();
+    if(state._voiceNoteSafetyTimer){ clearTimeout(state._voiceNoteSafetyTimer); state._voiceNoteSafetyTimer=null; }
+    if(state._activeSpeechRecognition){ try{ state._activeSpeechRecognition.abort(); }catch(e){} }
     state.voiceNoteRecording = false;
     render();
   } else {
@@ -3481,7 +3550,10 @@ async function processVoiceNoteTranscript(transcript){
     });
     const body = await res.json();
     if(!res.ok || body.error){ flashToast(body.error || "Couldn't process that voice note."); render(); return; }
-    await resolveAndSaveVoiceNote(body.parsed);
+    const parsed = body.parsed;
+    if(parsed.intent==='createProspect') await resolveAndCreateProspect(parsed);
+    else if(parsed.intent==='signCall') await resolveAndCreateSignCall(parsed);
+    else await resolveAndSaveVoiceNote(parsed);
   }catch(e){
     console.error('processVoiceNoteTranscript error:', e);
     flashToast("Something went wrong processing that voice note.");
@@ -3496,21 +3568,37 @@ async function resolveAndSaveVoiceNote(parsed){
   }
   const clientsList = db.lists.find(x=>x.id==='clients');
   const matchedClientRec = clientsList.clients.find(c=>fuzzyTextMatch(c.name, parsed.accountName));
-  let clientDealCandidate = null;
+  let clientDealCandidate = null, clientDealIsNew = false;
   if(matchedClientRec){
     const deals = matchedClientRec.deals||[];
     clientDealCandidate = parsed.propertyDescription
       ? deals.find(d=>fuzzyTextMatch(d.building||d.name, parsed.propertyDescription))
       : (deals.length===1 ? deals[0] : null);
+    // Client account exists, but this specific site/deal doesn't yet — create it rather
+    // than failing, same as the LOI import does for a brand-new site under a known Client.
+    if(!clientDealCandidate && parsed.propertyDescription){
+      clientDealCandidate = {id:crypto.randomUUID(), name: parsed.propertyDescription, complete:false, activeDeal:false,
+        dueDate:null, caExecuted:false, dealType:null, building: parsed.propertyDescription, stage:'prospect',
+        splits:[], commission1Paid:false, commission2Paid:false, notes:''};
+      clientDealIsNew = true;
+    }
   }
   const listingsList = db.lists.find(x=>x.id==='listings');
-  let listingMatch=null, prospectMatch=null;
+  let listingMatch=null, prospectMatch=null, prospectIsNew=false;
   if(parsed.propertyDescription){
     const listing = listingsList.clients.find(l=>fuzzyTextMatch(l.name, parsed.propertyDescription));
     if(listing){
       const prospects = listing.prospects||[];
       const prospect = prospects.find(p=>fuzzyTextMatch(p.tenantName, parsed.accountName)) || (prospects.length===1?prospects[0]:null);
       if(prospect){ listingMatch=listing; prospectMatch=prospect; }
+      else {
+        // Listing exists, but this tenant isn't tracked there yet — create a new
+        // prospect rather than failing, so a brand-new lead can still get a note.
+        listingMatch = listing;
+        prospectMatch = {id:crypto.randomUUID(), tenantName: parsed.accountName, stage:'contacted', dealType:null,
+          dateOfContact: todayDate(), notes:'', edgeTracker:null, attachments:[], commission1Paid:false, commission2Paid:false};
+        prospectIsNew = true;
+      }
     }
   }
   if(!listingMatch){
@@ -3522,21 +3610,28 @@ async function resolveAndSaveVoiceNote(parsed){
   const haveClientResult = !!(matchedClientRec && clientDealCandidate);
   const haveListingResult = !!(listingMatch && prospectMatch);
   if(haveClientResult && haveListingResult){
-    state.voiceNoteAmbiguous = {type:'sidePick', clientResult:{client:matchedClientRec, deal:clientDealCandidate}, listingResult:{listing:listingMatch, prospect:prospectMatch}, parsed};
+    state.voiceNoteAmbiguous = {type:'sidePick',
+      clientResult:{client:matchedClientRec, deal:clientDealCandidate, isNew:clientDealIsNew},
+      listingResult:{listing:listingMatch, prospect:prospectMatch, isNew:prospectIsNew}, parsed};
     render();
     return;
   }
-  if(haveListingResult){ await saveVoiceNoteToTarget('listings', listingMatch, prospectMatch, parsed); return; }
-  if(haveClientResult){ await saveVoiceNoteToTarget('clients', matchedClientRec, clientDealCandidate, parsed); return; }
+  if(haveListingResult){ await saveVoiceNoteToTarget('listings', listingMatch, prospectMatch, parsed, prospectIsNew); return; }
+  if(haveClientResult){ await saveVoiceNoteToTarget('clients', matchedClientRec, clientDealCandidate, parsed, clientDealIsNew); return; }
   flashToast(`Couldn't find a matching deal for "${parsed.accountName}"${parsed.propertyDescription?` at ${parsed.propertyDescription}`:''} — nothing was saved.`);
   render();
 }
-async function saveVoiceNoteToTarget(side, accountRec, rec, parsed){
+async function saveVoiceNoteToTarget(side, accountRec, rec, parsed, isNew){
   const dateStr = fmtDate(todayDate());
   const existingNotes = rec.notes || '';
   rec.notes = existingNotes ? `${existingNotes}\n\n[${dateStr}] ${parsed.noteText}` : `[${dateStr}] ${parsed.noteText}`;
-  if(side==='clients') await supaUpdateDeal(rec, accountRec.id);
-  else await supaUpdateProspect(rec, accountRec.id);
+  if(side==='clients'){
+    if(isNew){ accountRec.deals = accountRec.deals || []; accountRec.deals.push(rec); await supaCreateDeal(rec, accountRec.id); }
+    else await supaUpdateDeal(rec, accountRec.id);
+  } else {
+    if(isNew){ accountRec.prospects = accountRec.prospects || []; accountRec.prospects.push(rec); await supaCreateProspect(rec, accountRec.id); }
+    else await supaUpdateProspect(rec, accountRec.id);
+  }
   let todoMsg = '';
   if(parsed.followUpDate){
     let assignee = state.currentUser;
@@ -3557,6 +3652,48 @@ async function saveVoiceNoteToTarget(side, accountRec, rec, parsed){
   flashToast(`Note added to ${side==='clients'?rec.name:rec.tenantName}.${todoMsg}`);
   render();
 }
+// "Create a new prospect called XYZ Tenant at Main & Main" — voice intent, always creates
+// under a matched Listing (only Listings track Prospects). Requires a property to be named.
+async function resolveAndCreateProspect(parsed){
+  if(!parsed.accountName || !parsed.propertyDescription){
+    flashToast("Didn't catch both the tenant name and the property — please try again and name both clearly.");
+    render();
+    return;
+  }
+  const listingsList = db.lists.find(x=>x.id==='listings');
+  const listing = listingsList.clients.find(l=>fuzzyTextMatch(l.name, parsed.propertyDescription));
+  if(!listing){
+    flashToast(`Couldn't find a Listing matching "${parsed.propertyDescription}" — nothing was created.`);
+    render();
+    return;
+  }
+  const prospect = {id:crypto.randomUUID(), tenantName: parsed.accountName, stage:'contacted', dealType:null,
+    dateOfContact: todayDate(), notes:'', edgeTracker:null, attachments:[], commission1Paid:false, commission2Paid:false};
+  listing.prospects = listing.prospects || [];
+  listing.prospects.push(prospect);
+  await supaCreateProspect(prospect, listing.id);
+  flashToast(`New prospect created: ${parsed.accountName} at ${listing.name}.`);
+  render();
+}
+// "Add a new sign call from Jim Martinez, phone 555-1212, a Pizza Shop, at Main & Main"
+async function resolveAndCreateSignCall(parsed){
+  if(!parsed.propertyDescription){
+    flashToast("Didn't catch which property that sign call was for — please try again and name it clearly.");
+    render();
+    return;
+  }
+  const listingsList = db.lists.find(x=>x.id==='listings');
+  const listing = listingsList.clients.find(l=>fuzzyTextMatch(l.name, parsed.propertyDescription));
+  if(!listing){
+    flashToast(`Couldn't find a Listing matching "${parsed.propertyDescription}" — nothing was created.`);
+    render();
+    return;
+  }
+  const sc = {id:null, listingId:listing.id, name: parsed.callerName||'', phone: parsed.callerPhone||'', notes: parsed.callerNotes||'', contactId:null};
+  const created = await supaCreateSignCall(sc);
+  if(created) flashToast(`Sign call logged: ${sc.name||'Unnamed caller'} at ${listing.name}.`);
+  render();
+}
 function renderVoiceNoteAmbiguousModal(){
   const m = state.voiceNoteAmbiguous;
   const overlay = document.createElement('div');
@@ -3565,8 +3702,8 @@ function renderVoiceNoteAmbiguousModal(){
   if(m.type==='sidePick'){
     body = `
       <p class="tiny" style="margin-bottom:14px;">Found "${escapeHtml(m.parsed.accountName)}" on both sides — which one?</p>
-      <button class="btn" data-action="voicePickListing" style="width:100%;margin-bottom:8px;">Listing Side — ${escapeHtml(m.listingResult.listing.name)}</button>
-      <button class="btn secondary" data-action="voicePickClient" style="width:100%;">Client Side — ${escapeHtml(m.clientResult.client.name)}</button>
+      <button class="btn" data-action="voicePickListing" style="width:100%;margin-bottom:8px;">Listing Side — ${escapeHtml(m.listingResult.listing.name)}${m.listingResult.isNew?' (new prospect)':''}</button>
+      <button class="btn secondary" data-action="voicePickClient" style="width:100%;">Client Side — ${escapeHtml(m.clientResult.client.name)}${m.clientResult.isNew?' (new deal)':''}</button>
     `;
   } else {
     body = `
@@ -3577,12 +3714,12 @@ function renderVoiceNoteAmbiguousModal(){
   overlay.innerHTML = `<div class="modal-card" style="max-width:420px;"><div class="modal-head"><div class="modal-title">Which account?</div></div><div class="modal-body">${body}</div></div>`;
   document.getElementById('app').appendChild(overlay);
   const listingBtn = overlay.querySelector('[data-action="voicePickListing"]');
-  if(listingBtn) listingBtn.onclick=safeHandler(()=>saveVoiceNoteToTarget('listings', m.listingResult.listing, m.listingResult.prospect, m.parsed));
+  if(listingBtn) listingBtn.onclick=safeHandler(()=>saveVoiceNoteToTarget('listings', m.listingResult.listing, m.listingResult.prospect, m.parsed, m.listingResult.isNew));
   const clientBtn = overlay.querySelector('[data-action="voicePickClient"]');
-  if(clientBtn) clientBtn.onclick=safeHandler(()=>saveVoiceNoteToTarget('clients', m.clientResult.client, m.clientResult.deal, m.parsed));
+  if(clientBtn) clientBtn.onclick=safeHandler(()=>saveVoiceNoteToTarget('clients', m.clientResult.client, m.clientResult.deal, m.parsed, m.clientResult.isNew));
   overlay.querySelectorAll('[data-pickambig]').forEach(b=>b.onclick=safeHandler(()=>{
     const c = m.candidates[parseInt(b.dataset.pickambig)];
-    saveVoiceNoteToTarget('listings', c.listing, c.prospect, m.parsed);
+    saveVoiceNoteToTarget('listings', c.listing, c.prospect, m.parsed, false);
   }));
 }
 const LOI_COUNTER_CODES = {
@@ -7275,6 +7412,7 @@ function renderClientModalBody(l,c,viewMode,pendingDel){
   ${renderDealGroupsInClient(l,c)}
   ` : ''}
   ${showProspecting ? renderLSRInline(c, state.leasingReportMode || viewMode) : ''}
+  ${l.id==='listings' ? renderSignCallsSection(l, c) : ''}
   ${showDeals ? accessHtml : ''}
   ${l.id==='listings' ? renderElaCard(c, canEdit) : ''}
   <div class="contact-card" style="margin-top:20px;">
@@ -7823,6 +7961,106 @@ function renderLSRInline(listing, mode){
     tradeAreaHtml = `<div class="no-print">${renderLSRSectionInline({key:'tradeArea', title:'Trade Area Tenants', color:'#B08B3F', rows:tradeAreaRows, listing, kind:'prospect', categoryId:null})}</div>`;
   }
   return `${toolbarHtml}<div id="lsrPrintArea">${html}</div>${tradeAreaHtml}`;
+}
+function renderSignCallsSection(l, listing){
+  const calls = db.signCalls.filter(sc=>sc.listingId===listing.id && !sc.convertedToProspectId);
+  const collapsed = state.signCallsCollapsed !== false; // closed by default
+  return `
+  <div style="margin-top:18px;">
+    <button type="button" class="row-card" data-action="toggleSignCalls" style="cursor:pointer;width:100%;text-align:left;background:#fff;">
+      <div class="nav-icon" style="font-size:14px;">${collapsed?'▸':'▾'}</div>
+      <div class="row-body"><div class="row-title" style="font-size:13px;">☎️ Sign Calls</div><div class="row-meta"><span>${calls.length} open</span></div></div>
+    </button>
+    ${!collapsed ? `
+    <div style="margin-top:8px;">
+      <button class="btn secondary sm" data-action="newSignCall" data-listid="${l.id}" data-listing="${listing.id}" style="margin-bottom:10px;">+ New Sign Call</button>
+      ${calls.length ? calls.map(sc=>`
+        <div class="row-card" data-opensigncall="${sc.id}" style="cursor:pointer;margin-bottom:6px;">
+          <div class="row-body">
+            <div class="row-title">${escapeHtml(sc.name||'(no name)')}</div>
+            <div class="row-meta"><span>${escapeHtml(sc.phone||'No phone')}</span>${sc.notes?`<span>${escapeHtml(sc.notes.slice(0,60))}${sc.notes.length>60?'…':''}</span>`:''}</div>
+          </div>
+        </div>`).join('') : `<div class="tiny" style="color:var(--ink-soft);padding:6px 0;">No open sign calls.</div>`}
+    </div>` : ''}
+  </div>`;
+}
+function renderSignCallModal(){
+  const m = state.signCallModal;
+  const overlay = document.createElement('div');
+  overlay.className='modal-overlay'; overlay.style.zIndex=209;
+  const sc = m.signCall;
+  overlay.innerHTML = `
+  <div class="modal-card" style="max-width:440px;">
+    <div class="modal-head"><div class="modal-title">${m.isNew?'New Sign Call':'Sign Call'}</div><button class="modal-close" data-action="closeSignCall">✕</button></div>
+    <div class="modal-body">
+      <div class="field"><label>Name</label><input id="scName" value="${escapeAttr(sc.name||'')}"></div>
+      <div class="field"><label>Phone</label><input id="scPhone" value="${escapeAttr(sc.phone||'')}"></div>
+      <div class="field"><label>Notes</label><textarea id="scNotes" rows="3">${escapeHtml(sc.notes||'')}</textarea></div>
+      <div class="field">
+        <label>Attach Contact / Broker (optional)</label>
+        ${sc.contactId ? `<div class="tiny">${brokerRow(sc.contactId)}</div>` : `<div class="tiny" style="color:var(--ink-soft);">None attached</div>`}
+        <button class="btn secondary sm" style="margin-top:6px;" data-action="attachSignCallContact">Attach Contact / Broker</button>
+      </div>
+    </div>
+    <div class="modal-foot">
+      ${!m.isNew ? `<button class="btn secondary" data-action="deleteSignCall" style="color:var(--bad);">Delete</button>` : ''}
+      ${!m.isNew ? `<button class="btn secondary" data-action="convertSignCall">Convert to Prospect</button>` : ''}
+      <button class="btn" data-action="saveSignCall">Save</button>
+    </div>
+  </div>`;
+  document.getElementById('app').appendChild(overlay);
+  overlay.querySelectorAll('[data-action="closeSignCall"]').forEach(b=>b.onclick=()=>{ state.signCallModal=null; render(); });
+  const saveBtn = overlay.querySelector('[data-action="saveSignCall"]');
+  if(saveBtn) saveBtn.onclick=safeHandler(async ()=>{
+    sc.name = document.getElementById('scName').value.trim();
+    sc.phone = document.getElementById('scPhone').value.trim();
+    sc.notes = document.getElementById('scNotes').value.trim();
+    if(m.isNew){
+      const created = await supaCreateSignCall(sc);
+      if(created){ flashToast('Sign call saved.'); state.signCallModal=null; render(); }
+    } else {
+      await supaUpdateSignCall(sc);
+      flashToast('Sign call saved.');
+      state.signCallModal=null; render();
+    }
+  });
+  const attachBtn = overlay.querySelector('[data-action="attachSignCallContact"]');
+  if(attachBtn) attachBtn.onclick=()=>{
+    state.brokerPickerOpen = {signCallId: sc.id};
+    state.brokerPickerQuery = '';
+    render();
+  };
+  const deleteBtn = overlay.querySelector('[data-action="deleteSignCall"]');
+  if(deleteBtn) deleteBtn.onclick=safeHandler(async ()=>{
+    if(confirm(`Delete this sign call from ${sc.name||'this caller'}?`)){
+      db.signCalls = db.signCalls.filter(x=>x.id!==sc.id);
+      await supaDeleteSignCall(sc.id);
+      state.signCallModal=null;
+      flashToast('Sign call deleted.');
+      render();
+    }
+  });
+  const convertBtn = overlay.querySelector('[data-action="convertSignCall"]');
+  if(convertBtn) convertBtn.onclick=safeHandler(async ()=>{
+    await convertSignCallToProspect(sc);
+  });
+}
+async function convertSignCallToProspect(sc){
+  const listingsList = db.lists.find(x=>x.id==='listings');
+  const listing = listingsList.clients.find(c=>c.id===sc.listingId);
+  if(!listing){ flashToast("Couldn't find that listing."); return; }
+  const prospect = {id:crypto.randomUUID(), tenantName: sc.name||'New Prospect', stage:'contacted', dealType:null,
+    contactId: sc.contactId||null, dateOfContact: todayDate(),
+    notes: sc.phone ? `Phone: ${sc.phone}${sc.notes?`\n\n${sc.notes}`:''}` : (sc.notes||''),
+    edgeTracker:null, attachments:[], commission1Paid:false, commission2Paid:false};
+  listing.prospects = listing.prospects || [];
+  listing.prospects.push(prospect);
+  await supaCreateProspect(prospect, listing.id);
+  sc.convertedToProspectId = prospect.id;
+  await supaUpdateSignCall(sc);
+  state.signCallModal=null;
+  flashToast(`Converted to a Prospect: ${prospect.tenantName}.`);
+  render();
 }
 function renderLSRSectionInline(opts){
   const collapsed = state.lsrCollapsed[opts.key] !== false; // closed by default — has to be explicitly opened once
@@ -8774,6 +9012,18 @@ function attachModalHandlers(root){
   const ntAccount = root.querySelector('[data-action="newAccountTodo"]'); if(ntAccount) ntAccount.onclick=()=>{
     openNewTodoModal({listId:ntAccount.dataset.listid, clientId:ntAccount.dataset.client}); render();
   };
+  const toggleSC = root.querySelector('[data-action="toggleSignCalls"]'); if(toggleSC) toggleSC.onclick=()=>{
+    state.signCallsCollapsed = state.signCallsCollapsed===false ? true : false;
+    renderPreservingScroll('.modal-body');
+  };
+  const newSC = root.querySelector('[data-action="newSignCall"]'); if(newSC) newSC.onclick=()=>{
+    state.signCallModal = {isNew:true, signCall: {id:null, listingId:newSC.dataset.listing, name:'', phone:'', notes:'', contactId:null}};
+    render();
+  };
+  root.querySelectorAll('[data-opensigncall]').forEach(el=>el.onclick=()=>{
+    const sc = db.signCalls.find(x=>x.id===el.dataset.opensigncall);
+    if(sc) { state.signCallModal = {isNew:false, signCall: sc}; render(); }
+  });
   const conv = root.querySelector('[data-action="convertToDeal"]'); if(conv) conv.onclick=()=>{
     convertEntryToDeal(conv.dataset.listid, conv.dataset.entry); render();
   };
@@ -8877,6 +9127,10 @@ function finishBrokerPick(brokerId){
     const client = l.clients.find(c=>c.id===clientId);
     const d = client.deals.find(x=>x.id===dealId);
     if(d){ d.brokerContactId = brokerId; supaUpdateDeal(d, client.id); }
+  } else if(state.brokerPickerOpen && state.brokerPickerOpen.signCallId){
+    const sc = db.signCalls.find(x=>x.id===state.brokerPickerOpen.signCallId) ||
+      (state.signCallModal && state.signCallModal.signCall.id===state.brokerPickerOpen.signCallId ? state.signCallModal.signCall : null);
+    if(sc){ sc.contactId = brokerId; if(!state.signCallModal || !state.signCallModal.isNew) supaUpdateSignCall(sc); }
   } else if(state.brokerPickerOpen){
     const {lsrClientId, lsrProspectId} = state.brokerPickerOpen;
     const listing = db.lists.find(x=>x.id==='listings').clients.find(c=>c.id===lsrClientId);
@@ -10927,6 +11181,7 @@ document.addEventListener('keydown', (ev)=>{
   if(state.pipelineView){ state.pipelineView=null; render(); return; }
   if(state.loiImport){ state.loiImport=null; render(); return; }
   if(state.voiceNoteAmbiguous){ state.voiceNoteAmbiguous=null; flashToast('Cancelled — nothing was saved.'); render(); return; }
+  if(state.signCallModal){ state.signCallModal=null; render(); return; }
   if(state.brokerReviewLog){ state.brokerReviewLog=null; render(); return; }
   if(state.contactImportReview){
     if(confirm('Stop reviewing? Nothing has been imported yet, and progress in this session will be lost.')){ state.contactImportReview=null; render(); }
