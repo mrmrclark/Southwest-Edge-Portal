@@ -7404,9 +7404,10 @@ function brandLogoImg(name){
 function renderTopModalCard(){
   const frame = state.modalStack[state.modalStack.length-1];
   const crumbs = breadcrumbFor(state.modalStack);
-  let bodyHtml='', titleText='', brandName='', dealCanEdit=true, clientCanEdit=true, entryCanEdit=true;
+  let bodyHtml='', titleText='', brandName='', dealCanEdit=true, clientCanEdit=true, entryCanEdit=true, clientListId=null;
   if(frame.kind==='client'){
     const l=db.lists.find(x=>x.id===frame.listId); const c=l.clients.find(x=>x.id===frame.clientId);
+    clientListId = l.id;
     titleText=c.name; brandName=c.name;
     clientCanEdit = state.currentUser.role==='Admin' || c.createdBy===state.currentUser.id || (c.authorizedUserIds||[]).includes(state.currentUser.id);
     const pendingDel = db.deletionRequests.find(r=>r.clientId===c.id);
@@ -7444,7 +7445,7 @@ function renderTopModalCard(){
         <div class="modal-title-row">${brandLogoImg(brandName)}<div class="modal-title" style="flex:none;">${escapeHtml(titleText)}</div>${frame.kind==='client' && clientCanEdit ? `<button data-action="renameClient" data-listid="${frame.listId}" data-client="${frame.clientId}" title="Rename this ${frame.listId==='listings'?'listing':'client'}" style="background:none;border:none;color:rgba(255,255,255,.75);font-size:15px;margin-left:8px;cursor:pointer;padding:4px;">✏️</button>` : ''}${frame.kind==='deal' && dealCanEdit ? `<button data-action="renameDeal" data-listid="${frame.listId}" data-client="${frame.clientId}" data-deal="${frame.dealId}" title="Rename this deal" style="background:none;border:none;color:rgba(255,255,255,.75);font-size:15px;margin-left:8px;cursor:pointer;padding:4px;">✏️</button>` : ''}${frame.kind==='entry' && entryCanEdit ? `<button data-action="renameEntry" data-listid="${frame.listId}" data-entry="${frame.entryId}" title="Rename this entry" style="background:none;border:none;color:rgba(255,255,255,.75);font-size:15px;margin-left:8px;cursor:pointer;padding:4px;">✏️</button>` : ''}</div>
       </div>
       ${frame.kind==='deal' && dealCanEdit ? `<button class="btn sm" data-action="saveAndCloseDeal" style="background:#fff;color:var(--edge);">Save &amp; Close</button>` : ''}
-      ${frame.kind==='client' && l.id==='clients' ? `<button class="btn sm" data-action="openClientMap" style="background:#fff;color:var(--edge);">🗺️ Map</button>` : ''}
+      ${frame.kind==='client' && clientListId==='clients' ? `<button class="btn sm" data-action="openClientMap" style="background:#fff;color:var(--edge);">🗺️ Map</button>` : ''}
       <button class="modal-close" data-action="closeModal" style="${(frame.kind==='client' || frame.kind==='entry') ? 'width:auto;height:auto;padding:8px 14px;white-space:nowrap;font-size:13px;' : ''}">${(frame.kind==='client' || frame.kind==='entry') ? '✓ Save & Close' : '✕ Done'}</button>
     </div>
     <div class="modal-body">${bodyHtml}</div>
