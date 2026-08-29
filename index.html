@@ -746,6 +746,7 @@ async function fetchAllProfilesIntoUsers(){
     u.notifPref = (!u.notifUseDefault && p.notif_schedule_type) ? {type:p.notif_schedule_type, days:p.notif_schedule_days||[], time:p.notif_schedule_time||'07:00'} : null;
     u.wantsAssignmentEmails = p.notif_assignment_emails !== false; // default true if column is null/undefined
     u.wantsAssignerEmails = p.notif_assigner_emails !== false; // default true if column is null/undefined
+    u.mapTypePreference = p.map_type_preference || 'hybrid';
   });
 }
 
@@ -6170,6 +6171,11 @@ async function geocodeOneRecord(item){
     console.error('geocodeOneRecord error:', e);
   }
 }
+async function saveMapTypePreference(mapType){
+  state.currentUser.mapTypePreference = mapType;
+  const { error } = await supabaseClient.from('profiles').update({map_type_preference: mapType}).eq('id', state.currentUser.authId);
+  if(error) console.error('saveMapTypePreference error:', error);
+}
 function loadGoogleMapsScript(callback){
   if(window.google && window.google.maps){ callback(); return; }
   if(document.getElementById('googleMapsScript')){
@@ -6274,10 +6280,20 @@ function renderClientMapModal(){
   loadGoogleMapsScript(async ()=>{
     const mapDiv = document.getElementById('clientMapDiv');
     if(!mapDiv) return; // modal already closed by the time the script loaded
+    const savedMapType = state.currentUser.mapTypePreference || 'hybrid';
     const map = new google.maps.Map(mapDiv, {
       center: {lat:33.4484, lng:-112.0740}, zoom: 9,
-      mapTypeId: google.maps.MapTypeId.SATELLITE,
-      styles: [{ featureType: 'poi', stylers: [{ visibility: 'off' }] }]
+      mapTypeId: savedMapType,
+      styles: [{ featureType: 'poi', stylers: [{ visibility: 'off' }] }],
+      // Real google.com/maps always keeps labels on even in its "Satellite" button — the
+      // raw API's plain SATELLITE constant strips them, so swap it for HYBRID here to
+      // match that familiar behavior and avoid losing streets/highways/cities by accident.
+      mapTypeControlOptions: { mapTypeIds: [google.maps.MapTypeId.ROADMAP, google.maps.MapTypeId.HYBRID] }
+    });
+    // Google's own Map/Satellite toggle already lets each person pick their view live —
+    // this just remembers whichever one they choose as their default for next time.
+    map.addListener('maptypeid_changed', ()=>{
+      saveMapTypePreference(map.getMapTypeId());
     });
     const infoWindow = new google.maps.InfoWindow();
     const items = (c.deals||[]).filter(d=>d.stage!=='dead').map(d=>({
