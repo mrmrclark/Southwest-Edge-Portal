@@ -511,7 +511,7 @@ const GOOGLE_MAPS_JS_KEY = 'AIzaSyBMlIjvH2bpZK6mYJeNZSkQvM8TXQkCjDE';
 const CATEGORY_ORANGE_ICONS = ['💲','🏢','🎯','📋','☁️','🔧','✈️','🏛️','💎','📄','⭐','🗂️'];
 
 let state = {
-  screen:'login',              // 'login' | 'app'
+  screen:'checking',            // 'checking' | 'login' | 'app'
   loginTarget:null,            // userId currently entering password
   selectedLoginUser:null,      // which user row is highlighted on the login card
   loginMode:'signin',          // 'signin' | 'create' — explicit, not auto-detected
@@ -2642,6 +2642,13 @@ function visibleTodo(td){
 /* ---------------- RENDER ROOT ---------------- */
 function render(){
   const app = document.getElementById('app');
+  if(state.screen==='checking'){
+    app.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;height:100vh;background:var(--canvas);">
+      ${brandLogoImg('Southwest Edge')}
+      <div style="color:var(--ink-soft);font-size:13px;">Loading…</div>
+    </div>`;
+    return;
+  }
   if(state.screen==='login'){
     app.innerHTML = renderLogin();
     attachLoginHandlers();
@@ -6222,6 +6229,57 @@ function renderGeocodeIssuesModal(){
     render();
   });
 }
+function renderMapLegendHtml(c){
+  const activeDeals = c ? (c.deals||[]).filter(d=>d.stage!=='dead') : [];
+  const plottedDeals = activeDeals.filter(d=>d.latitude && d.longitude);
+  const notFoundDeals = activeDeals.filter(d=>!(d.latitude && d.longitude));
+  const stageCounts = {};
+  plottedDeals.forEach(d=>{ stageCounts[d.stage] = (stageCounts[d.stage]||0) + 1; });
+  return `
+    <div style="font-weight:700;margin-bottom:6px;">Stage</div>
+    ${LSR_STAGES.filter(s=>s.id!=='dead' && MAP_STAGE_COLORS[s.id]).map(s=>`
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;">
+        <div style="width:11px;height:11px;border-radius:50%;background:${MAP_STAGE_COLORS[s.id]};flex:none;"></div>
+        <div>${escapeHtml(s.name)} <span style="color:var(--ink-soft);">(${stageCounts[s.id]||0})</span></div>
+      </div>`).join('')}
+    <div style="border-top:1px solid var(--line);margin-top:8px;padding-top:8px;">
+      <button type="button" data-action="toggleNotFoundList" style="display:flex;align-items:center;gap:6px;width:100%;text-align:left;background:none;border:none;cursor:pointer;padding:0;font-size:12.5px;font-family:inherit;">
+        <div style="width:11px;height:11px;border-radius:50%;background:#333;flex:none;"></div>
+        <div>❓ Not Found <span style="color:var(--ink-soft);">(${notFoundDeals.length})</span></div>
+      </button>
+      ${state.notFoundListOpen ? `<div style="margin-top:6px;">
+        ${notFoundDeals.length ? notFoundDeals.map(d=>`
+          <div data-placeondeal="${d.id}" style="cursor:pointer;padding:4px 0 4px 17px;color:var(--edge);text-decoration:underline;">${escapeHtml(d.name)}</div>
+        `).join('') : `<div style="padding:4px 0 4px 17px;color:var(--ink-soft);">None right now.</div>`}
+      </div>` : ''}
+    </div>
+    ${state.placingDealId ? `<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--line);color:var(--edge);font-weight:600;">Click anywhere on the map to place this pin.</div>` : ''}
+  `;
+}
+function wireMapLegendHandlers(legendEl, onPlaceStart){
+  const toggleBtn = legendEl.querySelector('[data-action="toggleNotFoundList"]'); if(toggleBtn) toggleBtn.onclick=()=>{
+    state.notFoundListOpen = !state.notFoundListOpen;
+    refreshMapLegendOnly();
+  };
+  legendEl.querySelectorAll('[data-placeondeal]').forEach(el=>el.onclick=()=>{
+    state.placingDealId = el.dataset.placeondeal;
+    refreshMapLegendOnly();
+    if(onPlaceStart) onPlaceStart();
+  });
+}
+// Regenerates ONLY the legend panel's own content — never calls the global render(), since
+// that would tear down and recreate the entire Google Map, snapping it back to the default
+// Phoenix view and losing wherever the person had actually panned/zoomed to (e.g. Tucson).
+function refreshMapLegendOnly(){
+  const legendEl = document.getElementById('mapLegendPanel');
+  if(!legendEl) return;
+  const m = state.clientMapModal;
+  if(!m) return;
+  const l = db.lists.find(x=>x.id===m.listId);
+  const c = l && l.clients.find(x=>x.id===m.clientId);
+  legendEl.innerHTML = renderMapLegendHtml(c);
+  wireMapLegendHandlers(legendEl);
+}
 function renderClientMapModal(){
   const m = state.clientMapModal;
   const l = db.lists.find(x=>x.id===m.listId);
@@ -6229,11 +6287,6 @@ function renderClientMapModal(){
   const overlay = document.createElement('div');
   overlay.className='modal-overlay'; overlay.style.zIndex=211;
   const keyNotSet = !GOOGLE_MAPS_JS_KEY || GOOGLE_MAPS_JS_KEY==='PASTE_YOUR_GOOGLE_MAPS_JS_KEY_HERE';
-  const activeDeals = c ? (c.deals||[]).filter(d=>d.stage!=='dead') : [];
-  const plottedDeals = activeDeals.filter(d=>d.latitude && d.longitude);
-  const notFoundDeals = activeDeals.filter(d=>!(d.latitude && d.longitude));
-  const stageCounts = {};
-  plottedDeals.forEach(d=>{ stageCounts[d.stage] = (stageCounts[d.stage]||0) + 1; });
   overlay.innerHTML = `
   <div class="modal-card" style="max-width:90vw;width:90vw;height:88vh;display:flex;flex-direction:column;">
     <div class="modal-head"><div class="modal-title">🗺️ ${escapeHtml(c?c.name:'Map')}</div><button class="modal-close" data-action="closeClientMap">✕</button></div>
@@ -6242,39 +6295,14 @@ function renderClientMapModal(){
         <div class="empty-state" style="padding:40px;"><div class="big">Map isn't set up yet.</div></div>
       ` : `<div style="position:relative;flex:1;min-height:0;">
           <div id="clientMapDiv" style="width:100%;height:100%;"></div>
-          <div style="position:absolute;top:12px;left:12px;background:rgba(255,255,255,0.95);border-radius:8px;padding:10px 14px;box-shadow:0 2px 8px rgba(0,0,0,0.2);font-size:12.5px;z-index:1;max-width:230px;max-height:calc(100% - 24px);overflow-y:auto;">
-            <div style="font-weight:700;margin-bottom:6px;">Stage</div>
-            ${LSR_STAGES.filter(s=>s.id!=='dead' && MAP_STAGE_COLORS[s.id]).map(s=>`
-              <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;">
-                <div style="width:11px;height:11px;border-radius:50%;background:${MAP_STAGE_COLORS[s.id]};flex:none;"></div>
-                <div>${escapeHtml(s.name)} <span style="color:var(--ink-soft);">(${stageCounts[s.id]||0})</span></div>
-              </div>`).join('')}
-            <div style="border-top:1px solid var(--line);margin-top:8px;padding-top:8px;">
-              <button type="button" data-action="toggleNotFoundList" style="display:flex;align-items:center;gap:6px;width:100%;text-align:left;background:none;border:none;cursor:pointer;padding:0;font-size:12.5px;font-family:inherit;">
-                <div style="width:11px;height:11px;border-radius:50%;background:#333;flex:none;"></div>
-                <div>❓ Not Found <span style="color:var(--ink-soft);">(${notFoundDeals.length})</span></div>
-              </button>
-              ${state.notFoundListOpen ? `<div style="margin-top:6px;">
-                ${notFoundDeals.length ? notFoundDeals.map(d=>`
-                  <div data-placeondeal="${d.id}" style="cursor:pointer;padding:4px 0 4px 17px;color:var(--edge);text-decoration:underline;">${escapeHtml(d.name)}</div>
-                `).join('') : `<div style="padding:4px 0 4px 17px;color:var(--ink-soft);">None right now.</div>`}
-              </div>` : ''}
-            </div>
-            ${state.placingDealId ? `<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--line);color:var(--edge);font-weight:600;">Click anywhere on the map to place this pin.</div>` : ''}
-          </div>
+          <div id="mapLegendPanel" style="position:absolute;top:12px;left:12px;background:rgba(255,255,255,0.95);border-radius:8px;padding:10px 14px;box-shadow:0 2px 8px rgba(0,0,0,0.2);font-size:12.5px;z-index:1;max-width:230px;max-height:calc(100% - 24px);overflow-y:auto;">${renderMapLegendHtml(c)}</div>
         </div>`}
     </div>
   </div>`;
   document.getElementById('app').appendChild(overlay);
   overlay.querySelectorAll('[data-action="closeClientMap"]').forEach(b=>b.onclick=()=>{ state.clientMapModal=null; state.notFoundListOpen=false; state.placingDealId=null; render(); });
-  const toggleBtn = overlay.querySelector('[data-action="toggleNotFoundList"]'); if(toggleBtn) toggleBtn.onclick=()=>{
-    state.notFoundListOpen = !state.notFoundListOpen;
-    render();
-  };
-  overlay.querySelectorAll('[data-placeondeal]').forEach(el=>el.onclick=()=>{
-    state.placingDealId = el.dataset.placeondeal;
-    render();
-  });
+  const legendEl = overlay.querySelector('#mapLegendPanel');
+  if(legendEl) wireMapLegendHandlers(legendEl);
   if(!c || keyNotSet) return;
 
   loadGoogleMapsScript(async ()=>{
@@ -6310,8 +6338,9 @@ function renderClientMapModal(){
       item.rec.geocodeFailed = false;
       await supaUpdateDeal(item.rec, item.clientId);
       state.placingDealId = null;
+      plotPin(item);
+      refreshMapLegendOnly();
       flashToast(`${item.label} — pin placed.`);
-      render();
     }));
 
     const plotPin = (item)=>{
@@ -6331,6 +6360,7 @@ function renderClientMapModal(){
         item.rec.geocodeFailed = false;
         if(item.kind==='deal') await supaUpdateDeal(item.rec, item.clientId);
         else await supaUpdateProspect(item.rec, item.clientId);
+        refreshMapLegendOnly();
         flashToast(`${item.label} — location updated.`);
       }));
       marker.addListener('click', ()=>{
@@ -6351,7 +6381,7 @@ function renderClientMapModal(){
     const toGeocode = items.filter(r=>!r.rec.latitude && !r.rec.geocodeFailed);
     for(const item of toGeocode){
       await geocodeOneRecord(item);
-      if(item.rec.latitude && item.rec.longitude) plotPin(item);
+      if(item.rec.latitude && item.rec.longitude){ plotPin(item); refreshMapLegendOnly(); }
     }
   });
 }
@@ -11564,14 +11594,14 @@ render();
     catch(e){ console.error('Directory additions check failed (continuing anyway):', e); }
 
     const { data: { session } } = await supabaseClient.auth.getSession();
-    if(!session || !session.user) return;
+    if(!session || !session.user){ state.screen='login'; render(); return; }
 
     const profile = await fetchMyProfile(session.user.id);
-    if(!profile) return;
+    if(!profile){ state.screen='login'; render(); return; }
 
     await fetchAllProfilesIntoUsers();
     const u = USERS.find(x=>x.email.toLowerCase()===profile.email.toLowerCase());
-    if(!u) return;
+    if(!u){ state.screen='login'; render(); return; }
 
     u.authId = profile.id;
     if(!u.emailClient) u.emailClient = profile.email_client;
@@ -11590,7 +11620,7 @@ render();
     await fetchAllAppDataFromSupabase();
     checkTodoDeepLink(); checkBrokerReviewDeepLink();
     render();
-  } catch(e){ console.error('Session check failed:', e); }
+  } catch(e){ console.error('Session check failed:', e); state.screen='login'; render(); }
 })();
 
 // Register the service worker so this can be "Added to Home Screen" as an installable
