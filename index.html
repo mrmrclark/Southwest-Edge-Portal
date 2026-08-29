@@ -568,7 +568,7 @@ let state = {
   pipelineView:null,            // {viewUserId} — 'office' or a specific user id
   signCallModal:null,           // {isNew, signCall} — Sign Call add/edit modal
   signCallsCollapsed:true,      // Sign Calls section on a Listing page — closed by default
-  clientMapCollapsed:true,      // Map section on a Client page — closed by default
+  clientMapModal:null,          // {listId, clientId} — opens the per-Client map as a popup
   navContextMenu:null,          // {kind:'smart'|'list', id} — which ellipsis menu is open
   showAllSmartLists:false,      // collapse toggle once there are more than 10 smart lists
   notifSettingsOpen:false,      // whether the notification-preferences modal is open
@@ -2668,6 +2668,7 @@ function render(){
   if(state.brokerReviewLog) renderBrokerReviewLogModal();
   if(state.pipelineView) renderPipelineModal();
   if(state.loiImport) renderLoiImportModal();
+  if(state.clientMapModal) renderClientMapModal();
   if(state.voiceNoteAmbiguous) renderVoiceNoteAmbiguousModal();
   if(state.signCallModal) renderSignCallModal();
   if(state.notifSettingsOpen) renderNotifSettingsModal();
@@ -6167,30 +6168,33 @@ function loadGoogleMapsScript(callback){
   script.onload = callback;
   document.head.appendChild(script);
 }
-// Only Clients get this — Listings, Hit List, and Hot List don't need it.
-function renderClientMapSection(l, c){
-  if(l.id!=='clients') return '';
-  const collapsed = state.clientMapCollapsed !== false; // closed by default
+function renderClientMapModal(){
+  const m = state.clientMapModal;
+  const l = db.lists.find(x=>x.id===m.listId);
+  const c = l && l.clients.find(x=>x.id===m.clientId);
+  const overlay = document.createElement('div');
+  overlay.className='modal-overlay'; overlay.style.zIndex=211;
   const keyNotSet = !GOOGLE_MAPS_JS_KEY || GOOGLE_MAPS_JS_KEY==='PASTE_YOUR_GOOGLE_MAPS_JS_KEY_HERE';
-  return `
-  <div style="margin-top:18px;">
-    <button type="button" class="row-card" data-action="toggleClientMap" style="cursor:pointer;width:100%;text-align:left;background:#fff;">
-      <div class="nav-icon" style="font-size:14px;">${collapsed?'▸':'▾'}</div>
-      <div class="row-body"><div class="row-title" style="font-size:13px;">🗺️ Map</div></div>
-    </button>
-    ${!collapsed ? (keyNotSet
-      ? `<div class="tiny" style="color:var(--ink-soft);padding:10px 0;">Map isn't set up yet.</div>`
-      : `<div id="clientMapDiv" style="width:100%;height:360px;margin-top:8px;border-radius:8px;overflow:hidden;"></div>`) : ''}
+  overlay.innerHTML = `
+  <div class="modal-card" style="max-width:90vw;width:90vw;height:88vh;display:flex;flex-direction:column;">
+    <div class="modal-head"><div class="modal-title">🗺️ ${escapeHtml(c?c.name:'Map')}</div><button class="modal-close" data-action="closeClientMap">✕</button></div>
+    <div class="modal-body" style="padding:0;flex:1;display:flex;flex-direction:column;min-height:0;">
+      ${(!c || keyNotSet) ? `
+        <div class="empty-state" style="padding:40px;"><div class="big">Map isn't set up yet.</div></div>
+      ` : `<div id="clientMapDiv" style="width:100%;flex:1;min-height:0;"></div>`}
+    </div>
   </div>`;
-}
-function renderClientMapIfOpen(l, c){
-  if(l.id!=='clients' || state.clientMapCollapsed !== false) return;
-  const keyNotSet = !GOOGLE_MAPS_JS_KEY || GOOGLE_MAPS_JS_KEY==='PASTE_YOUR_GOOGLE_MAPS_JS_KEY_HERE';
-  if(keyNotSet) return;
+  document.getElementById('app').appendChild(overlay);
+  overlay.querySelectorAll('[data-action="closeClientMap"]').forEach(b=>b.onclick=()=>{ state.clientMapModal=null; render(); });
+  if(!c || keyNotSet) return;
+
   loadGoogleMapsScript(async ()=>{
     const mapDiv = document.getElementById('clientMapDiv');
-    if(!mapDiv) return; // page navigated away before the script loaded
-    const map = new google.maps.Map(mapDiv, { center: {lat:33.4484, lng:-112.0740}, zoom: 9 });
+    if(!mapDiv) return; // modal already closed by the time the script loaded
+    const map = new google.maps.Map(mapDiv, {
+      center: {lat:33.4484, lng:-112.0740}, zoom: 9,
+      mapTypeId: google.maps.MapTypeId.SATELLITE
+    });
     const infoWindow = new google.maps.InfoWindow();
     const bounds = new google.maps.LatLngBounds();
     const items = (c.deals||[]).filter(d=>d.stage!=='dead').map(d=>({
@@ -6215,6 +6219,7 @@ function renderClientMapIfOpen(l, c){
         google.maps.event.addListenerOnce(infoWindow, 'domready', ()=>{
           const btn = document.querySelector('[data-openclientmappin="1"]');
           if(btn) btn.onclick = ()=>{
+            state.clientMapModal = null;
             state.modalStack.push({kind:'deal', listId:item.listId, clientId:item.clientId, dealId:item.dealId});
             render();
           };
@@ -7439,6 +7444,7 @@ function renderTopModalCard(){
         <div class="modal-title-row">${brandLogoImg(brandName)}<div class="modal-title" style="flex:none;">${escapeHtml(titleText)}</div>${frame.kind==='client' && clientCanEdit ? `<button data-action="renameClient" data-listid="${frame.listId}" data-client="${frame.clientId}" title="Rename this ${frame.listId==='listings'?'listing':'client'}" style="background:none;border:none;color:rgba(255,255,255,.75);font-size:15px;margin-left:8px;cursor:pointer;padding:4px;">✏️</button>` : ''}${frame.kind==='deal' && dealCanEdit ? `<button data-action="renameDeal" data-listid="${frame.listId}" data-client="${frame.clientId}" data-deal="${frame.dealId}" title="Rename this deal" style="background:none;border:none;color:rgba(255,255,255,.75);font-size:15px;margin-left:8px;cursor:pointer;padding:4px;">✏️</button>` : ''}${frame.kind==='entry' && entryCanEdit ? `<button data-action="renameEntry" data-listid="${frame.listId}" data-entry="${frame.entryId}" title="Rename this entry" style="background:none;border:none;color:rgba(255,255,255,.75);font-size:15px;margin-left:8px;cursor:pointer;padding:4px;">✏️</button>` : ''}</div>
       </div>
       ${frame.kind==='deal' && dealCanEdit ? `<button class="btn sm" data-action="saveAndCloseDeal" style="background:#fff;color:var(--edge);">Save &amp; Close</button>` : ''}
+      ${frame.kind==='client' && l.id==='clients' ? `<button class="btn sm" data-action="openClientMap" style="background:#fff;color:var(--edge);">🗺️ Map</button>` : ''}
       <button class="modal-close" data-action="closeModal" style="${(frame.kind==='client' || frame.kind==='entry') ? 'width:auto;height:auto;padding:8px 14px;white-space:nowrap;font-size:13px;' : ''}">${(frame.kind==='client' || frame.kind==='entry') ? '✓ Save & Close' : '✕ Done'}</button>
     </div>
     <div class="modal-body">${bodyHtml}</div>
@@ -7546,7 +7552,6 @@ function renderClientModalBody(l,c,viewMode,pendingDel){
   ` : ''}
   ${showProspecting ? renderLSRInline(c, state.leasingReportMode || viewMode) : ''}
   ${l.id==='listings' ? renderSignCallsSection(l, c) : ''}
-  ${renderClientMapSection(l, c)}
   ${showDeals ? accessHtml : ''}
   ${l.id==='listings' ? renderElaCard(c, canEdit) : ''}
   <div class="contact-card" style="margin-top:20px;">
@@ -9150,18 +9155,13 @@ function attachModalHandlers(root){
     state.signCallsCollapsed = state.signCallsCollapsed===false ? true : false;
     renderPreservingScroll('.modal-body');
   };
-  const toggleClientMap = root.querySelector('[data-action="toggleClientMap"]'); if(toggleClientMap) toggleClientMap.onclick=()=>{
-    state.clientMapCollapsed = state.clientMapCollapsed===false ? true : false;
-    renderPreservingScroll('.modal-body');
-  };
-  if(state.clientMapCollapsed===false){
+  const openClientMapBtn = root.querySelector('[data-action="openClientMap"]'); if(openClientMapBtn) openClientMapBtn.onclick=()=>{
     const topFrame = state.modalStack[state.modalStack.length-1];
     if(topFrame && topFrame.kind==='client'){
-      const l = db.lists.find(x=>x.id===topFrame.listId);
-      const c = l && l.clients.find(x=>x.id===topFrame.clientId);
-      if(l && c) renderClientMapIfOpen(l, c);
+      state.clientMapModal = {listId:topFrame.listId, clientId:topFrame.clientId};
+      render();
     }
-  }
+  };
   const newSC = root.querySelector('[data-action="newSignCall"]'); if(newSC) newSC.onclick=()=>{
     state.signCallModal = {isNew:true, signCall: {id:null, listingId:newSC.dataset.listing, name:'', phone:'', notes:'', contactId:null}};
     render();
@@ -11328,6 +11328,7 @@ document.addEventListener('keydown', (ev)=>{
   if(state.loiImport){ state.loiImport=null; render(); return; }
   if(state.voiceNoteAmbiguous){ state.voiceNoteAmbiguous=null; flashToast('Cancelled — nothing was saved.'); render(); return; }
   if(state.signCallModal){ state.signCallModal=null; render(); return; }
+  if(state.clientMapModal){ state.clientMapModal=null; render(); return; }
   if(state.brokerReviewLog){ state.brokerReviewLog=null; render(); return; }
   if(state.contactImportReview){
     if(confirm('Stop reviewing? Nothing has been imported yet, and progress in this session will be lost.')){ state.contactImportReview=null; render(); }
