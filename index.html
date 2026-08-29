@@ -569,6 +569,7 @@ let state = {
   signCallModal:null,           // {isNew, signCall} — Sign Call add/edit modal
   signCallsCollapsed:true,      // Sign Calls section on a Listing page — closed by default
   clientMapModal:null,          // {listId, clientId} — opens the per-Client map as a popup
+  geocodeIssuesOpen:false,      // Geocoding Issues report modal
   navContextMenu:null,          // {kind:'smart'|'list', id} — which ellipsis menu is open
   showAllSmartLists:false,      // collapse toggle once there are more than 10 smart lists
   notifSettingsOpen:false,      // whether the notification-preferences modal is open
@@ -2669,6 +2670,7 @@ function render(){
   if(state.pipelineView) renderPipelineModal();
   if(state.loiImport) renderLoiImportModal();
   if(state.clientMapModal) renderClientMapModal();
+  if(state.geocodeIssuesOpen) renderGeocodeIssuesModal();
   if(state.voiceNoteAmbiguous) renderVoiceNoteAmbiguousModal();
   if(state.signCallModal) renderSignCallModal();
   if(state.notifSettingsOpen) renderNotifSettingsModal();
@@ -5074,6 +5076,7 @@ function renderAdminMenu(){
     ${isAdmin ? `<div class="admin-item" data-action="adminReset">🔑 Reset a Password</div>` : ''}
     ${isDBRole ? `<div class="admin-item" data-action="openBrokerReviewLog">📋 Broker Review Log</div>` : ''}
     <div class="admin-item" data-action="openPipelineView">📈 Pipeline View</div>
+    <div class="admin-item" data-action="openGeocodeIssues">📍 Geocoding Issues</div>
     ${isMichael && !state.isMobile ? `<div class="admin-item" data-action="openLoiImport">✨ Import LOI (AI)</div>` : ''}
   </div>`;
 }
@@ -5385,7 +5388,7 @@ function attachShellHandlers(){
     flashToast(`${name} added to ${l.name}.`);
     render();
   });
-  ['adminPending','adminFullTeam','adminImportTodos','adminImportTaskFire','adminImportMaps','adminDigest','adminUsers','adminTimes','adminReset','openBrokerReviewLog','openPipelineView','openLoiImport'].forEach(a=>{
+  ['adminPending','adminFullTeam','adminImportTodos','adminImportTaskFire','adminImportMaps','adminDigest','adminUsers','adminTimes','adminReset','openBrokerReviewLog','openPipelineView','openLoiImport','openGeocodeIssues'].forEach(a=>{
     document.querySelectorAll(`[data-action="${a}"]`).forEach(e=>{ e.onclick=()=>{ state.showAdminMenu=false; handleAdminAction(a); }; });
   });
 }
@@ -5706,6 +5709,10 @@ async function handleAdminAction(a){
   }
   if(a==='openLoiImport'){
     state.loiImport = {step:'drop', dropSide:null, file:null, fileName:null, extracted:null, matchedClient:null, matchedDeal:null, isNewDeal:false, error:null, loading:false};
+    render();
+  }
+  if(a==='openGeocodeIssues'){
+    state.geocodeIssuesOpen = true;
     render();
   }
   if(a==='adminPendingDeletions'){ state.pendingDeletionsOpen=true; }
@@ -6168,6 +6175,39 @@ function loadGoogleMapsScript(callback){
   script.onload = callback;
   document.head.appendChild(script);
 }
+function renderGeocodeIssuesModal(){
+  const overlay = document.createElement('div');
+  overlay.className='modal-overlay'; overlay.style.zIndex=212;
+  const issues = [];
+  db.lists.filter(l=>l.id==='clients').forEach(l=>{
+    l.clients.forEach(c=>{
+      (c.deals||[]).forEach(d=>{
+        if(d.stage==='dead') return;
+        if(d.geocodeFailed) issues.push({listId:l.id, clientId:c.id, clientName:c.name, dealId:d.id, dealName:d.name});
+      });
+    });
+  });
+  overlay.innerHTML = `
+  <div class="modal-card" style="max-width:600px;">
+    <div class="modal-head"><div class="modal-title">📍 Geocoding Issues</div><button class="modal-close" data-action="closeGeocodeIssues">✕</button></div>
+    <div class="modal-body">
+      <p class="tiny" style="color:var(--ink-soft);margin-bottom:14px;">These deals couldn't be placed on the map automatically — usually the intersection isn't specific enough for Google to confidently recognize. Open one to drag a pin into place yourself.</p>
+      ${issues.length ? issues.map(i=>`
+        <div class="row-card" data-fixgeocode="${i.clientId}" data-listid="${i.listId}" style="cursor:pointer;margin-bottom:6px;">
+          <div class="row-body"><div class="row-title">${escapeHtml(i.clientName)} — ${escapeHtml(i.dealName)}</div></div>
+        </div>`).join('') : `<div class="empty-state"><div class="big">No issues right now.</div></div>`}
+    </div>
+  </div>`;
+  document.getElementById('app').appendChild(overlay);
+  overlay.querySelectorAll('[data-action="closeGeocodeIssues"]').forEach(b=>b.onclick=()=>{ state.geocodeIssuesOpen=false; render(); });
+  overlay.querySelectorAll('[data-fixgeocode]').forEach(el=>el.onclick=()=>{
+    const clientId = el.dataset.fixgeocode, listId = el.dataset.listid;
+    state.geocodeIssuesOpen = false;
+    state.modalStack = [{kind:'client', listId, clientId, viewMode:'all'}];
+    state.clientMapModal = {listId, clientId};
+    render();
+  });
+}
 function renderClientMapModal(){
   const m = state.clientMapModal;
   const l = db.lists.find(x=>x.id===m.listId);
@@ -6181,7 +6221,17 @@ function renderClientMapModal(){
     <div class="modal-body" style="padding:0;flex:1;display:flex;flex-direction:column;min-height:0;">
       ${(!c || keyNotSet) ? `
         <div class="empty-state" style="padding:40px;"><div class="big">Map isn't set up yet.</div></div>
-      ` : `<div id="clientMapDiv" style="width:100%;flex:1;min-height:0;"></div>`}
+      ` : `<div style="position:relative;flex:1;min-height:0;">
+          <div id="clientMapDiv" style="width:100%;height:100%;"></div>
+          <div style="position:absolute;top:12px;left:12px;background:rgba(255,255,255,0.95);border-radius:8px;padding:10px 14px;box-shadow:0 2px 8px rgba(0,0,0,0.2);font-size:12.5px;z-index:1;">
+            <div style="font-weight:700;margin-bottom:6px;">Stage</div>
+            ${LSR_STAGES.filter(s=>s.id!=='dead').map(s=>`
+              <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;">
+                <div style="width:11px;height:11px;border-radius:50%;background:${s.color};flex:none;"></div>
+                <div>${escapeHtml(s.name)}</div>
+              </div>`).join('')}
+          </div>
+        </div>`}
     </div>
   </div>`;
   document.getElementById('app').appendChild(overlay);
@@ -11341,6 +11391,7 @@ document.addEventListener('keydown', (ev)=>{
   if(state.voiceNoteAmbiguous){ state.voiceNoteAmbiguous=null; flashToast('Cancelled — nothing was saved.'); render(); return; }
   if(state.signCallModal){ state.signCallModal=null; render(); return; }
   if(state.clientMapModal){ state.clientMapModal=null; render(); return; }
+  if(state.geocodeIssuesOpen){ state.geocodeIssuesOpen=false; render(); return; }
   if(state.brokerReviewLog){ state.brokerReviewLog=null; render(); return; }
   if(state.contactImportReview){
     if(confirm('Stop reviewing? Nothing has been imported yet, and progress in this session will be lost.')){ state.contactImportReview=null; render(); }
