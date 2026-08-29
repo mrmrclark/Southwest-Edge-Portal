@@ -6208,13 +6208,24 @@ function renderClientMapModal(){
       const color = stageInfo ? stageInfo.color : '#888';
       const position = {lat:item.rec.latitude, lng:item.rec.longitude};
       const marker = new google.maps.Marker({
-        position, map, title: item.label,
+        position, map, title: item.label, draggable: true,
         icon: { path: google.maps.SymbolPath.CIRCLE, fillColor: color, fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2, scale: 9 }
       });
       bounds.extend(position);
       map.fitBounds(bounds);
+      marker.addListener('dragend', safeHandler(async ()=>{
+        const newPos = marker.getPosition();
+        item.rec.latitude = newPos.lat();
+        item.rec.longitude = newPos.lng();
+        // A manual correction is authoritative — never let automatic geocoding overwrite
+        // this again, since the location is already exactly right on purpose.
+        item.rec.geocodeFailed = false;
+        if(item.kind==='deal') await supaUpdateDeal(item.rec, item.clientId);
+        else await supaUpdateProspect(item.rec, item.clientId);
+        flashToast(`${item.label} — location updated.`);
+      }));
       marker.addListener('click', ()=>{
-        infoWindow.setContent(`<div style="font-size:13px;"><b>${escapeHtml(item.label)}</b><br>${escapeHtml(stageInfo?stageInfo.name:item.stage)}<br><button data-openclientmappin="1" style="margin-top:6px;padding:4px 10px;border:none;background:var(--edge);color:#fff;border-radius:6px;cursor:pointer;">Open</button></div>`);
+        infoWindow.setContent(`<div style="font-size:13px;"><b>${escapeHtml(item.label)}</b><br>${escapeHtml(stageInfo?stageInfo.name:item.stage)}<br><span style="color:var(--ink-soft);">Drag the pin to correct its position.</span><br><button data-openclientmappin="1" style="margin-top:6px;padding:4px 10px;border:none;background:var(--edge);color:#fff;border-radius:6px;cursor:pointer;">Open</button></div>`);
         infoWindow.open(map, marker);
         google.maps.event.addListenerOnce(infoWindow, 'domready', ()=>{
           const btn = document.querySelector('[data-openclientmappin="1"]');
