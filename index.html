@@ -568,6 +568,7 @@ let state = {
   pipelineView:null,            // {viewUserId} — 'office' or a specific user id
   signCallModal:null,           // {isNew, signCall} — Sign Call add/edit modal
   signCallsCollapsed:true,      // Sign Calls section on a Listing page — closed by default
+  clientMapCollapsed:true,      // Map section on a Client page — closed by default
   navContextMenu:null,          // {kind:'smart'|'list', id} — which ellipsis menu is open
   showAllSmartLists:false,      // collapse toggle once there are more than 10 smart lists
   notifSettingsOpen:false,      // whether the notification-preferences modal is open
@@ -2667,7 +2668,6 @@ function render(){
   if(state.brokerReviewLog) renderBrokerReviewLogModal();
   if(state.pipelineView) renderPipelineModal();
   if(state.loiImport) renderLoiImportModal();
-  if(state.mapView) renderMapView();
   if(state.voiceNoteAmbiguous) renderVoiceNoteAmbiguousModal();
   if(state.signCallModal) renderSignCallModal();
   if(state.notifSettingsOpen) renderNotifSettingsModal();
@@ -5073,7 +5073,6 @@ function renderAdminMenu(){
     ${isAdmin ? `<div class="admin-item" data-action="adminReset">🔑 Reset a Password</div>` : ''}
     ${isDBRole ? `<div class="admin-item" data-action="openBrokerReviewLog">📋 Broker Review Log</div>` : ''}
     <div class="admin-item" data-action="openPipelineView">📈 Pipeline View</div>
-    <div class="admin-item" data-action="openMapView">🗺️ Map View</div>
     ${isMichael && !state.isMobile ? `<div class="admin-item" data-action="openLoiImport">✨ Import LOI (AI)</div>` : ''}
   </div>`;
 }
@@ -5385,7 +5384,7 @@ function attachShellHandlers(){
     flashToast(`${name} added to ${l.name}.`);
     render();
   });
-  ['adminPending','adminFullTeam','adminImportTodos','adminImportTaskFire','adminImportMaps','adminDigest','adminUsers','adminTimes','adminReset','openBrokerReviewLog','openPipelineView','openLoiImport','openMapView'].forEach(a=>{
+  ['adminPending','adminFullTeam','adminImportTodos','adminImportTaskFire','adminImportMaps','adminDigest','adminUsers','adminTimes','adminReset','openBrokerReviewLog','openPipelineView','openLoiImport'].forEach(a=>{
     document.querySelectorAll(`[data-action="${a}"]`).forEach(e=>{ e.onclick=()=>{ state.showAdminMenu=false; handleAdminAction(a); }; });
   });
 }
@@ -5706,10 +5705,6 @@ async function handleAdminAction(a){
   }
   if(a==='openLoiImport'){
     state.loiImport = {step:'drop', dropSide:null, file:null, fileName:null, extracted:null, matchedClient:null, matchedDeal:null, isNewDeal:false, error:null, loading:false};
-    render();
-  }
-  if(a==='openMapView'){
-    state.mapView = {loaded:false};
     render();
   }
   if(a==='adminPendingDeletions'){ state.pendingDeletionsOpen=true; }
@@ -6122,21 +6117,18 @@ function stripCornerSuffix(text){
   if(!text) return text;
   return text.replace(/-\s*(SEC|NEC|SWC|NWC)\s*$/i, '').trim();
 }
-function collectGeocodableRecords(){
-  const records = [];
-  db.lists.filter(l=>l.type==='deep').forEach(l=>{
-    l.clients.forEach(c=>{
-      (c.deals||[]).forEach(d=>{
-        if(d.stage==='dead') return; // no value, no point plotting
-        records.push({kind:'deal', listId:l.id, clientId:c.id, dealId:d.id, rec:d, addressText: stripCornerSuffix(d.building), label: `${c.name} — ${d.name}`, stage:d.stage});
-      });
-      (c.prospects||[]).forEach(p=>{
-        if(p.stage==='dead') return;
-        records.push({kind:'prospect', listId:l.id, clientId:c.id, prospectId:p.id, rec:p, addressText: stripCornerSuffix(p.building) || stripCornerSuffix(c.name), label: `${c.name} — ${p.tenantName}`, stage:p.stage});
-      });
-    });
-  });
-  return records;
+// Deal/prospect names carry the real address info (e.g. "AZ1650 - Camelback & 20th - SSWC"),
+// not the mostly-empty "building" field — strip the leading store code, any corner
+// designation (wherever it falls, including doubled forms like SSWC/NNEC), and trailing
+// parenthetical notes, but keep everything else (a trailing city name genuinely helps).
+function extractAddressFromName(name){
+  if(!name) return '';
+  let s = name;
+  s = s.replace(/^[A-Za-z]{2}\d{2,6}\s*-\s*/, ''); // leading store code like "AZ1650 - "
+  s = s.replace(/\b(N{1,2}|S{1,2})(E|W)C\b/gi, ''); // corner designation anywhere
+  s = s.replace(/\([^)]*\)/g, ''); // trailing parenthetical notes
+  s = s.replace(/-\s*-/g, '-').replace(/\s{2,}/g, ' ').replace(/^\s*-\s*|\s*-\s*$/g, '').trim();
+  return s;
 }
 async function geocodeOneRecord(item){
   if(!item.addressText || !item.addressText.trim()) return;
@@ -6175,76 +6167,63 @@ function loadGoogleMapsScript(callback){
   script.onload = callback;
   document.head.appendChild(script);
 }
-function renderMapView(){
-  const m = state.mapView;
-  const overlay = document.createElement('div');
-  overlay.className='modal-overlay'; overlay.style.zIndex=210;
+// Only Clients get this — Listings, Hit List, and Hot List don't need it.
+function renderClientMapSection(l, c){
+  if(l.id!=='clients') return '';
+  const collapsed = state.clientMapCollapsed !== false; // closed by default
   const keyNotSet = !GOOGLE_MAPS_JS_KEY || GOOGLE_MAPS_JS_KEY==='PASTE_YOUR_GOOGLE_MAPS_JS_KEY_HERE';
-  overlay.innerHTML = `
-  <div class="modal-card" style="max-width:960px;">
-    <div class="modal-head"><div class="modal-title">🗺️ Map View</div><button class="modal-close" data-action="closeMapView">✕</button></div>
-    <div class="modal-body" style="padding:0;">
-      ${keyNotSet ? `
-        <div class="empty-state" style="padding:40px;"><div class="big">Map isn't set up yet.</div>
-        <div class="tiny">Waiting on a Google Maps API key to be added.</div></div>
-      ` : `<div id="portalMapDiv" style="width:100%;height:600px;"></div>
-        <div class="tiny" style="padding:10px 14px;color:var(--ink-soft);">Only active, non-Dead deals with a workable address show up here. New ones appear the first time this view geocodes them.</div>`}
-    </div>
+  return `
+  <div style="margin-top:18px;">
+    <button type="button" class="row-card" data-action="toggleClientMap" style="cursor:pointer;width:100%;text-align:left;background:#fff;">
+      <div class="nav-icon" style="font-size:14px;">${collapsed?'▸':'▾'}</div>
+      <div class="row-body"><div class="row-title" style="font-size:13px;">🗺️ Map</div></div>
+    </button>
+    ${!collapsed ? (keyNotSet
+      ? `<div class="tiny" style="color:var(--ink-soft);padding:10px 0;">Map isn't set up yet.</div>`
+      : `<div id="clientMapDiv" style="width:100%;height:360px;margin-top:8px;border-radius:8px;overflow:hidden;"></div>`) : ''}
   </div>`;
-  document.getElementById('app').appendChild(overlay);
-  overlay.querySelectorAll('[data-action="closeMapView"]').forEach(b=>b.onclick=()=>{ state.mapView=null; render(); });
-
+}
+function renderClientMapIfOpen(l, c){
+  if(l.id!=='clients' || state.clientMapCollapsed !== false) return;
+  const keyNotSet = !GOOGLE_MAPS_JS_KEY || GOOGLE_MAPS_JS_KEY==='PASTE_YOUR_GOOGLE_MAPS_JS_KEY_HERE';
   if(keyNotSet) return;
-
   loadGoogleMapsScript(async ()=>{
-    const mapDiv = document.getElementById('portalMapDiv');
-    if(!mapDiv) return; // modal already closed by the time the script loaded
-    const map = new google.maps.Map(mapDiv, {
-      center: {lat:33.4484, lng:-112.0740}, // Phoenix
-      zoom: 9,
-    });
+    const mapDiv = document.getElementById('clientMapDiv');
+    if(!mapDiv) return; // page navigated away before the script loaded
+    const map = new google.maps.Map(mapDiv, { center: {lat:33.4484, lng:-112.0740}, zoom: 9 });
     const infoWindow = new google.maps.InfoWindow();
-    const allRecords = collectGeocodableRecords();
+    const bounds = new google.maps.LatLngBounds();
+    const items = (c.deals||[]).filter(d=>d.stage!=='dead').map(d=>({
+      kind:'deal', listId:l.id, clientId:c.id, dealId:d.id, rec:d,
+      addressText: stripCornerSuffix(d.building) || extractAddressFromName(d.name),
+      label: d.name, stage: d.stage
+    }));
 
     const plotPin = (item)=>{
       const stageInfo = LSR_STAGE_MAP[item.stage];
       const color = stageInfo ? stageInfo.color : '#888';
+      const position = {lat:item.rec.latitude, lng:item.rec.longitude};
       const marker = new google.maps.Marker({
-        position: {lat:item.rec.latitude, lng:item.rec.longitude},
-        map,
-        title: item.label,
+        position, map, title: item.label,
         icon: { path: google.maps.SymbolPath.CIRCLE, fillColor: color, fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2, scale: 9 }
       });
+      bounds.extend(position);
+      map.fitBounds(bounds);
       marker.addListener('click', ()=>{
-        infoWindow.setContent(`<div style="font-size:13px;"><b>${escapeHtml(item.label)}</b><br>${escapeHtml(stageInfo?stageInfo.name:item.stage)}<br><button data-openmappin="1" style="margin-top:6px;padding:4px 10px;border:none;background:var(--edge);color:#fff;border-radius:6px;cursor:pointer;">Open</button></div>`);
+        infoWindow.setContent(`<div style="font-size:13px;"><b>${escapeHtml(item.label)}</b><br>${escapeHtml(stageInfo?stageInfo.name:item.stage)}<br><button data-openclientmappin="1" style="margin-top:6px;padding:4px 10px;border:none;background:var(--edge);color:#fff;border-radius:6px;cursor:pointer;">Open</button></div>`);
         infoWindow.open(map, marker);
         google.maps.event.addListenerOnce(infoWindow, 'domready', ()=>{
-          const btn = document.querySelector('[data-openmappin="1"]');
+          const btn = document.querySelector('[data-openclientmappin="1"]');
           if(btn) btn.onclick = ()=>{
-            state.mapView = null;
-            if(item.kind==='deal'){
-              state.modalStack = [
-                {kind:'client', listId:item.listId, clientId:item.clientId, viewMode:'all'},
-                {kind:'deal', listId:item.listId, clientId:item.clientId, dealId:item.dealId}
-              ];
-            } else {
-              state.modalStack = [
-                {kind:'client', listId:'listings', clientId:item.clientId, viewMode:'all'},
-                {kind:'lsrProspect', clientId:item.clientId, prospectId:item.prospectId}
-              ];
-            }
+            state.modalStack.push({kind:'deal', listId:item.listId, clientId:item.clientId, dealId:item.dealId});
             render();
           };
         });
       });
     };
 
-    // Plot everything already geocoded immediately.
-    allRecords.filter(r=>r.rec.latitude && r.rec.longitude).forEach(plotPin);
-
-    // Geocode a modest batch of anything new, one at a time, plotting each as it resolves —
-    // keeps this from hammering the API all at once and lets pins appear progressively.
-    const toGeocode = allRecords.filter(r=>!r.rec.latitude && !r.rec.geocodeFailed).slice(0, 25);
+    items.filter(r=>r.rec.latitude && r.rec.longitude).forEach(plotPin);
+    const toGeocode = items.filter(r=>!r.rec.latitude && !r.rec.geocodeFailed);
     for(const item of toGeocode){
       await geocodeOneRecord(item);
       if(item.rec.latitude && item.rec.longitude) plotPin(item);
@@ -7567,6 +7546,7 @@ function renderClientModalBody(l,c,viewMode,pendingDel){
   ` : ''}
   ${showProspecting ? renderLSRInline(c, state.leasingReportMode || viewMode) : ''}
   ${l.id==='listings' ? renderSignCallsSection(l, c) : ''}
+  ${renderClientMapSection(l, c)}
   ${showDeals ? accessHtml : ''}
   ${l.id==='listings' ? renderElaCard(c, canEdit) : ''}
   <div class="contact-card" style="margin-top:20px;">
@@ -9170,6 +9150,18 @@ function attachModalHandlers(root){
     state.signCallsCollapsed = state.signCallsCollapsed===false ? true : false;
     renderPreservingScroll('.modal-body');
   };
+  const toggleClientMap = root.querySelector('[data-action="toggleClientMap"]'); if(toggleClientMap) toggleClientMap.onclick=()=>{
+    state.clientMapCollapsed = state.clientMapCollapsed===false ? true : false;
+    renderPreservingScroll('.modal-body');
+  };
+  if(state.clientMapCollapsed===false){
+    const topFrame = state.modalStack[state.modalStack.length-1];
+    if(topFrame && topFrame.kind==='client'){
+      const l = db.lists.find(x=>x.id===topFrame.listId);
+      const c = l && l.clients.find(x=>x.id===topFrame.clientId);
+      if(l && c) renderClientMapIfOpen(l, c);
+    }
+  }
   const newSC = root.querySelector('[data-action="newSignCall"]'); if(newSC) newSC.onclick=()=>{
     state.signCallModal = {isNew:true, signCall: {id:null, listingId:newSC.dataset.listing, name:'', phone:'', notes:'', contactId:null}};
     render();
@@ -11336,7 +11328,6 @@ document.addEventListener('keydown', (ev)=>{
   if(state.loiImport){ state.loiImport=null; render(); return; }
   if(state.voiceNoteAmbiguous){ state.voiceNoteAmbiguous=null; flashToast('Cancelled — nothing was saved.'); render(); return; }
   if(state.signCallModal){ state.signCallModal=null; render(); return; }
-  if(state.mapView){ state.mapView=null; render(); return; }
   if(state.brokerReviewLog){ state.brokerReviewLog=null; render(); return; }
   if(state.contactImportReview){
     if(confirm('Stop reviewing? Nothing has been imported yet, and progress in this session will be lost.')){ state.contactImportReview=null; render(); }
