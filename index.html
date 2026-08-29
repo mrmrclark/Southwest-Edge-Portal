@@ -6127,7 +6127,7 @@ function extractAddressFromName(name){
   let s = name;
   s = s.replace(/^[A-Za-z]{2}\d{2,6}\s*-\s*/, ''); // leading store code like "AZ1650 - "
   s = s.replace(/\b(N{1,2}|S{1,2})(E|W)C\b/gi, ''); // corner designation anywhere
-  s = s.replace(/\([^)]*\)/g, ''); // trailing parenthetical notes
+  s = s.replace(/\(([^)]*)\)/g, ', $1'); // keep parenthetical content — often a disambiguating city name
   s = s.replace(/-\s*-/g, '-').replace(/\s{2,}/g, ' ').replace(/^\s*-\s*|\s*-\s*$/g, '').trim();
   return s;
 }
