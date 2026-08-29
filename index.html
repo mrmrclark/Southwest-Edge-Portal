@@ -6252,10 +6252,10 @@ function renderClientMapModal(){
     if(!mapDiv) return; // modal already closed by the time the script loaded
     const map = new google.maps.Map(mapDiv, {
       center: {lat:33.4484, lng:-112.0740}, zoom: 9,
-      mapTypeId: google.maps.MapTypeId.SATELLITE
+      mapTypeId: google.maps.MapTypeId.SATELLITE,
+      styles: [{ featureType: 'poi', stylers: [{ visibility: 'off' }] }]
     });
     const infoWindow = new google.maps.InfoWindow();
-    const bounds = new google.maps.LatLngBounds();
     const items = (c.deals||[]).filter(d=>d.stage!=='dead').map(d=>({
       kind:'deal', listId:l.id, clientId:c.id, dealId:d.id, rec:d,
       addressText: stripCornerSuffix(d.building) || extractAddressFromName(d.name),
@@ -6270,8 +6270,6 @@ function renderClientMapModal(){
         position, map, title: item.label, draggable: true,
         icon: { path: google.maps.SymbolPath.CIRCLE, fillColor: color, fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2, scale: 9 }
       });
-      bounds.extend(position);
-      map.fitBounds(bounds);
       marker.addListener('dragend', safeHandler(async ()=>{
         const newPos = marker.getPosition();
         item.rec.latitude = newPos.lat();
@@ -7515,7 +7513,7 @@ function renderTopModalCard(){
         <div class="modal-title-row">${brandLogoImg(brandName)}<div class="modal-title" style="flex:none;">${escapeHtml(titleText)}</div>${frame.kind==='client' && clientCanEdit ? `<button data-action="renameClient" data-listid="${frame.listId}" data-client="${frame.clientId}" title="Rename this ${frame.listId==='listings'?'listing':'client'}" style="background:none;border:none;color:rgba(255,255,255,.75);font-size:15px;margin-left:8px;cursor:pointer;padding:4px;">✏️</button>` : ''}${frame.kind==='deal' && dealCanEdit ? `<button data-action="renameDeal" data-listid="${frame.listId}" data-client="${frame.clientId}" data-deal="${frame.dealId}" title="Rename this deal" style="background:none;border:none;color:rgba(255,255,255,.75);font-size:15px;margin-left:8px;cursor:pointer;padding:4px;">✏️</button>` : ''}${frame.kind==='entry' && entryCanEdit ? `<button data-action="renameEntry" data-listid="${frame.listId}" data-entry="${frame.entryId}" title="Rename this entry" style="background:none;border:none;color:rgba(255,255,255,.75);font-size:15px;margin-left:8px;cursor:pointer;padding:4px;">✏️</button>` : ''}</div>
       </div>
       ${frame.kind==='deal' && dealCanEdit ? `<button class="btn sm" data-action="saveAndCloseDeal" style="background:#fff;color:var(--edge);">Save &amp; Close</button>` : ''}
-      ${frame.kind==='client' && clientListId==='clients' ? `<button class="btn sm" data-action="openClientMap" style="background:#fff;color:var(--edge);">🗺️ Map</button>` : ''}
+      ${frame.kind==='client' && clientListId==='clients' ? `<button data-action="openClientMap" style="background:#fff;color:var(--edge);width:auto;height:auto;padding:8px 14px;white-space:nowrap;font-size:13px;border:none;border-radius:8px;cursor:pointer;">🗺️ Map</button>` : ''}
       <button class="modal-close" data-action="closeModal" style="${(frame.kind==='client' || frame.kind==='entry') ? 'width:auto;height:auto;padding:8px 14px;white-space:nowrap;font-size:13px;' : ''}">${(frame.kind==='client' || frame.kind==='entry') ? '✓ Save & Close' : '✕ Done'}</button>
     </div>
     <div class="modal-body">${bodyHtml}</div>
