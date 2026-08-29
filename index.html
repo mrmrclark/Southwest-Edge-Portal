@@ -1711,6 +1711,12 @@ const LSR_STAGES = [
   {id:'dead', name:'Dead', track:'both', color:'#8A7D6E'},
 ];
 const LSR_STAGE_MAP = {}; LSR_STAGES.forEach(s=>LSR_STAGE_MAP[s.id]=s);
+// The map needs every stage visually distinct (LSR_STAGES intentionally pairs lease/sale
+// equivalents to the same color elsewhere, e.g. LOI and Signed LOI are both green there).
+const MAP_STAGE_COLORS = {
+  loi:'#00A65A', signedLOI:'#0B7A9C', negotiating:'#E0469A', inEscrow:'#8A3FCF',
+  signedLease:'#E8951E', closedEscrow:'#C0392B', prospect:'#8A8378'
+};
 function lsrDealIsActive(p){
   // Closed Escrow means the sale already fully closed — never "active" from that point on.
   if(p.stage==='closedEscrow') return false;
@@ -6215,6 +6221,9 @@ function renderClientMapModal(){
   const overlay = document.createElement('div');
   overlay.className='modal-overlay'; overlay.style.zIndex=211;
   const keyNotSet = !GOOGLE_MAPS_JS_KEY || GOOGLE_MAPS_JS_KEY==='PASTE_YOUR_GOOGLE_MAPS_JS_KEY_HERE';
+  const dealsForCount = c ? (c.deals||[]).filter(d=>d.stage!=='dead') : [];
+  const stageCounts = {};
+  dealsForCount.forEach(d=>{ stageCounts[d.stage] = (stageCounts[d.stage]||0) + 1; });
   overlay.innerHTML = `
   <div class="modal-card" style="max-width:90vw;width:90vw;height:88vh;display:flex;flex-direction:column;">
     <div class="modal-head"><div class="modal-title">🗺️ ${escapeHtml(c?c.name:'Map')}</div><button class="modal-close" data-action="closeClientMap">✕</button></div>
@@ -6225,10 +6234,10 @@ function renderClientMapModal(){
           <div id="clientMapDiv" style="width:100%;height:100%;"></div>
           <div style="position:absolute;top:12px;left:12px;background:rgba(255,255,255,0.95);border-radius:8px;padding:10px 14px;box-shadow:0 2px 8px rgba(0,0,0,0.2);font-size:12.5px;z-index:1;">
             <div style="font-weight:700;margin-bottom:6px;">Stage</div>
-            ${LSR_STAGES.filter(s=>s.id!=='dead').map(s=>`
+            ${LSR_STAGES.filter(s=>s.id!=='dead' && MAP_STAGE_COLORS[s.id]).map(s=>`
               <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;">
-                <div style="width:11px;height:11px;border-radius:50%;background:${s.color};flex:none;"></div>
-                <div>${escapeHtml(s.name)}</div>
+                <div style="width:11px;height:11px;border-radius:50%;background:${MAP_STAGE_COLORS[s.id]};flex:none;"></div>
+                <div>${escapeHtml(s.name)} <span style="color:var(--ink-soft);">(${stageCounts[s.id]||0})</span></div>
               </div>`).join('')}
           </div>
         </div>`}
@@ -6255,7 +6264,7 @@ function renderClientMapModal(){
 
     const plotPin = (item)=>{
       const stageInfo = LSR_STAGE_MAP[item.stage];
-      const color = stageInfo ? stageInfo.color : '#888';
+      const color = MAP_STAGE_COLORS[item.stage] || '#888';
       const position = {lat:item.rec.latitude, lng:item.rec.longitude};
       const marker = new google.maps.Marker({
         position, map, title: item.label, draggable: true,
