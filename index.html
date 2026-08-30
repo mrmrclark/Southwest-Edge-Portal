@@ -569,6 +569,7 @@ let state = {
   signCallModal:null,           // {isNew, signCall} — Sign Call add/edit modal
   signCallsCollapsed:true,      // Sign Calls section on a Listing page — closed by default
   clientMapModal:null,          // {listId, clientId} — opens the per-Client map as a popup
+  reopenMapAfterDealClose:null, // {listId, clientId} — set when a deal was opened from a map pin
   geocodeIssuesOpen:false,      // Geocoding Issues report modal
   notFoundListOpen:false,       // expands the "Not Found" list in a Client's map legend
   placingDealId:null,           // when set, the next map click drops a manual pin for this deal
@@ -6230,7 +6231,7 @@ function renderGeocodeIssuesModal(){
   });
 }
 function renderMapLegendHtml(c){
-  const activeDeals = c ? (c.deals||[]).filter(d=>d.stage!=='dead') : [];
+  const activeDeals = c ? (c.deals||[]).filter(d=>d.stage!=='dead' && !(d.commission1Paid && d.commission2Paid)) : [];
   const plottedDeals = activeDeals.filter(d=>d.latitude && d.longitude);
   const notFoundDeals = activeDeals.filter(d=>!(d.latitude && d.longitude));
   const stageCounts = {};
@@ -6280,6 +6281,51 @@ function refreshMapLegendOnly(){
   legendEl.innerHTML = renderMapLegendHtml(c);
   wireMapLegendHandlers(legendEl);
 }
+function renderMapSideListHtml(c){
+  const activeDeals = c ? (c.deals||[]).filter(d=>d.stage!=='dead' && !(d.commission1Paid && d.commission2Paid)) : [];
+  const byStage = {};
+  activeDeals.forEach(d=>{ (byStage[d.stage] = byStage[d.stage]||[]).push(d); });
+  const contactName = (id)=>{
+    if(!id) return null;
+    const contact = db.contacts.find(x=>x.id===id);
+    return contact ? `${contact.first||''} ${contact.last||''}`.trim() : null;
+  };
+  return LSR_STAGES.filter(s=>s.id!=='dead' && byStage[s.id] && byStage[s.id].length).map(s=>`
+    <div style="margin-bottom:16px;">
+      <div style="display:flex;align-items:center;gap:6px;font-weight:700;font-size:12.5px;margin-bottom:6px;">
+        <div style="width:10px;height:10px;border-radius:50%;background:${MAP_STAGE_COLORS[s.id]};flex:none;"></div>
+        ${escapeHtml(s.name)}
+      </div>
+      ${byStage[s.id].map(d=>{
+        const broker = contactName(d.brokerContactId);
+        const contact = contactName(d.contactId);
+        const outsideContact = [broker, contact].filter(Boolean).join(' / ') || '—';
+        return `
+        <div data-sidelistdeal="${d.id}" style="cursor:pointer;padding:8px 10px;border-radius:8px;margin-bottom:6px;background:var(--canvas);">
+          <div style="font-size:13px;font-weight:600;">${escapeHtml(d.name)}</div>
+          <div style="font-size:11.5px;color:var(--ink-soft);margin-top:2px;">${escapeHtml(outsideContact)}</div>
+          <div style="font-size:11.5px;margin-top:2px;color:${d.caExecuted?'var(--good)':'var(--ink-soft)'};">${d.caExecuted?'✓ CA Executed':'CA Not Executed'}</div>
+        </div>`;
+      }).join('')}
+    </div>`).join('') || `<div class="tiny" style="color:var(--ink-soft);padding:10px;">No active deals.</div>`;
+}
+function exportMapAsKml(c){
+  const activeDeals = (c.deals||[]).filter(d=>d.latitude && d.longitude);
+  const placemarks = activeDeals.map(d=>{
+    const stageInfo = LSR_STAGE_MAP[d.stage];
+    return `<Placemark><name>${escapeXml(d.name)}</name><description>${escapeXml(stageInfo?stageInfo.name:d.stage)}</description><Point><coordinates>${d.longitude},${d.latitude},0</coordinates></Point></Placemark>`;
+  }).join('');
+  const kml = `<?xml version="1.0" encoding="UTF-8"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${escapeXml(c.name)}</name>${placemarks}</Document></kml>`;
+  const blob = new Blob([kml], {type:'application/vnd.google-earth.kml+xml'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `${c.name.replace(/[^a-zA-Z0-9]/g,'_')}_map.kml`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+function escapeXml(str){
+  return String(str==null?'':str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&apos;');
+}
 function renderClientMapModal(){
   const m = state.clientMapModal;
   const l = db.lists.find(x=>x.id===m.listId);
@@ -6288,14 +6334,22 @@ function renderClientMapModal(){
   overlay.className='modal-overlay'; overlay.style.zIndex=211;
   const keyNotSet = !GOOGLE_MAPS_JS_KEY || GOOGLE_MAPS_JS_KEY==='PASTE_YOUR_GOOGLE_MAPS_JS_KEY_HERE';
   overlay.innerHTML = `
-  <div class="modal-card" style="max-width:90vw;width:90vw;height:88vh;display:flex;flex-direction:column;">
-    <div class="modal-head"><div class="modal-title">🗺️ ${escapeHtml(c?c.name:'Map')}</div><button class="modal-close" data-action="closeClientMap">✕</button></div>
-    <div class="modal-body" style="padding:0;flex:1;display:flex;flex-direction:column;min-height:0;">
+  <div class="modal-card" style="max-width:96vw;width:96vw;height:92vh;display:flex;flex-direction:column;">
+    <div class="modal-head no-print">
+      <div class="modal-title">🗺️ ${escapeHtml(c?c.name:'Map')}</div>
+      ${c && !keyNotSet ? `
+        <button class="btn secondary sm" data-action="printClientMap" style="margin-left:auto;">🖨️ Print</button>
+        <button class="btn secondary sm" data-action="exportClientMapKml">⬇️ Export KML</button>
+      ` : ''}
+      <button class="modal-close" data-action="closeClientMap">✕</button>
+    </div>
+    <div class="modal-body" style="padding:0;flex:1;display:flex;min-height:0;">
       ${(!c || keyNotSet) ? `
         <div class="empty-state" style="padding:40px;"><div class="big">Map isn't set up yet.</div></div>
-      ` : `<div style="position:relative;flex:1;min-height:0;">
+      ` : `<div id="mapSideList" style="width:280px;flex:none;overflow-y:auto;padding:12px;border-right:1px solid var(--line);">${renderMapSideListHtml(c)}</div>
+        <div style="position:relative;flex:1;min-height:0;">
           <div id="clientMapDiv" style="width:100%;height:100%;"></div>
-          <div id="mapLegendPanel" style="position:absolute;top:12px;left:12px;background:rgba(255,255,255,0.95);border-radius:8px;padding:10px 14px;box-shadow:0 2px 8px rgba(0,0,0,0.2);font-size:12.5px;z-index:1;max-width:230px;max-height:calc(100% - 24px);overflow-y:auto;">${renderMapLegendHtml(c)}</div>
+          <div id="mapLegendPanel" class="no-print" style="position:absolute;top:12px;left:12px;background:rgba(255,255,255,0.95);border-radius:8px;padding:10px 14px;box-shadow:0 2px 8px rgba(0,0,0,0.2);font-size:12.5px;z-index:1;max-width:230px;max-height:calc(100% - 24px);overflow-y:auto;">${renderMapLegendHtml(c)}</div>
         </div>`}
     </div>
   </div>`;
@@ -6303,6 +6357,8 @@ function renderClientMapModal(){
   overlay.querySelectorAll('[data-action="closeClientMap"]').forEach(b=>b.onclick=()=>{ state.clientMapModal=null; state.notFoundListOpen=false; state.placingDealId=null; render(); });
   const legendEl = overlay.querySelector('#mapLegendPanel');
   if(legendEl) wireMapLegendHandlers(legendEl);
+  const printBtn = overlay.querySelector('[data-action="printClientMap"]'); if(printBtn) printBtn.onclick=()=>window.print();
+  const exportBtn = overlay.querySelector('[data-action="exportClientMapKml"]'); if(exportBtn) exportBtn.onclick=()=>exportMapAsKml(c);
   if(!c || keyNotSet) return;
 
   loadGoogleMapsScript(async ()=>{
@@ -6324,7 +6380,7 @@ function renderClientMapModal(){
       saveMapTypePreference(map.getMapTypeId());
     });
     const infoWindow = new google.maps.InfoWindow();
-    const items = (c.deals||[]).filter(d=>d.stage!=='dead').map(d=>({
+    const items = (c.deals||[]).filter(d=>d.stage!=='dead' && !(d.commission1Paid && d.commission2Paid)).map(d=>({
       kind:'deal', listId:l.id, clientId:c.id, dealId:d.id, rec:d,
       addressText: stripCornerSuffix(d.building) || extractAddressFromName(d.name),
       label: d.name, stage: d.stage
@@ -6343,6 +6399,7 @@ function renderClientMapModal(){
       flashToast(`${item.label} — pin placed.`);
     }));
 
+    const markersByDealId = {};
     const plotPin = (item)=>{
       const stageInfo = LSR_STAGE_MAP[item.stage];
       const color = MAP_STAGE_COLORS[item.stage] || '#888';
@@ -6351,6 +6408,7 @@ function renderClientMapModal(){
         position, map, title: item.label, draggable: true,
         icon: { path: google.maps.SymbolPath.CIRCLE, fillColor: color, fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2, scale: 9 }
       });
+      markersByDealId[item.dealId] = marker;
       marker.addListener('dragend', safeHandler(async ()=>{
         const newPos = marker.getPosition();
         item.rec.latitude = newPos.lat();
@@ -6370,6 +6428,7 @@ function renderClientMapModal(){
           const btn = document.querySelector('[data-openclientmappin="1"]');
           if(btn) btn.onclick = ()=>{
             state.clientMapModal = null;
+            state.reopenMapAfterDealClose = {listId: item.listId, clientId: item.clientId};
             state.modalStack.push({kind:'deal', listId:item.listId, clientId:item.clientId, dealId:item.dealId});
             render();
           };
@@ -6383,6 +6442,13 @@ function renderClientMapModal(){
       await geocodeOneRecord(item);
       if(item.rec.latitude && item.rec.longitude){ plotPin(item); refreshMapLegendOnly(); }
     }
+    document.querySelectorAll('[data-sidelistdeal]').forEach(el=>el.onclick=()=>{
+      const marker = markersByDealId[el.dataset.sidelistdeal];
+      if(!marker) return;
+      map.panTo(marker.getPosition());
+      map.setZoom(15);
+      google.maps.event.trigger(marker, 'click');
+    });
   });
 }
 function renderPipelineModal(){
@@ -7484,13 +7550,23 @@ function closeModalStack(){
       db.archivedClients.push(c);
     }
   }
-  state.modalStack=[]; render();
+  state.modalStack=[]; state.reopenMapAfterDealClose=null; render();
 }
-function popModalTo(index){ state.modalStack = state.modalStack.slice(0, index+1); render(); }
+function popModalTo(index){ state.modalStack = state.modalStack.slice(0, index+1); state.reopenMapAfterDealClose=null; render(); }
 // Shared by the ✕ button and the Escape key — always steps back exactly ONE level of
 // the Client/Deal/Prospect/Entry hierarchy (never collapses the whole stack), and if
 // that level has real fields that only save on an explicit button click (Deal Terms,
 // Prospect edit), asks first so a Yes/No mis-click or a stray Escape can't be silently lost.
+// If this deal was opened by clicking a pin on its Client's map, closing it should return
+// to that map rather than just the plain Client page underneath — otherwise you lose your
+// place and have to reopen the map and wait for it to re-plot everything again.
+function maybeReopenMapAfterDealClose(closingFrame){
+  const pending = state.reopenMapAfterDealClose;
+  if(pending && closingFrame.kind==='deal' && closingFrame.listId===pending.listId && closingFrame.clientId===pending.clientId){
+    state.clientMapModal = {listId: pending.listId, clientId: pending.clientId};
+  }
+  state.reopenMapAfterDealClose = null;
+}
 function closeTopModalFrame(){
   if(state.modalStack.length > 1){
     const closingFrame = state.modalStack[state.modalStack.length-1];
@@ -7501,6 +7577,7 @@ function closeTopModalFrame(){
       }
     }
     state.modalStack.pop();
+    maybeReopenMapAfterDealClose(closingFrame);
     render();
     if(typeof closingFrame.parentScrollTop==='number'){
       requestAnimationFrame(()=>{
@@ -7595,8 +7672,8 @@ function renderTopModalCard(){
         <div class="modal-title-row">${brandLogoImg(brandName)}<div class="modal-title" style="flex:none;">${escapeHtml(titleText)}</div>${frame.kind==='client' && clientCanEdit ? `<button data-action="renameClient" data-listid="${frame.listId}" data-client="${frame.clientId}" title="Rename this ${frame.listId==='listings'?'listing':'client'}" style="background:none;border:none;color:rgba(255,255,255,.75);font-size:15px;margin-left:8px;cursor:pointer;padding:4px;">✏️</button>` : ''}${frame.kind==='deal' && dealCanEdit ? `<button data-action="renameDeal" data-listid="${frame.listId}" data-client="${frame.clientId}" data-deal="${frame.dealId}" title="Rename this deal" style="background:none;border:none;color:rgba(255,255,255,.75);font-size:15px;margin-left:8px;cursor:pointer;padding:4px;">✏️</button>` : ''}${frame.kind==='entry' && entryCanEdit ? `<button data-action="renameEntry" data-listid="${frame.listId}" data-entry="${frame.entryId}" title="Rename this entry" style="background:none;border:none;color:rgba(255,255,255,.75);font-size:15px;margin-left:8px;cursor:pointer;padding:4px;">✏️</button>` : ''}</div>
       </div>
       ${frame.kind==='deal' && dealCanEdit ? `<button class="btn sm" data-action="saveAndCloseDeal" style="background:#fff;color:var(--edge);">Save &amp; Close</button>` : ''}
-      ${frame.kind==='client' && clientListId==='clients' ? `<button data-action="openClientMap" style="background:#fff;color:var(--edge);width:auto;height:auto;padding:8px 14px;white-space:nowrap;font-size:13px;border:none;border-radius:8px;cursor:pointer;">🗺️ Map</button>` : ''}
-      <button class="modal-close" data-action="closeModal" style="${(frame.kind==='client' || frame.kind==='entry') ? 'width:auto;height:auto;padding:8px 14px;white-space:nowrap;font-size:13px;' : ''}">${(frame.kind==='client' || frame.kind==='entry') ? '✓ Save & Close' : '✕ Done'}</button>
+      ${frame.kind==='client' && clientListId==='clients' ? `<button data-action="openClientMap" style="background:#fff;color:var(--edge);width:auto;min-width:130px;height:auto;padding:8px 14px;white-space:nowrap;font-size:13px;border:none;border-radius:8px;cursor:pointer;">🗺️ Map</button>` : ''}
+      <button class="modal-close" data-action="closeModal" style="${(frame.kind==='client' || frame.kind==='entry') ? 'width:auto;min-width:130px;height:auto;padding:8px 14px;white-space:nowrap;font-size:13px;' : ''}">${(frame.kind==='client' || frame.kind==='entry') ? '✓ Save & Close' : '✕ Done'}</button>
     </div>
     <div class="modal-body">${bodyHtml}</div>
   </div>`;
@@ -8989,6 +9066,7 @@ function attachModalHandlers(root){
     if(!l || !c || !d){ flashToast("Couldn't find this deal to save — it may have been moved or deleted."); render(); return; }
     saveDealTermsFromForm(l, c, d);
     state.modalStack.pop();
+    maybeReopenMapAfterDealClose(frame);
     render();
     if(typeof frame.parentScrollTop==='number'){
       requestAnimationFrame(()=>{
