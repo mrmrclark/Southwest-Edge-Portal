@@ -123,7 +123,8 @@
     body *{visibility:hidden;}
     #lsrPrintArea, #lsrPrintArea *{visibility:visible;}
     #mapPrintOverlay, #mapPrintOverlay *{visibility:visible;}
-    #mapPrintOverlay{position:fixed;inset:0;}
+    body:has(#mapPrintOverlay) #app{ display:none !important; }
+    #mapPrintOverlay{ position:static !important; }
     .no-print{display:none !important;}
     .print-only{display:block !important;}
     /* Release every ancestor's scroll/height/overflow clipping so the report can
