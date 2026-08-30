@@ -125,6 +125,8 @@
     #mapPrintOverlay, #mapPrintOverlay *{visibility:visible;}
     body:has(#mapPrintOverlay) #app{ display:none !important; }
     #mapPrintOverlay{ position:static !important; }
+    #mapPrintOverlay h2{ font-size:16px !important; margin:0 0 6px 0 !important; }
+    #mapPrintOverlay img{ max-width:100% !important; max-height:7in !important; width:auto !important; height:auto !important; }
     .no-print{display:none !important;}
     .print-only{display:block !important;}
     /* Release every ancestor's scroll/height/overflow clipping so the report can
