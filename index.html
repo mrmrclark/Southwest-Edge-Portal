@@ -570,6 +570,7 @@ let state = {
   signCallsCollapsed:true,      // Sign Calls section on a Listing page — closed by default
   clientMapModal:null,          // {listId, clientId} — opens the per-Client map as a popup
   reopenMapAfterDealClose:null, // {listId, clientId} — set when a deal was opened from a map pin
+  mapSideListCollapsed:false,   // the deal-list panel next to the map, toggleable like Supabase's sidebar
   geocodeIssuesOpen:false,      // Geocoding Issues report modal
   notFoundListOpen:false,       // expands the "Not Found" list in a Client's map legend
   placingDealId:null,           // when set, the next map click drops a manual pin for this deal
@@ -6346,7 +6347,10 @@ function renderClientMapModal(){
     <div class="modal-body" style="padding:0;flex:1;display:flex;min-height:0;">
       ${(!c || keyNotSet) ? `
         <div class="empty-state" style="padding:40px;"><div class="big">Map isn't set up yet.</div></div>
-      ` : `<div id="mapSideList" style="width:280px;flex:none;overflow-y:auto;padding:12px;border-right:1px solid var(--line);">${renderMapSideListHtml(c)}</div>
+      ` : `<div id="mapSideListWrapper" style="display:flex;flex:none;position:relative;${state.mapSideListCollapsed?'width:0;':'width:280px;'}transition:width .15s ease;overflow:hidden;">
+          <div id="mapSideList" style="width:280px;flex:none;overflow-y:auto;padding:12px;border-right:1px solid var(--line);">${renderMapSideListHtml(c)}</div>
+        </div>
+        <button type="button" id="mapSideListToggle" class="no-print" title="${state.mapSideListCollapsed?'Show list':'Hide list'}" style="flex:none;width:18px;border:none;border-right:1px solid var(--line);background:var(--canvas);cursor:pointer;color:var(--ink-soft);">${state.mapSideListCollapsed?'▶':'◀'}</button>
         <div style="position:relative;flex:1;min-height:0;">
           <div id="clientMapDiv" style="width:100%;height:100%;"></div>
           <div id="mapLegendPanel" class="no-print" style="position:absolute;top:12px;left:12px;background:rgba(255,255,255,0.95);border-radius:8px;padding:10px 14px;box-shadow:0 2px 8px rgba(0,0,0,0.2);font-size:12.5px;z-index:1;max-width:230px;max-height:calc(100% - 24px);overflow-y:auto;">${renderMapLegendHtml(c)}</div>
@@ -6354,11 +6358,26 @@ function renderClientMapModal(){
     </div>
   </div>`;
   document.getElementById('app').appendChild(overlay);
-  overlay.querySelectorAll('[data-action="closeClientMap"]').forEach(b=>b.onclick=()=>{ state.clientMapModal=null; state.notFoundListOpen=false; state.placingDealId=null; render(); });
+  overlay.querySelectorAll('[data-action="closeClientMap"]').forEach(b=>b.onclick=()=>{ state.clientMapModal=null; state.notFoundListOpen=false; state.placingDealId=null; state._activeClientMap=null; render(); });
   const legendEl = overlay.querySelector('#mapLegendPanel');
   if(legendEl) wireMapLegendHandlers(legendEl);
   const printBtn = overlay.querySelector('[data-action="printClientMap"]'); if(printBtn) printBtn.onclick=()=>window.print();
   const exportBtn = overlay.querySelector('[data-action="exportClientMapKml"]'); if(exportBtn) exportBtn.onclick=()=>exportMapAsKml(c);
+  const sideListToggle = overlay.querySelector('#mapSideListToggle'); if(sideListToggle) sideListToggle.onclick=()=>{
+    state.mapSideListCollapsed = !state.mapSideListCollapsed;
+    const wrapper = document.getElementById('mapSideListWrapper');
+    if(wrapper) wrapper.style.width = state.mapSideListCollapsed ? '0' : '280px';
+    sideListToggle.textContent = state.mapSideListCollapsed ? '▶' : '◀';
+    sideListToggle.title = state.mapSideListCollapsed ? 'Show list' : 'Hide list';
+    // The map has no way to know its container just resized — tell it directly, and
+    // re-set the center afterward since a resize alone can otherwise leave it looking
+    // like it drifted off from wherever it was actually pointed.
+    if(state._activeClientMap){
+      const currentCenter = state._activeClientMap.getCenter();
+      google.maps.event.trigger(state._activeClientMap, 'resize');
+      state._activeClientMap.setCenter(currentCenter);
+    }
+  };
   if(!c || keyNotSet) return;
 
   loadGoogleMapsScript(async ()=>{
@@ -6374,6 +6393,7 @@ function renderClientMapModal(){
       // match that familiar behavior and avoid losing streets/highways/cities by accident.
       mapTypeControlOptions: { mapTypeIds: [google.maps.MapTypeId.ROADMAP, google.maps.MapTypeId.HYBRID] }
     });
+    state._activeClientMap = map;
     // Google's own Map/Satellite toggle already lets each person pick their view live —
     // this just remembers whichever one they choose as their default for next time.
     map.addListener('maptypeid_changed', ()=>{
