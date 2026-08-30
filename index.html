@@ -6327,23 +6327,31 @@ function exportMapAsKml(c){
 function escapeXml(str){
   return String(str==null?'':str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&apos;');
 }
-function buildStaticMapUrl(deals, mapType){
+function buildStaticMapUrl(deals, mapType, center, zoom){
   const byColor = {};
   deals.forEach(d=>{
     const color = (MAP_STAGE_COLORS[d.stage] || '#888888').replace('#','0x');
     (byColor[color] = byColor[color]||[]).push(`${d.latitude},${d.longitude}`);
   });
   const markerParams = Object.keys(byColor).map(color=>
-    `markers=${encodeURIComponent('color:'+color)}%7C${byColor[color].join('%7C')}`
+    `markers=${encodeURIComponent('size:tiny|color:'+color)}%7C${byColor[color].join('%7C')}`
   ).join('&');
   const staticMapType = mapType==='roadmap' ? 'roadmap' : 'hybrid';
-  return `https://maps.googleapis.com/maps/api/staticmap?size=1280x720&scale=2&maptype=${staticMapType}&${markerParams}&key=${GOOGLE_MAPS_JS_KEY}`;
+  // Match whatever the person is actually looking at right now — never auto-fit to every
+  // pin, since a zoomed-in view of one intersection should print that same close-up view,
+  // not zoom out to fit every other pin on the map too.
+  const viewParams = `center=${center.lat},${center.lng}&zoom=${zoom}`;
+  return `https://maps.googleapis.com/maps/api/staticmap?size=1280x720&scale=2&maptype=${staticMapType}&${viewParams}&${markerParams}&key=${GOOGLE_MAPS_JS_KEY}`;
 }
 function printClientMap(c){
   const geocodedDeals = (c.deals||[]).filter(d=>d.stage!=='dead' && !(d.commission1Paid && d.commission2Paid) && d.latitude && d.longitude);
   if(!geocodedDeals.length){ flashToast('Nothing to print yet — no deals have a pin on the map.'); return; }
   const mapType = state.currentUser.mapTypePreference || 'hybrid';
-  const imgUrl = buildStaticMapUrl(geocodedDeals, mapType);
+  if(!state._activeClientMap){ flashToast("Couldn't read the current map view — please try again."); return; }
+  const liveCenter = state._activeClientMap.getCenter();
+  const center = {lat: liveCenter.lat(), lng: liveCenter.lng()};
+  const zoom = state._activeClientMap.getZoom();
+  const imgUrl = buildStaticMapUrl(geocodedDeals, mapType, center, zoom);
   const printWindow = window.open('', '_blank');
   if(!printWindow){ flashToast('Your browser blocked the print window — please allow pop-ups for this site and try again.'); return; }
   printWindow.document.write(`<html><head><title>${escapeHtml(c.name)} — Map</title></head>
