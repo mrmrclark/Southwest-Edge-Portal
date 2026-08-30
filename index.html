@@ -137,7 +137,7 @@
       height:auto !important; width:auto !important; box-shadow:none !important; background:none !important;
     }
     #lsrPrintArea{position:static;width:100%;}
-    @page{size:landscape;margin:12mm;}
+    @page{size:11in 8.5in;margin:0.4in;}
   }
 
   /* ---------- CALENDAR VIEW ---------- */
@@ -529,7 +529,7 @@ let state = {
   currentUser:null,
   isMobile: window.innerWidth <= 820,
   mobileScreen:'nav',           // 'nav' | 'main' — which pane shows on a phone-width screen
-  mainView:{type:'smart', id:'todayMe'},   // what's showing in the main content pane
+  mainView:{type:'dashboard'},   // what's showing in the main content pane
   modalStack:[],                // drill-down stack: {kind:'client'|'deal'|'flatEntry', ...}
   todoView:'mine',              // 'mine' | 'team' (for smart-list todo panes)
   expandedTeamUser:null,
@@ -576,6 +576,7 @@ let state = {
   clientMapModal:null,          // {listId, clientId} — opens the per-Client map as a popup
   reopenMapAfterDealClose:null, // {listId, clientId} — set when a deal was opened from a map pin
   mapSideListCollapsed:false,   // the deal-list panel next to the map, toggleable like Supabase's sidebar
+  dashboardViewUserId:null,     // whose data the Dashboard shows — 'office' or a specific user id
   geocodeIssuesOpen:false,      // Geocoding Issues report modal
   notFoundListOpen:false,       // expands the "Not Found" list in a Client's map legend
   placingDealId:null,           // when set, the next map click drops a manual pin for this deal
@@ -638,6 +639,17 @@ let pendingUsers = []; // {id, name, email, requestedAt} — awaiting admin appr
 // commission on deals they started) without ever having a login, showing up in any
 // "assign a to-do" picker, or appearing anywhere else in the app besides this list.
 let commissionOnlyPeople = [];
+let commissionPlans = []; // [{id, name, tiers:[{minAmount, maxAmount, splitPct, sortOrder}]}]
+async function fetchCommissionPlans(){
+  const { data: plans, error: plansErr } = await supabaseClient.from('commission_plans').select('*').order('name');
+  if(plansErr){ console.error('fetchCommissionPlans error:', plansErr); return; }
+  const { data: tiers, error: tiersErr } = await supabaseClient.from('commission_plan_tiers').select('*').order('sort_order');
+  if(tiersErr){ console.error('fetchCommissionPlanTiers error:', tiersErr); return; }
+  commissionPlans = (plans||[]).map(p=>({
+    id:p.id, name:p.name,
+    tiers: (tiers||[]).filter(t=>t.plan_id===p.id).map(t=>({minAmount:t.min_amount, maxAmount:t.max_amount, splitPct:t.split_pct, sortOrder:t.sort_order}))
+  }));
+}
 async function fetchCommissionOnlyPeople(){
   const { data, error } = await supabaseClient.from('commission_only_people').select('*').order('name');
   if(error){ console.error('fetchCommissionOnlyPeople error:', error); return; }
@@ -754,6 +766,8 @@ async function fetchAllProfilesIntoUsers(){
     u.wantsAssignmentEmails = p.notif_assignment_emails !== false; // default true if column is null/undefined
     u.wantsAssignerEmails = p.notif_assigner_emails !== false; // default true if column is null/undefined
     u.mapTypePreference = p.map_type_preference || 'hybrid';
+    u.commissionPlanId = p.commission_plan_id || null;
+    u.dashboardTier = p.dashboard_tier || 'standard';
   });
 }
 
@@ -884,7 +898,8 @@ function clientRowToLocal(r){
           elaStartDate: r.ela_start_date ? new Date(r.ela_start_date+'T00:00:00') : null,
           elaEndDate: r.ela_end_date ? new Date(r.ela_end_date+'T00:00:00') : null,
           archivedAt: r.archived_at ? new Date(r.archived_at) : null,
-          latitude: r.latitude||null, longitude: r.longitude||null, geocodeFailed: !!r.geocode_failed};
+          latitude: r.latitude||null, longitude: r.longitude||null, geocodeFailed: !!r.geocode_failed,
+          listingExpirationDate: r.listing_expiration_date||null};
 }
 function clientLocalToRow(c, listId){
   return {id:c.id, list_id:listId, name:c.name, primary_contact_id:c.primary||null, created_by: localUserIdToAuthId(c.createdBy),
@@ -892,7 +907,8 @@ function clientLocalToRow(c, listId){
           ela_start_date: c.elaStartDate ? toLocalDateStr(c.elaStartDate) : null,
           ela_end_date: c.elaEndDate ? toLocalDateStr(c.elaEndDate) : null,
           archived_at: c.archivedAt ? c.archivedAt.toISOString() : null,
-          latitude: c.latitude||null, longitude: c.longitude||null, geocode_failed: !!c.geocodeFailed};
+          latitude: c.latitude||null, longitude: c.longitude||null, geocode_failed: !!c.geocodeFailed,
+          listing_expiration_date: c.listingExpirationDate||null};
 }
 function dealRowToLocal(r){
   return {id:r.id, name:r.name, complete:r.complete, activeDeal:r.active_deal, caExecuted:r.ca_executed,
@@ -903,7 +919,9 @@ function dealRowToLocal(r){
           rent:r.rent||'', price:r.price||'', term:r.term||'', tiAllowance:r.ti_allowance||'',
           totalFee:r.total_fee||'', splits:r.splits||[], commissionStructure:r.commission_structure||'',
           commission1Paid:r.commission1_paid, commission2Paid:r.commission2_paid, notes:r.notes||'', egnyteLink:r.egnyte_link||'',
-          latitude: r.latitude||null, longitude: r.longitude||null, geocodeFailed: !!r.geocode_failed};
+          latitude: r.latitude||null, longitude: r.longitude||null, geocodeFailed: !!r.geocode_failed,
+          commission1DueDate: r.commission1_due_date||null, commission2DueDate: r.commission2_due_date||null,
+          coeDueDate: r.coe_due_date||null, caExpirationDate: r.ca_expiration_date||null};
 }
 function dealLocalToRow(d, clientId){
   return {id:d.id, client_id:clientId, name:d.name, complete:!!d.complete, active_deal:!!d.activeDeal,
@@ -914,7 +932,9 @@ function dealLocalToRow(d, clientId){
           rent:d.rent||null, price:d.price||null, term:d.term||null, ti_allowance:d.tiAllowance||null,
           total_fee:d.totalFee||null, splits:d.splits||[], commission_structure:d.commissionStructure||null,
           commission1_paid:!!d.commission1Paid, commission2_paid:!!d.commission2Paid, notes:d.notes||null, egnyte_link:d.egnyteLink||null,
-          latitude: d.latitude||null, longitude: d.longitude||null, geocode_failed: !!d.geocodeFailed};
+          latitude: d.latitude||null, longitude: d.longitude||null, geocode_failed: !!d.geocodeFailed,
+          commission1_due_date: d.commission1DueDate||null, commission2_due_date: d.commission2DueDate||null,
+          coe_due_date: d.coeDueDate||null, ca_expiration_date: d.caExpirationDate||null};
 }
 async function fetchListsClientsDealsFromSupabase(){
   const { data:lists, error:e1 } = await supabaseClient.from('lists').select('*');
@@ -1436,6 +1456,7 @@ async function fetchAllAppDataFromSupabase(){
   await fetchBrokerReviewsFromSupabase();
   await fetchDealOffersFromSupabase();
   await fetchSignCallsFromSupabase();
+  await fetchCommissionPlans();
   await fetchCommissionOnlyPeople();
 }
 async function fetchCompanySettingsFromSupabase(){
@@ -3365,11 +3386,13 @@ function renderTopbar(){
     title='Archived'; eyebrow='Clients & Listings';
   } else if(state.mainView.type==='projects'){
     title='Projects'; eyebrow='List';
+  } else if(state.mainView.type==='dashboard'){
+    title='Dashboard'; eyebrow=state.currentUser.name;
   }
   const teamCapableIds = ['week','month'];
   const showTodoToggle = state.mainView.type==='smart' && teamCapableIds.includes(state.mainView.id);
   const showBack = state.isMobile && state.mobileScreen==='main';
-  const showListSearch = state.mainView.type!=='contacts';
+  const showListSearch = state.mainView.type!=='contacts' && state.mainView.type!=='dashboard';
   return `
   <div class="topbar">
     ${state.isMobile ? `<button class="icon-btn" data-action="mobileRefresh" title="Refresh">↻</button>` : ''}
@@ -3928,6 +3951,56 @@ const PIPELINE_STAGE_WA = {
 // "Still owed" already accounts for a clean 50/50 first/second half: once a half is
 // marked paid, only the remaining half's dollars count, and the deal drops out of the
 // pipeline entirely once both halves are paid.
+// Broker Gross = actual collected commission dollars this person has earned this calendar
+// year (their split % applied to whichever half/COE has actually been marked paid) — never
+// includes open pipeline, per Michael's explicit call. Broker Net = that amount run through
+// their assigned commission plan's current tier split.
+function computeBrokerGrossForUser(userId, year){
+  let gross = 0;
+  db.lists.filter(l=>l.type==='deep').forEach(l=>{
+    l.clients.forEach(c=>{
+      (c.deals||[]).forEach(d=>{
+        const totalFee = parseFloat(d.totalFee) || 0;
+        if(totalFee<=0) return;
+        const mySplit = (d.splits||[]).find(s=>s.userId===userId);
+        if(!mySplit) return;
+        const pct = (parseFloat(mySplit.pct)||0)/100;
+        const isSale = d.dealType==='sale';
+        if(isSale){
+          if(d.commission1Paid && d.coeDueDate && new Date(d.coeDueDate).getFullYear()===year){
+            gross += totalFee * pct;
+          }
+        } else {
+          if(d.commission1Paid && d.commission1DueDate && new Date(d.commission1DueDate).getFullYear()===year){
+            gross += (totalFee/2) * pct;
+          }
+          if(d.commission2Paid && d.commission2DueDate && new Date(d.commission2DueDate).getFullYear()===year){
+            gross += (totalFee/2) * pct;
+          }
+        }
+      });
+    });
+  });
+  return gross;
+}
+function findCommissionTierForAmount(plan, grossAmount){
+  if(!plan || !plan.tiers || !plan.tiers.length) return null;
+  const sorted = plan.tiers.slice().sort((a,b)=>a.sortOrder-b.sortOrder);
+  let tier = sorted[0];
+  for(const t of sorted){
+    if(grossAmount >= t.minAmount) tier = t;
+  }
+  return tier;
+}
+function computeCommissionSummaryForUser(userId, year){
+  const gross = computeBrokerGrossForUser(userId, year);
+  const user = USERS.find(u=>u.id===userId);
+  const plan = user && user.commissionPlanId ? commissionPlans.find(p=>p.id===user.commissionPlanId) : null;
+  const tier = findCommissionTierForAmount(plan, gross);
+  const net = tier ? gross * (tier.splitPct/100) : 0;
+  const nextTier = plan && tier ? plan.tiers.slice().sort((a,b)=>a.sortOrder-b.sortOrder).find(t=>t.sortOrder===tier.sortOrder+1) : null;
+  return { gross, net, plan, tier, nextTier, year };
+}
 function pipelineRows(){
   const rows = [];
   db.lists.filter(l=>l.type==='deep').forEach(l=>{
@@ -4654,6 +4727,7 @@ function renderContactsScreen(){
   return toggle + (sub==='brokers' ? renderBrokerListMain() : renderContactsMain());
 }
 function renderMainContent(){
+  if(state.mainView.type==='dashboard') return renderDashboardMain();
   if(state.mainView.type==='contacts') return renderContactsScreen();
   if(state.mainView.type==='archived-clients') return renderArchivedClientsMain();
   if(state.mainView.type==='projects') return renderProjectsListMain();
@@ -5098,6 +5172,7 @@ function renderAdminMenu(){
     ${isAdmin ? `<div class="admin-item" data-action="adminTimes">⏱️ Email Send Times</div>` : ''}
     ${isAdmin ? `<div class="admin-item" data-action="adminReset">🔑 Reset a Password</div>` : ''}
     ${isDBRole ? `<div class="admin-item" data-action="openBrokerReviewLog">📋 Broker Review Log</div>` : ''}
+    <div class="admin-item" data-action="goToDashboard">🏠 Dashboard</div>
     <div class="admin-item" data-action="openPipelineView">📈 Pipeline View</div>
     <div class="admin-item" data-action="openGeocodeIssues">📍 Geocoding Issues</div>
     ${isMichael && !state.isMobile ? `<div class="admin-item" data-action="openLoiImport">✨ Import LOI (AI)</div>` : ''}
@@ -5383,6 +5458,10 @@ function attachShellHandlers(){
   document.querySelectorAll('[data-action="connectOutlook"]').forEach(outlookBtn=>outlookBtn.onclick=()=>{
     alert("Real Outlook Calendar sync needs a Microsoft-registered app (one-time setup by whoever admins your Microsoft 365) plus your portal's real, final web address — that can't be wired up from a plain preview URL. Once you're on a stable Netlify domain, this is genuinely buildable with no backend server required. For now nothing is synced yet.");
   });
+  const dashboardSelect = document.getElementById('dashboardViewSelect'); if(dashboardSelect) dashboardSelect.onchange=()=>{
+    state.dashboardViewUserId = dashboardSelect.value;
+    renderPreservingScroll('.content');
+  };
   const addClientBtn=document.querySelector('[data-action="addClient"]'); if(addClientBtn) addClientBtn.onclick=safeHandler(async ()=>{
     const l = db.lists.find(x=>x.id===addClientBtn.dataset.listid);
     const name = prompt(`Name this ${l.id==='listings'?'listing':'client'}:`);
@@ -5411,7 +5490,7 @@ function attachShellHandlers(){
     flashToast(`${name} added to ${l.name}.`);
     render();
   });
-  ['adminPending','adminFullTeam','adminImportTodos','adminImportTaskFire','adminImportMaps','adminDigest','adminUsers','adminTimes','adminReset','openBrokerReviewLog','openPipelineView','openLoiImport','openGeocodeIssues'].forEach(a=>{
+  ['adminPending','adminFullTeam','adminImportTodos','adminImportTaskFire','adminImportMaps','adminDigest','adminUsers','adminTimes','adminReset','openBrokerReviewLog','openPipelineView','openLoiImport','openGeocodeIssues','goToDashboard'].forEach(a=>{
     document.querySelectorAll(`[data-action="${a}"]`).forEach(e=>{ e.onclick=()=>{ state.showAdminMenu=false; handleAdminAction(a); }; });
   });
 }
@@ -5737,6 +5816,10 @@ async function handleAdminAction(a){
   if(a==='openGeocodeIssues'){
     state.geocodeIssuesOpen = true;
     render();
+  }
+  if(a==='goToDashboard'){
+    state.mainView = {type:'dashboard'};
+    if(state.isMobile) state.mobileScreen='main';
   }
   if(a==='adminPendingDeletions'){ state.pendingDeletionsOpen=true; }
   if(a==='adminFullTeam'){ state.mainView = {type:'smart', id:'fullTeam'}; if(state.isMobile) state.mobileScreen='main'; }
@@ -6518,6 +6601,144 @@ function renderClientMapModal(){
       google.maps.event.trigger(marker, 'click');
     });
   });
+}
+// --- Dashboard (landing page) ---
+function renderDashboardMain(){
+  const tier = state.currentUser.dashboardTier || 'standard';
+  if(tier==='minimal'){
+    return `
+    <div class="section-label">☎️ Office Offers</div>
+    ${renderOfferTrackerWidget()}
+    <div class="tiny" style="color:var(--ink-soft);margin-top:16px;">Your dashboard is currently limited to office offer activity. Talk to an Admin if you think this should show more.</div>`;
+  }
+  const isFull = tier==='companyWide' || tier==='fullOffice';
+  const viewUserId = state.dashboardViewUserId || state.currentUser.id;
+  const isOfficeAggregate = viewUserId==='office';
+  const year = todayDate().getFullYear();
+
+  return `
+  <div style="display:flex;gap:20px;flex-wrap:wrap;">
+    <div style="flex:1;min-width:320px;">
+      ${isFull ? renderDashboardUserPicker(viewUserId) : ''}
+      <div class="section-label">📊 Deals by Stage</div>
+      ${renderDealStageBreakdown(isOfficeAggregate ? null : viewUserId)}
+      <div class="section-label" style="margin-top:24px;">📅 Expiring Soon</div>
+      ${renderExpiringItemsWidget(isOfficeAggregate ? null : viewUserId)}
+    </div>
+    <div style="width:300px;flex:none;">
+      ${isOfficeAggregate ? renderOfficeCommissionSummary(year) : renderUserCommissionSummary(viewUserId, year)}
+      <div style="margin-top:20px;">${renderOfferTrackerWidget()}</div>
+    </div>
+  </div>`;
+}
+function renderDashboardUserPicker(viewUserId){
+  const isCompanyWide = state.currentUser.dashboardTier==='companyWide';
+  return `
+  <div class="field" style="max-width:280px;margin-bottom:16px;">
+    <label>Viewing</label>
+    <select id="dashboardViewSelect">
+      <option value="${state.currentUser.id}" ${viewUserId===state.currentUser.id?'selected':''}>My Dashboard</option>
+      <option value="office" ${viewUserId==='office'?'selected':''}>${isCompanyWide?'Company':'Office'} Aggregate</option>
+      ${USERS.filter(u=>u.id!==state.currentUser.id).map(u=>`<option value="${u.id}" ${viewUserId===u.id?'selected':''}>${escapeHtml(u.name)}</option>`).join('')}
+    </select>
+  </div>`;
+}
+function renderUserCommissionSummary(userId, year){
+  const summary = computeCommissionSummaryForUser(userId, year);
+  const userName = (USERS.find(u=>u.id===userId)||{}).name || 'This person';
+  if(!summary.plan){
+    return `<div class="row-card" style="flex-direction:column;align-items:stretch;"><div class="row-title">💰 Commission Plan</div><div class="tiny" style="color:var(--ink-soft);margin-top:6px;">${escapeHtml(userName)} isn't assigned a commission plan yet.</div></div>`;
+  }
+  const tier = summary.tier;
+  const nextTier = summary.nextTier;
+  const progressPct = nextTier ? Math.min(100, ((summary.gross - tier.minAmount) / (nextTier.minAmount - tier.minAmount)) * 100) : 100;
+  const toNext = nextTier ? nextTier.minAmount - summary.gross : 0;
+  return `
+  <div class="row-card" style="flex-direction:column;align-items:stretch;background:#fff;">
+    <div class="row-title" style="margin-bottom:8px;">💰 ${escapeHtml(summary.plan.name)}</div>
+    <div class="tiny" style="color:var(--ink-soft);">${year} Plan · Resets Jan 1</div>
+    <div style="display:flex;justify-content:space-between;margin-top:12px;font-size:13px;">
+      <div><div style="color:var(--ink-soft);font-size:11px;">Broker Gross</div><div style="font-weight:700;">${summary.gross.toLocaleString('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0})}</div></div>
+      <div style="text-align:right;"><div style="color:var(--ink-soft);font-size:11px;">Broker Net</div><div style="font-weight:700;">${summary.net.toLocaleString('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0})}</div></div>
+    </div>
+    <div style="display:flex;justify-content:space-between;margin-top:10px;font-size:12px;color:var(--ink-soft);">
+      <div>Current Split</div><div>${tier.splitPct}%</div>
+    </div>
+    <div style="background:var(--line);border-radius:6px;height:8px;margin-top:8px;overflow:hidden;">
+      <div style="background:var(--edge);height:100%;width:${progressPct}%;"></div>
+    </div>
+    <div class="tiny" style="color:var(--ink-soft);margin-top:6px;">
+      ${nextTier ? `${toNext.toLocaleString('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0})} to reach ${nextTier.splitPct}%` : 'Top tier reached'}
+    </div>
+  </div>`;
+}
+function renderOfficeCommissionSummary(year){
+  const allProducers = USERS.filter(u=>u.commissionPlanId);
+  let totalGross = 0, totalNet = 0;
+  allProducers.forEach(u=>{
+    const summary = computeCommissionSummaryForUser(u.id, year);
+    totalGross += summary.gross; totalNet += summary.net;
+  });
+  return `
+  <div class="row-card" style="flex-direction:column;align-items:stretch;background:#fff;">
+    <div class="row-title" style="margin-bottom:8px;">💰 Aggregate Commission</div>
+    <div class="tiny" style="color:var(--ink-soft);">${year} · All producers combined</div>
+    <div style="display:flex;justify-content:space-between;margin-top:12px;font-size:13px;">
+      <div><div style="color:var(--ink-soft);font-size:11px;">Total Gross</div><div style="font-weight:700;">${totalGross.toLocaleString('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0})}</div></div>
+      <div style="text-align:right;"><div style="color:var(--ink-soft);font-size:11px;">Total Net (Paid)</div><div style="font-weight:700;">${totalNet.toLocaleString('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0})}</div></div>
+    </div>
+  </div>`;
+}
+function renderDealStageBreakdown(userId){
+  const counts = {};
+  db.lists.filter(l=>l.type==='deep').forEach(l=>{
+    l.clients.forEach(c=>{
+      (c.deals||[]).forEach(d=>{
+        if(d.stage==='dead' || !d.stage) return;
+        if(userId && !(d.splits||[]).some(s=>s.userId===userId)) return;
+        counts[d.stage] = (counts[d.stage]||0) + 1;
+      });
+    });
+  });
+  const maxCount = Math.max(1, ...Object.values(counts));
+  const rows = LSR_STAGES.filter(s=>s.id!=='dead' && counts[s.id]).map(s=>`
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+      <div style="width:130px;font-size:12.5px;flex:none;">${escapeHtml(s.name)}</div>
+      <div style="flex:1;background:var(--line);border-radius:6px;height:16px;overflow:hidden;">
+        <div style="background:${s.color};height:100%;width:${(counts[s.id]/maxCount)*100}%;"></div>
+      </div>
+      <div style="width:24px;text-align:right;font-size:12.5px;font-weight:600;flex:none;">${counts[s.id]}</div>
+    </div>`).join('');
+  return rows || `<div class="tiny" style="color:var(--ink-soft);">No active deals.</div>`;
+}
+function renderExpiringItemsWidget(userId){
+  const today = todayDate();
+  const buckets = {30:[], 60:[], 90:[]};
+  const classify = (date, label, kind, clientId, listId)=>{
+    if(!date) return;
+    const d = new Date(date+'T00:00:00');
+    const days = Math.ceil((d-today)/(1000*60*60*24));
+    if(days<0 || days>90) return;
+    const bucket = days<=30?30:(days<=60?60:90);
+    buckets[bucket].push({label, kind, days, clientId, listId});
+  };
+  db.lists.filter(l=>l.type==='deep').forEach(l=>{
+    l.clients.forEach(c=>{
+      if(c.listingExpirationDate) classify(c.listingExpirationDate, `${c.name} — Listing`, 'client', c.id, l.id);
+      (c.deals||[]).forEach(d=>{
+        if(d.stage==='dead') return;
+        if(userId && !(d.splits||[]).some(s=>s.userId===userId)) return;
+        if(d.caExpirationDate) classify(d.caExpirationDate, `${c.name} — ${d.name} (CA)`, 'deal', c.id, l.id, d.id);
+      });
+    });
+  });
+  const section = (label, items)=> items.length ? `
+    <div style="margin-bottom:10px;">
+      <div style="font-weight:700;font-size:12.5px;margin-bottom:4px;">${label} (${items.length})</div>
+      ${items.map(i=>`<div class="tiny" style="padding:3px 0;">${escapeHtml(i.label)} — ${i.days} day${i.days===1?'':'s'}</div>`).join('')}
+    </div>` : '';
+  const html = section('Next 30 days', buckets[30]) + section('31–60 days', buckets[60]) + section('61–90 days', buckets[90]);
+  return html || `<div class="tiny" style="color:var(--ink-soft);">Nothing expiring in the next 90 days.</div>`;
 }
 function renderPipelineModal(){
   const m = state.pipelineView;
