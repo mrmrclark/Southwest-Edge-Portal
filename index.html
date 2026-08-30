@@ -6327,6 +6327,32 @@ function exportMapAsKml(c){
 function escapeXml(str){
   return String(str==null?'':str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&apos;');
 }
+function buildStaticMapUrl(deals, mapType){
+  const byColor = {};
+  deals.forEach(d=>{
+    const color = (MAP_STAGE_COLORS[d.stage] || '#888888').replace('#','0x');
+    (byColor[color] = byColor[color]||[]).push(`${d.latitude},${d.longitude}`);
+  });
+  const markerParams = Object.keys(byColor).map(color=>
+    `markers=${encodeURIComponent('color:'+color)}%7C${byColor[color].join('%7C')}`
+  ).join('&');
+  const staticMapType = mapType==='roadmap' ? 'roadmap' : 'hybrid';
+  return `https://maps.googleapis.com/maps/api/staticmap?size=1280x720&scale=2&maptype=${staticMapType}&${markerParams}&key=${GOOGLE_MAPS_JS_KEY}`;
+}
+function printClientMap(c){
+  const geocodedDeals = (c.deals||[]).filter(d=>d.stage!=='dead' && !(d.commission1Paid && d.commission2Paid) && d.latitude && d.longitude);
+  if(!geocodedDeals.length){ flashToast('Nothing to print yet — no deals have a pin on the map.'); return; }
+  const mapType = state.currentUser.mapTypePreference || 'hybrid';
+  const imgUrl = buildStaticMapUrl(geocodedDeals, mapType);
+  const printWindow = window.open('', '_blank');
+  if(!printWindow){ flashToast('Your browser blocked the print window — please allow pop-ups for this site and try again.'); return; }
+  printWindow.document.write(`<html><head><title>${escapeHtml(c.name)} — Map</title></head>
+    <body style="margin:0;text-align:center;font-family:sans-serif;">
+      <h2>${escapeHtml(c.name)}</h2>
+      <img src="${imgUrl}" style="max-width:100%;" onload="window.print();">
+    </body></html>`);
+  printWindow.document.close();
+}
 function renderClientMapModal(){
   const m = state.clientMapModal;
   const l = db.lists.find(x=>x.id===m.listId);
@@ -6361,7 +6387,7 @@ function renderClientMapModal(){
   overlay.querySelectorAll('[data-action="closeClientMap"]').forEach(b=>b.onclick=()=>{ state.clientMapModal=null; state.notFoundListOpen=false; state.placingDealId=null; state._activeClientMap=null; render(); });
   const legendEl = overlay.querySelector('#mapLegendPanel');
   if(legendEl) wireMapLegendHandlers(legendEl);
-  const printBtn = overlay.querySelector('[data-action="printClientMap"]'); if(printBtn) printBtn.onclick=()=>window.print();
+  const printBtn = overlay.querySelector('[data-action="printClientMap"]'); if(printBtn) printBtn.onclick=()=>printClientMap(c);
   const exportBtn = overlay.querySelector('[data-action="exportClientMapKml"]'); if(exportBtn) exportBtn.onclick=()=>exportMapAsKml(c);
   const sideListToggle = overlay.querySelector('#mapSideListToggle'); if(sideListToggle) sideListToggle.onclick=()=>{
     state.mapSideListCollapsed = !state.mapSideListCollapsed;
