@@ -122,6 +122,8 @@
   @media print{
     body *{visibility:hidden;}
     #lsrPrintArea, #lsrPrintArea *{visibility:visible;}
+    #mapPrintOverlay, #mapPrintOverlay *{visibility:visible;}
+    #mapPrintOverlay{position:fixed;inset:0;}
     .no-print{display:none !important;}
     .print-only{display:block !important;}
     /* Release every ancestor's scroll/height/overflow clipping so the report can
@@ -6352,14 +6354,23 @@ function printClientMap(c){
   const center = {lat: liveCenter.lat(), lng: liveCenter.lng()};
   const zoom = state._activeClientMap.getZoom();
   const imgUrl = buildStaticMapUrl(geocodedDeals, mapType, center, zoom);
-  const printWindow = window.open('', '_blank');
-  if(!printWindow){ flashToast('Your browser blocked the print window — please allow pop-ups for this site and try again.'); return; }
-  printWindow.document.write(`<html><head><title>${escapeHtml(c.name)} — Map</title></head>
-    <body style="margin:0;text-align:center;font-family:sans-serif;">
-      <h2>${escapeHtml(c.name)}</h2>
-      <img src="${imgUrl}" style="max-width:100%;" onload="window.print();">
-    </body></html>`);
-  printWindow.document.close();
+
+  // A real popup window is increasingly blocked or restricted by browsers even on a
+  // direct click, and unreliable for this purpose — build a temporary full-page
+  // printable view directly in this same window instead, remove it once done.
+  const existing = document.getElementById('mapPrintOverlay');
+  if(existing) existing.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'mapPrintOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:#fff;z-index:99999;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;';
+  overlay.innerHTML = `<h2 style="font-family:sans-serif;margin:0;">${escapeHtml(c.name)}</h2><img style="max-width:96%;max-height:88vh;">`;
+  document.body.appendChild(overlay);
+  const img = overlay.querySelector('img');
+  const cleanup = ()=>{ const el = document.getElementById('mapPrintOverlay'); if(el) el.remove(); window.removeEventListener('afterprint', cleanup); };
+  window.addEventListener('afterprint', cleanup);
+  img.onload = ()=>{ window.print(); };
+  img.onerror = ()=>{ flashToast('Could not load the map image for printing.'); cleanup(); };
+  img.src = imgUrl;
 }
 function renderClientMapModal(){
   const m = state.clientMapModal;
