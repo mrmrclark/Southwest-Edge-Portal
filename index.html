@@ -2813,7 +2813,7 @@ function renderEmailClientPicker(){
     }
     state.showEmailClientPicker=false;
     state.pendingLoginUser=null;
-    state.currentUser=u; state.screen='app'; if(!appStateWasLoaded) seedAll();
+    state.currentUser=u; state.screen='app'; state.mainView={type:'dashboard'}; if(!appStateWasLoaded) seedAll();
     await fetchAllAppDataFromSupabase();
     checkTodoDeepLink(); checkBrokerReviewDeepLink();
     render();
@@ -3179,7 +3179,7 @@ function attachLoginHandlers(){
       render();
       return;
     }
-    state.currentUser=u; state.screen='app'; if(!appStateWasLoaded) seedAll(); state.loginTarget=null;
+    state.currentUser=u; state.screen='app'; state.mainView={type:'dashboard'}; if(!appStateWasLoaded) seedAll(); state.loginTarget=null;
     try{
       await fetchAllAppDataFromSupabase();
       checkTodoDeepLink(); checkBrokerReviewDeepLink();
