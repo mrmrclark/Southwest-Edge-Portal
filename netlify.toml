@@ -16,9 +16,8 @@
 
 [[redirects]]
   from = "/authorize"
-  to = "https://ugtlyzwvnhmcphtqkbke.supabase.co/functions/v1/mcp-oauth/authorize"
+  to = "/authorize.html"
   status = 200
-  force = true
 
 [[redirects]]
   from = "/token"
