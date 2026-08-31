@@ -359,6 +359,20 @@
   .voice-fab.recording{background:var(--bad);animation:voicePulse 1.2s ease-in-out infinite;}
   @keyframes voicePulse{0%,100%{transform:scale(1);}50%{transform:scale(1.08);}}
   @media (max-width:820px){ .fab{bottom:88px;} .voice-fab{bottom:88px;} }
+  .portal-chat-fab{
+    position:fixed;bottom:26px;right:30px;width:52px;height:52px;border-radius:50%;background:var(--edge);
+    color:#fff;font-size:24px;border:none;box-shadow:0 8px 22px rgba(225,83,26,0.45);display:flex;
+    align-items:center;justify-content:center;z-index:130;
+  }
+  /* Only Michael has the separate Voice Note fab in the same corner — when it's present,
+     stack the chat button above it instead of sitting on top of it. */
+  .portal-chat-fab.stacked{bottom:92px;}
+  @media (max-width:820px){ .portal-chat-fab{bottom:88px;} .portal-chat-fab.stacked{bottom:154px;} }
+  .chat-mic-btn{
+    flex:none;width:36px;height:36px;border-radius:50%;border:1px solid var(--line);background:var(--canvas);
+    color:var(--ink-soft);font-size:15px;display:flex;align-items:center;justify-content:center;cursor:pointer;
+  }
+  .chat-mic-btn.recording{background:var(--bad);border-color:var(--bad);color:#fff;animation:voicePulse 1.2s ease-in-out infinite;}
 
   /* ---------- MODALS ---------- */
   .modal-overlay{
@@ -6675,18 +6689,26 @@ function renderPortalChatBubble(m){
   }
   return `<div style="align-self:flex-start;max-width:85%;background:#fff;border:1px solid var(--line);color:var(--ink);padding:8px 12px;border-radius:12px 12px 12px 2px;font-size:13px;line-height:1.4;white-space:pre-wrap;">${escapeHtml(m.text)}</div>`;
 }
+function chatSpeechSupported(){
+  return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+}
 function renderPortalChatWidget(){
   if(!state.portalChatMessages) state.portalChatMessages = [];
   const el = document.createElement('div');
   el.id = 'portalChatWidget';
+  // Michael also has the separate Voice Note fab in this same corner — stack our
+  // button above it instead of covering it, for everyone else there's nothing there.
+  const hasVoiceNoteFab = state.currentUser.email==='mclark@edge-re.com';
   if(!state.portalChatOpen){
     el.innerHTML = `
-    <button id="portalChatToggle" title="Ask the Portal Assistant" style="position:fixed;bottom:24px;right:24px;width:56px;height:56px;border-radius:50%;background:var(--edge);color:#fff;border:none;box-shadow:var(--shadow);font-size:24px;z-index:380;display:flex;align-items:center;justify-content:center;">🤖</button>`;
+    <button id="portalChatToggle" class="portal-chat-fab${hasVoiceNoteFab?' stacked':''}" title="Ask the Portal Assistant">🤖</button>`;
     document.getElementById('app').appendChild(el);
     document.getElementById('portalChatToggle').onclick=()=>{ state.portalChatOpen=true; render(); };
     return;
   }
   const msgs = state.portalChatMessages;
+  const micSupported = chatSpeechSupported();
+  const recording = !!state.portalChatRecording;
   el.innerHTML = `
   <div style="position:fixed;bottom:24px;right:24px;width:360px;max-width:calc(100vw - 32px);height:520px;max-height:calc(100vh - 48px);background:var(--paper);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);z-index:380;display:flex;flex-direction:column;overflow:hidden;">
     <div style="background:var(--edge);color:#fff;padding:12px 16px;display:flex;align-items:center;justify-content:space-between;flex:none;">
@@ -6694,11 +6716,13 @@ function renderPortalChatWidget(){
       <button id="portalChatClose" style="background:none;border:none;color:#fff;font-size:16px;cursor:pointer;line-height:1;">✕</button>
     </div>
     <div id="portalChatMessages" style="flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px;background:var(--canvas);">
-      ${msgs.length===0 ? `<div class="tiny" style="color:var(--ink-soft);text-align:center;margin-top:20px;">Ask about your deals, clients, or to-dos — or ask me to log a note or a sign call.</div>` : msgs.map(m=>renderPortalChatBubble(m)).join('')}
+      ${msgs.length===0 ? `<div class="tiny" style="color:var(--ink-soft);text-align:center;margin-top:20px;">Ask about your deals, clients, or to-dos — or ask me to log a note or a sign call. ${micSupported?'Tap the mic to ask out loud.':''}</div>` : msgs.map(m=>renderPortalChatBubble(m)).join('')}
       ${state.portalChatSending ? `<div class="tiny" style="color:var(--ink-soft);">Thinking…</div>` : ''}
+      ${recording ? `<div class="tiny" style="color:var(--bad);">Listening…</div>` : ''}
     </div>
     <div style="flex:none;padding:10px;border-top:1px solid var(--line);display:flex;gap:8px;background:var(--paper);">
-      <input id="portalChatInput" type="text" placeholder="Ask a question…" style="flex:1;padding:9px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;" ${state.portalChatSending?'disabled':''}>
+      ${micSupported ? `<button id="portalChatMic" class="chat-mic-btn${recording?' recording':''}" title="Ask by voice" ${state.portalChatSending?'disabled':''}>${recording?'⏹':'🎤'}</button>` : ''}
+      <input id="portalChatInput" type="text" placeholder="${recording?'Listening…':'Ask a question…'}" style="flex:1;padding:9px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;" ${(state.portalChatSending||recording)?'disabled':''}>
       <button id="portalChatSend" class="btn sm" ${state.portalChatSending?'disabled':''}>Send</button>
     </div>
   </div>`;
@@ -6712,9 +6736,59 @@ function renderPortalChatWidget(){
   };
   document.getElementById('portalChatSend').onclick = send;
   input.onkeydown = (e)=>{ if(e.key==='Enter'){ e.preventDefault(); send(); } };
-  input.focus();
+  const micBtn = document.getElementById('portalChatMic');
+  if(micBtn) micBtn.onclick = ()=>toggleChatVoiceInput();
+  if(!recording) input.focus();
   const msgBox = document.getElementById('portalChatMessages');
   msgBox.scrollTop = msgBox.scrollHeight;
+}
+function toggleChatVoiceInput(){
+  if(state.portalChatRecording){
+    if(state._portalChatSafetyTimer){ clearTimeout(state._portalChatSafetyTimer); state._portalChatSafetyTimer=null; }
+    if(state._portalChatSpeechRecognition){ try{ state._portalChatSpeechRecognition.abort(); }catch(e){} }
+    state.portalChatRecording = false;
+    render();
+    return;
+  }
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if(!SpeechRecognition){
+    flashToast("Voice input isn't supported in this browser — try Chrome.");
+    return;
+  }
+  const recognition = new SpeechRecognition();
+  recognition.lang = 'en-US';
+  recognition.interimResults = false;
+  recognition.maxAlternatives = 1;
+  state.portalChatRecording = true;
+  render();
+  const clearSafety = ()=>{ if(state._portalChatSafetyTimer){ clearTimeout(state._portalChatSafetyTimer); state._portalChatSafetyTimer=null; } };
+  recognition.onresult = (event)=>{
+    clearSafety();
+    const transcript = event.results[0][0].transcript;
+    state.portalChatRecording = false;
+    if(transcript && transcript.trim()) sendPortalChatMessage(transcript.trim());
+    else render();
+  };
+  recognition.onerror = (event)=>{
+    clearSafety();
+    console.error('Portal chat speech recognition error:', event.error);
+    state.portalChatRecording = false;
+    flashToast("Didn't catch that — please try again.");
+    render();
+  };
+  recognition.onend = ()=>{ clearSafety(); if(state.portalChatRecording){ state.portalChatRecording=false; render(); } };
+  state._portalChatSpeechRecognition = recognition;
+  // Same 20-second safety net as the Voice Note feature — mobile browsers can
+  // occasionally leave a recording session hanging.
+  state._portalChatSafetyTimer = setTimeout(()=>{
+    if(state.portalChatRecording){
+      try{ recognition.abort(); }catch(e){}
+      state.portalChatRecording = false;
+      flashToast("Voice input timed out — please try again.");
+      render();
+    }
+  }, 20000);
+  recognition.start();
 }
 async function sendPortalChatMessage(text){
   if(!state.portalChatHistory) state.portalChatHistory = [];
