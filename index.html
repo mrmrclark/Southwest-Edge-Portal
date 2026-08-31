@@ -2712,6 +2712,7 @@ function render(){
   if(state.stageReminderPrompt) renderStageReminderPrompt();
   if(state.brokerReviewLog) renderBrokerReviewLogModal();
   if(state.pipelineView) renderPipelineModal();
+  if(state.connectAssistantModalOpen) renderConnectAssistantModal();
   if(state.loiImport) renderLoiImportModal();
   if(state.clientMapModal) renderClientMapModal();
   if(state.geocodeIssuesOpen) renderGeocodeIssuesModal();
@@ -5462,6 +5463,11 @@ function attachShellHandlers(){
     state.dashboardViewUserId = dashboardSelect.value;
     renderPreservingScroll('.content');
   };
+  document.querySelectorAll('[data-action="openConnectAssistant"]').forEach(b=>b.onclick=()=>{ state.connectAssistantModalOpen=true; render(); });
+  document.querySelectorAll('[data-action="dismissConnectAssistant"]').forEach(b=>b.onclick=()=>{
+    try{ localStorage.setItem('sweConnectAssistantDismissed','1'); }catch(e){}
+    renderPreservingScroll('.content');
+  });
   const addClientBtn=document.querySelector('[data-action="addClient"]'); if(addClientBtn) addClientBtn.onclick=safeHandler(async ()=>{
     const l = db.lists.find(x=>x.id===addClientBtn.dataset.listid);
     const name = prompt(`Name this ${l.id==='listings'?'listing':'client'}:`);
@@ -6603,6 +6609,62 @@ function renderClientMapModal(){
   });
 }
 // --- Dashboard (landing page) ---
+function renderConnectAssistantCard(){
+  let dismissed = false;
+  try{ dismissed = localStorage.getItem('sweConnectAssistantDismissed')==='1'; }catch(e){}
+  if(dismissed) return '';
+  return `
+  <div class="row-card" style="background:linear-gradient(135deg,#fff,#fdf3ee);border:1px solid var(--line);flex-direction:column;align-items:stretch;margin-bottom:20px;position:relative;padding:16px;">
+    <button data-action="dismissConnectAssistant" title="Dismiss" style="position:absolute;top:10px;right:12px;border:none;background:none;cursor:pointer;color:var(--ink-soft);font-size:15px;line-height:1;">✕</button>
+    <div style="display:flex;gap:14px;align-items:flex-start;">
+      <div style="font-size:28px;flex:none;">🤖</div>
+      <div style="flex:1;min-width:0;">
+        <div class="row-title" style="margin-bottom:4px;">Run the Portal from Claude</div>
+        <div class="tiny" style="color:var(--ink-soft);margin-bottom:12px;">Ask for updates, log notes, and check your pipeline in plain English — right from a chat, on any device. Setup takes about a minute.</div>
+        <button class="btn sm" data-action="openConnectAssistant">Connect Assistant →</button>
+      </div>
+    </div>
+  </div>`;
+}
+function renderConnectAssistantModal(){
+  const overlay = document.createElement('div');
+  overlay.className='modal-overlay'; overlay.style.zIndex=210;
+  const serverUrl = 'https://ugtlyzwvnhmcphtqkbke.supabase.co/functions/v1/mcp-server';
+  overlay.innerHTML = `
+  <div class="modal-card" style="max-width:480px;">
+    <div class="modal-head"><div class="modal-title">🤖 Connect the AI Assistant</div><button class="modal-close" data-action="closeConnectAssistant">✕</button></div>
+    <div class="modal-body">
+      <div class="tiny" style="color:var(--ink-soft);margin-bottom:16px;">Once connected, you can ask Claude things like "what's overdue this week" or "add a note to the Valencia deal" — right from a chat, on any device.</div>
+      <div class="field" style="margin-bottom:16px;">
+        <label>Server URL</label>
+        <div style="display:flex;gap:8px;">
+          <input id="connectAssistantUrl" readonly value="${serverUrl}" style="flex:1;font-family:monospace;font-size:12px;padding:8px;border:1px solid var(--line);border-radius:6px;background:var(--canvas);color:var(--ink);">
+          <button class="btn secondary sm" data-action="copyConnectAssistantUrl">Copy</button>
+        </div>
+      </div>
+      <ol style="margin:0;padding-left:20px;font-size:13px;line-height:1.8;color:var(--ink);">
+        <li>In Claude, go to <b>Settings → Connectors</b>.</li>
+        <li>Click <b>Add</b>, choose a custom connector, and paste in the URL above.</li>
+        <li>Click <b>Connect</b>, then log in with your Portal email and password.</li>
+        <li>That's it — Claude can now read and update your Portal on your behalf.</li>
+      </ol>
+    </div>
+    <div class="modal-foot"><button class="btn secondary" data-action="closeConnectAssistant">Close</button></div>
+  </div>`;
+  document.getElementById('app').appendChild(overlay);
+  overlay.querySelectorAll('[data-action="closeConnectAssistant"]').forEach(b=>b.onclick=()=>{ state.connectAssistantModalOpen=false; render(); });
+  const copyBtn = overlay.querySelector('[data-action="copyConnectAssistantUrl"]');
+  if(copyBtn) copyBtn.onclick=()=>{
+    const input = overlay.querySelector('#connectAssistantUrl');
+    input.select();
+    const done = ()=>{ copyBtn.textContent='Copied!'; setTimeout(()=>{ copyBtn.textContent='Copy'; }, 1500); };
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(serverUrl).then(done).catch(()=>{ try{ document.execCommand('copy'); done(); }catch(e){} });
+    } else {
+      try{ document.execCommand('copy'); done(); }catch(e){}
+    }
+  };
+}
 function renderDashboardMain(){
   const tier = state.currentUser.dashboardTier || 'standard';
   if(tier==='minimal'){
@@ -6617,6 +6679,7 @@ function renderDashboardMain(){
   const year = todayDate().getFullYear();
 
   return `
+  ${renderConnectAssistantCard()}
   <div style="display:flex;gap:20px;flex-wrap:wrap;">
     <div style="flex:1;min-width:320px;">
       ${isFull ? renderDashboardUserPicker(viewUserId) : ''}
