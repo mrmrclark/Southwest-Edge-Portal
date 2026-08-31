@@ -6639,7 +6639,7 @@ function renderDashboardUserPicker(viewUserId){
     <select id="dashboardViewSelect">
       <option value="${state.currentUser.id}" ${viewUserId===state.currentUser.id?'selected':''}>My Dashboard</option>
       <option value="office" ${viewUserId==='office'?'selected':''}>${isCompanyWide?'Company':'Office'} Aggregate</option>
-      ${USERS.filter(u=>u.id!==state.currentUser.id).map(u=>`<option value="${u.id}" ${viewUserId===u.id?'selected':''}>${escapeHtml(u.name)}</option>`).join('')}
+      ${USERS.filter(u=>u.commissionPlanId).map(u=>`<option value="${u.id}" ${viewUserId===u.id?'selected':''}>${escapeHtml(u.name)}</option>`).join('')}
     </select>
   </div>`;
 }
