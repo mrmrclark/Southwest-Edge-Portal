@@ -603,7 +603,7 @@ let state = {
   showAllSmartLists:false,      // collapse toggle once there are more than 10 smart lists
   notifSettingsOpen:false,      // whether the notification-preferences modal is open
   pendingUsersModalOpen:false,
-  sidePanelWidgets:{calendar:true, weather:true, news:true, quicklinks:true, offers:true},
+  sidePanelWidgets:{calendar:true, weather:true, news:true, quicklinks:true},
   showWidgetPicker:false,
   editContactModal:null,
   editBrokerModal:null,
@@ -2731,6 +2731,8 @@ function render(){
   if(state.stageReminderPrompt) renderStageReminderPrompt();
   if(state.brokerReviewLog) renderBrokerReviewLogModal();
   if(state.pipelineView) renderPipelineModal();
+  if(state.allTiersModalUserId) renderAllTiersModal();
+  if(state.wipModal) renderWipModal();
   if(state.connectAssistantModalOpen) renderConnectAssistantModal();
   if(state.loiImport) renderLoiImportModal();
   if(state.clientMapModal) renderClientMapModal();
@@ -4039,14 +4041,25 @@ function pipelineRows(){
         if(d.commission1Paid) remaining -= totalFee/2;
         if(d.commission2Paid) remaining -= totalFee/2;
         if(remaining<=0) return; // both halves paid — out of the pipeline
+        // Past-due: an unpaid installment whose own due date has already passed.
+        const today = todayDate();
+        let pastDueTotal = 0;
+        if(sourceTable==='deals'){
+          if(!d.commission1Paid && d.commission1DueDate && new Date(d.commission1DueDate+'T00:00:00')<today) pastDueTotal += totalFee/2;
+          if(!d.commission2Paid && d.commission2DueDate && new Date(d.commission2DueDate+'T00:00:00')<today) pastDueTotal += totalFee/2;
+        }
+        const receivedTotal = totalFee - remaining;
         (d.splits||[]).forEach(split=>{
           const pct = parseFloat(split.pct) || 0;
           if(pct<=0) return;
           const waValue = remaining * (pct/100) * wa;
           if(waValue<=0) return;
           rows.push({
-            userId: split.userId, clientId: c.id, clientName: c.name, dealName: d.name,
-            stage: d.stage, totalFee, pct, waValue, sourceTable, sourceId: d.id
+            userId: split.userId, clientId: c.id, clientName: c.name, dealName: d.name, listId: l.id,
+            stage: d.stage, totalFee, pct, waValue, sourceTable, sourceId: d.id,
+            dealId: sourceTable==='deals' ? d.id : null,
+            dueDate: sourceTable==='deals' && d.dueDate ? toLocalDateStr(d.dueDate) : null,
+            receivedAmt: receivedTotal * (pct/100), pastDueAmt: pastDueTotal * (pct/100),
           });
         });
       });
@@ -4078,7 +4091,7 @@ function offerCreditsByUser(){
 }
 function renderOfferTrackerWidget(){
   const credits = offerCreditsByUser();
-  const rows = USERS.filter(u=>u.email!=='ledonna@edge-re.com') // commission-only people never appear here anyway (no USERS entry)
+  const rows = USERS.filter(u=>u.email!=='ledonna@edge-re.com' && u.commissionPlanId) // admin/marketing staff without a commission plan don't belong on a producer offer-activity board
     .map(u=>({u, ytd:credits[u.id]?credits[u.id].ytd:0, month:credits[u.id]?credits[u.id].month:0}))
     .sort((a,b)=>b.month-a.month);
   return `
@@ -4548,7 +4561,9 @@ function wireMarketingListWizard(overlay, listing, allCats){
     };
   }
 }
-const WIDGET_RENDERERS = { calendar: renderCalendarWidget, weather: renderWeatherWidget, news: renderNewsWidget, quicklinks: renderQuickLinksWidget, offers: renderOfferTrackerWidget };
+// Offer Tracker is deliberately NOT in this list — it's permanently pinned on the
+// Dashboard itself (see renderDashboardMain), not an optional pick-a-widget item.
+const WIDGET_RENDERERS = { calendar: renderCalendarWidget, weather: renderWeatherWidget, news: renderNewsWidget, quicklinks: renderQuickLinksWidget };
 function renderSidePanel(){
   if(state.isMobile) return ''; // widgets are desktop-only, full stop — no markup, no weather fetch
   const w = state.sidePanelWidgets;
@@ -4579,9 +4594,6 @@ function renderSidePanel(){
         <label style="display:flex;align-items:center;gap:8px;padding:8px 12px;font-size:12.5px;cursor:pointer;">
           <input type="checkbox" data-widgettoggle="quicklinks" ${w.quicklinks?'checked':''} style="width:auto;"> Quick Links
         </label>
-        <label style="display:flex;align-items:center;gap:8px;padding:8px 12px;font-size:12.5px;cursor:pointer;">
-          <input type="checkbox" data-widgettoggle="offers" ${w.offers?'checked':''} style="width:auto;"> Offer Tracker
-        </label>
       </div>` : ''}
     </div>
     ${widgetsHtml}
@@ -4611,6 +4623,17 @@ function allDealsList(){
     });
   });
   return out;
+}
+// Same "active deal" rules as allDealsList(), but scoped to any one person (or everyone,
+// when userId is null/'office') by account access — created it, or listed as an authorized
+// user on it — matching exactly how the "All Deals" smart list decides what a person can
+// see. This is deliberately NOT the same as pipelineRows()/commission-split scoping: a
+// person can be authorized on an account without being in a specific deal's splits yet,
+// and the Dashboard should reflect what they can see, not just what they're paid on.
+function allDealsForUser(userId){
+  const rows = allDealsList();
+  if(!userId) return rows; // null/'office' = everyone
+  return rows.filter(r=>r.client.createdBy===userId || (r.client.authorizedUserIds||[]).includes(userId));
 }
 function archivedDealsList(){
   const out = [];
@@ -5483,6 +5506,16 @@ function attachShellHandlers(){
     state.dashboardViewUserId = dashboardSelect.value;
     renderPreservingScroll('.content');
   };
+  document.querySelectorAll('[data-action="viewAllTiers"]').forEach(el=>el.onclick=(ev)=>{
+    ev.preventDefault();
+    state.allTiersModalUserId = el.dataset.userid;
+    render();
+  });
+  document.querySelectorAll('[data-action="openWipModal"]').forEach(el=>el.onclick=()=>{
+    const viewUserId = state.dashboardViewUserId || state.currentUser.id;
+    state.wipModal = {viewUserId: viewUserId==='office' ? 'office' : viewUserId, startDate:'', endDate:''};
+    render();
+  });
   document.querySelectorAll('[data-action="openConnectAssistant"]').forEach(b=>b.onclick=()=>{ state.connectAssistantModalOpen=true; render(); });
   document.querySelectorAll('[data-action="dismissConnectAssistant"]').forEach(b=>b.onclick=()=>{
     try{ localStorage.setItem('sweConnectAssistantDismissed','1'); }catch(e){}
@@ -6750,7 +6783,7 @@ function printPortalChat(){
     const who = m.role==='user' ? (state.currentUser.name||'You') : 'Edgy';
     return `<div style="margin-bottom:16px;"><div style="font-weight:700;font-size:11px;letter-spacing:.03em;text-transform:uppercase;color:#5B6270;margin-bottom:3px;">${escapeHtml(who)}</div><div style="font-size:13.5px;line-height:1.55;white-space:pre-wrap;">${escapeHtml(m.text||'')}</div></div>`;
   }).join('');
-  win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Edgy, your AI Assistant</title>
+  win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Edgy, Your AI Assistant</title>
   <style>
     body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:#20242C;padding:32px;max-width:680px;margin:0 auto;}
     h1{font-size:16px;margin:0 0 2px;}
@@ -6758,7 +6791,7 @@ function printPortalChat(){
     @media print{ body{padding:0;} }
   </style>
   </head><body>
-    <h1>🤖 Edgy, your AI Assistant</h1>
+    <h1>🤖 Edgy, Your AI Assistant</h1>
     <div class="sub">${escapeHtml(state.currentUser.name||'')} — ${escapeHtml(new Date().toLocaleString('en-US'))}</div>
     ${rows}
   </body></html>`);
@@ -6778,7 +6811,7 @@ function renderPortalChatWidget(){
   const hasVoiceNoteFab = state.currentUser.email==='mclark@edge-re.com';
   if(!state.portalChatOpen){
     el.innerHTML = `
-    <button id="portalChatToggle" class="portal-chat-fab${hasVoiceNoteFab?' stacked':''}" title="Ask Edgy, your AI Assistant">🤖</button>`;
+    <button id="portalChatToggle" class="portal-chat-fab${hasVoiceNoteFab?' stacked':''}" title="Ask Edgy, Your AI Assistant">🤖</button>`;
     document.getElementById('app').appendChild(el);
     document.getElementById('portalChatToggle').onclick=()=>{ state.portalChatOpen=true; render(); };
     return;
@@ -6789,7 +6822,7 @@ function renderPortalChatWidget(){
   el.innerHTML = `
   <div style="position:fixed;bottom:24px;right:24px;width:360px;max-width:calc(100vw - 32px);height:520px;max-height:calc(100vh - 48px);background:var(--paper);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);z-index:380;display:flex;flex-direction:column;overflow:hidden;">
     <div style="background:var(--edge);color:#fff;padding:12px 16px;display:flex;align-items:center;justify-content:space-between;flex:none;">
-      <div><div style="font-weight:600;font-size:13.5px;">🤖 Edgy</div><div style="font-size:10.5px;opacity:.85;">your AI Assistant</div></div>
+      <div><div style="font-weight:600;font-size:13.5px;">🤖 Edgy</div><div style="font-size:10.5px;opacity:.85;">Your AI Assistant</div></div>
       <div style="display:flex;align-items:center;gap:12px;">
         <button id="portalChatPrint" title="Print this conversation" style="background:none;border:none;color:#fff;font-size:15px;cursor:pointer;line-height:1;">🖨️</button>
         <button id="portalChatClose" title="Close" style="background:none;border:none;color:#fff;font-size:16px;cursor:pointer;line-height:1;">✕</button>
@@ -6926,19 +6959,22 @@ function renderDashboardMain(){
 
   return `
   ${renderConnectAssistantCard()}
-  <div style="display:flex;gap:20px;flex-wrap:wrap;">
-    <div style="flex:1;min-width:320px;">
-      ${isFull ? renderDashboardUserPicker(viewUserId) : ''}
+  <div style="display:flex;justify-content:flex-end;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px;">
+    ${isFull ? `<div style="flex:1;min-width:220px;">${renderDashboardUserPicker(viewUserId)}</div>` : '<div style="flex:1;"></div>'}
+    <button class="btn secondary" data-action="openWipModal" style="white-space:nowrap;">📋 WIP</button>
+  </div>
+  <div style="display:flex;gap:20px;flex-wrap:wrap;justify-content:flex-end;">
+    <div style="width:300px;flex:none;">
+      ${isOfficeAggregate ? renderOfficeCommissionSummary(year) : renderUserCommissionSummary(viewUserId, year)}
+    </div>
+    <div style="width:340px;flex:none;">
       <div class="section-label">📊 Deals by Stage</div>
-      ${renderDealStageBreakdown(isOfficeAggregate ? null : viewUserId)}
+      ${renderDealStageChart(isOfficeAggregate ? null : viewUserId)}
       <div class="section-label" style="margin-top:24px;">📅 Expiring Soon</div>
       ${renderExpiringItemsWidget(isOfficeAggregate ? null : viewUserId)}
     </div>
-    <div style="width:300px;flex:none;">
-      ${isOfficeAggregate ? renderOfficeCommissionSummary(year) : renderUserCommissionSummary(viewUserId, year)}
-      <div style="margin-top:20px;">${renderOfferTrackerWidget()}</div>
-    </div>
-  </div>`;
+  </div>
+  <div style="margin-top:20px;">${renderOfferTrackerWidget()}</div>`;
 }
 function renderDashboardUserPicker(viewUserId){
   const isCompanyWide = state.currentUser.dashboardTier==='companyWide';
@@ -6952,34 +6988,97 @@ function renderDashboardUserPicker(viewUserId){
     </select>
   </div>`;
 }
+function fmtUSD0(n){ return (n||0).toLocaleString('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0}); }
+function renderCommissionTierCard(t, displayNum, status, gross, upperBound){
+  // status: 'done' | 'current' | 'locked'
+  const rangeLabel = `${fmtUSD0(t.minAmount)}–${t.maxAmount!=null?fmtUSD0(t.maxAmount):'+'} (${t.splitPct}%)`;
+  if(status==='current'){
+    const pct = upperBound>t.minAmount ? Math.min(100, Math.max(0, ((gross-t.minAmount)/(upperBound-t.minAmount))*100)) : 100;
+    const toGo = Math.max(0, upperBound-gross);
+    return `
+    <div style="border:1px solid var(--edge);background:var(--edge-lighter);border-radius:10px;padding:12px 14px;margin-bottom:8px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px;">
+        <div style="font-weight:700;font-size:12.5px;">Tier ${displayNum} <span style="font-weight:400;color:var(--ink-soft);">${rangeLabel}</span></div>
+        <div style="font-size:10px;font-weight:700;color:#fff;background:var(--edge);padding:2px 8px;border-radius:10px;white-space:nowrap;">📈 IN PROGRESS</div>
+      </div>
+      <div style="background:#fff;border-radius:6px;height:8px;overflow:hidden;">
+        <div style="background:var(--edge);height:100%;width:${pct}%;"></div>
+      </div>
+      <div class="tiny" style="color:var(--edge-darker);margin-top:6px;">${toGo>0 ? `${fmtUSD0(toGo)} to complete tier` : 'Top tier reached'}</div>
+    </div>`;
+  }
+  return `
+  <div style="border:1px solid var(--line);background:${status==='done'?'#fff':'var(--canvas)'};border-radius:10px;padding:12px 14px;margin-bottom:8px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+      <div style="font-weight:700;font-size:12.5px;">Tier ${displayNum} <span style="font-weight:400;color:var(--ink-soft);">${rangeLabel}</span></div>
+      <div style="font-size:10px;font-weight:700;color:var(--ink-soft);background:var(--line-soft);padding:2px 8px;border-radius:10px;white-space:nowrap;">${status==='done'?'✓ COMPLETE':'🔒 LOCKED'}</div>
+    </div>
+  </div>`;
+}
 function renderUserCommissionSummary(userId, year){
   const summary = computeCommissionSummaryForUser(userId, year);
   const userName = (USERS.find(u=>u.id===userId)||{}).name || 'This person';
   if(!summary.plan){
     return `<div class="row-card" style="flex-direction:column;align-items:stretch;"><div class="row-title">💰 Commission Plan</div><div class="tiny" style="color:var(--ink-soft);margin-top:6px;">${escapeHtml(userName)} isn't assigned a commission plan yet.</div></div>`;
   }
-  const tier = summary.tier;
-  const nextTier = summary.nextTier;
-  const progressPct = nextTier ? Math.min(100, ((summary.gross - tier.minAmount) / (nextTier.minAmount - tier.minAmount)) * 100) : 100;
-  const toNext = nextTier ? nextTier.minAmount - summary.gross : 0;
+  const sortedTiers = summary.plan.tiers.slice().sort((a,b)=>a.sortOrder-b.sortOrder);
+  const currentIdx = Math.max(0, sortedTiers.findIndex(t=>t.sortOrder===summary.tier.sortOrder));
+  // Current tier plus the next couple ahead — the tiers actually relevant right now.
+  // "View All" opens the full list, completed tiers included.
+  const visibleTiers = sortedTiers.slice(currentIdx, currentIdx+3);
+  const planStart = new Date(year,0,1), planEnd = new Date(year,11,31);
+  const tierCardsHtml = visibleTiers.map((t,i)=>{
+    const idx = currentIdx+i;
+    const status = idx<currentIdx ? 'done' : (idx===currentIdx ? 'current' : 'locked');
+    const upperBound = sortedTiers[idx+1] ? sortedTiers[idx+1].minAmount : (t.maxAmount!=null ? t.maxAmount : t.minAmount);
+    return renderCommissionTierCard(t, idx+1, status, summary.gross, upperBound);
+  }).join('');
   return `
   <div class="row-card" style="flex-direction:column;align-items:stretch;background:#fff;">
     <div class="row-title" style="margin-bottom:8px;">💰 ${escapeHtml(summary.plan.name)}</div>
-    <div class="tiny" style="color:var(--ink-soft);">${year} Plan · Resets Jan 1</div>
-    <div style="display:flex;justify-content:space-between;margin-top:12px;font-size:13px;">
-      <div><div style="color:var(--ink-soft);font-size:11px;">Broker Gross</div><div style="font-weight:700;">${summary.gross.toLocaleString('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0})}</div></div>
-      <div style="text-align:right;"><div style="color:var(--ink-soft);font-size:11px;">Broker Net</div><div style="font-weight:700;">${summary.net.toLocaleString('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0})}</div></div>
+    <div style="display:flex;justify-content:space-between;margin-top:4px;font-size:12px;">
+      <div><div style="color:var(--ink-soft);font-size:11px;">Plan Start</div><div>${planStart.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}</div></div>
+      <div style="text-align:right;"><div style="color:var(--ink-soft);font-size:11px;">Plan End</div><div>${planEnd.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}</div></div>
     </div>
-    <div style="display:flex;justify-content:space-between;margin-top:10px;font-size:12px;color:var(--ink-soft);">
-      <div>Current Split</div><div>${tier.splitPct}%</div>
+    <div style="display:flex;justify-content:space-between;margin-top:10px;font-size:13px;">
+      <div><div style="color:var(--ink-soft);font-size:11px;">Broker Gross</div><div style="font-weight:700;">${fmtUSD0(summary.gross)}</div></div>
+      <div style="text-align:right;"><div style="color:var(--ink-soft);font-size:11px;">Broker Net</div><div style="font-weight:700;">${fmtUSD0(summary.net)}</div></div>
     </div>
-    <div style="background:var(--line);border-radius:6px;height:8px;margin-top:8px;overflow:hidden;">
-      <div style="background:var(--edge);height:100%;width:${progressPct}%;"></div>
+    <div style="display:flex;justify-content:space-between;margin-top:8px;font-size:12px;color:var(--ink-soft);">
+      <div>Current Split</div><div>${summary.tier.splitPct}%</div>
     </div>
-    <div class="tiny" style="color:var(--ink-soft);margin-top:6px;">
-      ${nextTier ? `${toNext.toLocaleString('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0})} to reach ${nextTier.splitPct}%` : 'Top tier reached'}
+    <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--ink-soft);margin-bottom:10px;">
+      <div>Current Tier</div><div>${currentIdx+1} of ${sortedTiers.length}</div>
     </div>
+    <div style="font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.03em;color:var(--ink-soft);margin-bottom:8px;">Tier Progress</div>
+    ${tierCardsHtml}
+    ${sortedTiers.length>visibleTiers.length || currentIdx>0 ? `<div style="text-align:center;margin-top:4px;"><a href="#" data-action="viewAllTiers" data-userid="${escapeAttr(userId)}" style="color:var(--edge);font-size:12.5px;text-decoration:none;">View All ${sortedTiers.length} Tiers</a></div>` : ''}
   </div>`;
+}
+function renderAllTiersModal(){
+  const userId = state.allTiersModalUserId;
+  const year = todayDate().getFullYear();
+  const summary = computeCommissionSummaryForUser(userId, year);
+  const userName = (USERS.find(u=>u.id===userId)||{}).name || 'This person';
+  const sortedTiers = (summary.plan?summary.plan.tiers:[]).slice().sort((a,b)=>a.sortOrder-b.sortOrder);
+  const currentIdx = Math.max(0, sortedTiers.findIndex(t=>t.sortOrder===(summary.tier?summary.tier.sortOrder:-1)));
+  const overlay = document.createElement('div');
+  overlay.className='modal-overlay'; overlay.style.zIndex=210;
+  overlay.innerHTML = `
+  <div class="modal-card" style="max-width:440px;">
+    <div class="modal-head"><div class="modal-title">💰 ${escapeHtml(summary.plan?summary.plan.name:'Commission Plan')}</div><button class="modal-close" data-action="closeAllTiers">✕</button></div>
+    <div class="modal-body">
+      <div class="tiny" style="color:var(--ink-soft);margin-bottom:12px;">${escapeHtml(userName)} — all ${sortedTiers.length} tiers</div>
+      ${sortedTiers.map((t,idx)=>{
+        const status = idx<currentIdx ? 'done' : (idx===currentIdx ? 'current' : 'locked');
+        const upperBound = sortedTiers[idx+1] ? sortedTiers[idx+1].minAmount : (t.maxAmount!=null ? t.maxAmount : t.minAmount);
+        return renderCommissionTierCard(t, idx+1, status, summary.gross, upperBound);
+      }).join('')}
+    </div>
+    <div class="modal-foot"><button class="btn secondary" data-action="closeAllTiers">Close</button></div>
+  </div>`;
+  document.getElementById('app').appendChild(overlay);
+  overlay.querySelectorAll('[data-action="closeAllTiers"]').forEach(b=>b.onclick=()=>{ state.allTiersModalUserId=null; render(); });
 }
 function renderOfficeCommissionSummary(year){
   const allProducers = USERS.filter(u=>u.commissionPlanId);
@@ -6998,56 +7097,74 @@ function renderOfficeCommissionSummary(year){
     </div>
   </div>`;
 }
-function renderDealStageBreakdown(userId){
-  const counts = {};
-  db.lists.filter(l=>l.type==='deep').forEach(l=>{
-    l.clients.forEach(c=>{
-      (c.deals||[]).forEach(d=>{
-        if(d.stage==='dead' || !d.stage) return;
-        if(userId && !(d.splits||[]).some(s=>s.userId===userId)) return;
-        counts[d.stage] = (counts[d.stage]||0) + 1;
-      });
-    });
+// Pipeline-by-stage chart: how many active deals sit in each stage, and how much total
+// deal value that represents — scoped the same way as the "All Deals" smart list (account
+// access), not by commission splits, so it actually matches what "All Deals" shows.
+function renderDealStageChart(userId){
+  const rows = allDealsForUser(userId);
+  const counts = {}, values = {};
+  rows.forEach(r=>{
+    const d = r.deal;
+    if(d.stage==='dead' || d.stage==='prospect' || !d.stage) return;
+    counts[d.stage] = (counts[d.stage]||0) + 1;
+    values[d.stage] = (values[d.stage]||0) + (parseFloat(d.totalFee)||0);
   });
-  const maxCount = Math.max(1, ...Object.values(counts));
-  const rows = LSR_STAGES.filter(s=>s.id!=='dead' && counts[s.id]).map(s=>`
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
-      <div style="width:130px;font-size:12.5px;flex:none;">${escapeHtml(s.name)}</div>
-      <div style="flex:1;background:var(--line);border-radius:6px;height:16px;overflow:hidden;">
-        <div style="background:${s.color};height:100%;width:${(counts[s.id]/maxCount)*100}%;"></div>
+  const maxValue = Math.max(1, ...Object.values(values));
+  const stageOrder = ['loi','signedLOI','negotiating','inEscrow','signedLease','closedEscrow'];
+  const bars = stageOrder.filter(id=>counts[id]).map(id=>{
+    const s = LSR_STAGE_MAP[id];
+    return `
+    <div style="margin-bottom:12px;">
+      <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:4px;">
+        <div>${escapeHtml(s.name)} <span style="color:var(--ink-soft);">(${counts[id]})</span></div>
+        <div style="font-weight:600;">${values[id].toLocaleString('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0})}</div>
       </div>
-      <div style="width:24px;text-align:right;font-size:12.5px;font-weight:600;flex:none;">${counts[s.id]}</div>
-    </div>`).join('');
-  return rows || `<div class="tiny" style="color:var(--ink-soft);">No active deals.</div>`;
+      <div style="background:var(--line);border-radius:6px;height:14px;overflow:hidden;">
+        <div style="background:${s.color};height:100%;width:${(values[id]/maxValue)*100}%;"></div>
+      </div>
+    </div>`;
+  }).join('');
+  return bars || `<div class="tiny" style="color:var(--ink-soft);">No active deals.</div>`;
 }
 function renderExpiringItemsWidget(userId){
   const today = todayDate();
-  const buckets = {30:[], 60:[], 90:[]};
-  const classify = (date, label, kind, clientId, listId)=>{
-    if(!date) return;
+  const classify = (date)=>{
+    if(!date) return null;
     const d = new Date(date+'T00:00:00');
     const days = Math.ceil((d-today)/(1000*60*60*24));
-    if(days<0 || days>90) return;
-    const bucket = days<=30?30:(days<=60?60:90);
-    buckets[bucket].push({label, kind, days, clientId, listId});
+    if(days<0 || days>90) return null;
+    return days;
   };
+  const caItems = [], listingItems = [];
   db.lists.filter(l=>l.type==='deep').forEach(l=>{
     l.clients.forEach(c=>{
-      if(c.listingExpirationDate) classify(c.listingExpirationDate, `${c.name} — Listing`, 'client', c.id, l.id);
-      (c.deals||[]).forEach(d=>{
-        if(d.stage==='dead') return;
-        if(userId && !(d.splits||[]).some(s=>s.userId===userId)) return;
-        if(d.caExpirationDate) classify(d.caExpirationDate, `${c.name} — ${d.name} (CA)`, 'deal', c.id, l.id, d.id);
-      });
+      const hasAccess = !userId || c.createdBy===userId || (c.authorizedUserIds||[]).includes(userId);
+      if(!hasAccess) return;
+      if(l.id==='listings'){
+        // One master Exclusive Listing Agreement covers every deal on the property —
+        // a single expiration per Listing account, not one per deal.
+        const days = classify(c.elaEndDate ? toLocalDateStr(c.elaEndDate) : null);
+        if(days!==null) listingItems.push({label:`${c.name} — Exclusive Listing Agreement`, days, clientId:c.id, listId:l.id});
+      } else {
+        // Clients (Tenant/Buyer rep): one Commission Agreement per deal.
+        (c.deals||[]).forEach(d=>{
+          if(d.stage==='dead') return;
+          const days = classify(d.caExpirationDate);
+          if(days!==null) caItems.push({label:`${c.name} — ${d.name} (CA)`, days, clientId:c.id, listId:l.id, dealId:d.id});
+        });
+      }
     });
   });
-  const section = (label, items)=> items.length ? `
-    <div style="margin-bottom:10px;">
-      <div style="font-weight:700;font-size:12.5px;margin-bottom:4px;">${label} (${items.length})</div>
-      ${items.map(i=>`<div class="tiny" style="padding:3px 0;">${escapeHtml(i.label)} — ${i.days} day${i.days===1?'':'s'}</div>`).join('')}
-    </div>` : '';
-  const html = section('Next 30 days', buckets[30]) + section('31–60 days', buckets[60]) + section('61–90 days', buckets[90]);
-  return html || `<div class="tiny" style="color:var(--ink-soft);">Nothing expiring in the next 90 days.</div>`;
+  const section = (label, icon, items)=>{
+    items.sort((a,b)=>a.days-b.days);
+    return `
+    <div style="margin-bottom:14px;">
+      <div style="font-weight:700;font-size:12.5px;margin-bottom:4px;">${icon} ${label} (${items.length})</div>
+      ${items.length ? items.map(i=>`<div class="tiny" style="padding:3px 0;">${escapeHtml(i.label)} — ${i.days} day${i.days===1?'':'s'}</div>`).join('')
+        : `<div class="tiny" style="color:var(--ink-soft);">Nothing expiring in the next 90 days.</div>`}
+    </div>`;
+  };
+  return section('Client CAs Expiring', '📄', caItems) + section('Listing Agreements Expiring', '🏢', listingItems);
 }
 function renderPipelineModal(){
   const m = state.pipelineView;
@@ -7070,7 +7187,7 @@ function renderPipelineModal(){
         <select id="pipelineViewSelect">
           <option value="${state.currentUser.id}" ${m.viewUserId===state.currentUser.id?'selected':''}>My Pipeline</option>
           <option value="office" ${isOffice?'selected':''}>Office Total</option>
-          ${USERS.filter(u=>u.id!==state.currentUser.id).map(u=>`<option value="${u.id}" ${m.viewUserId===u.id?'selected':''}>${escapeHtml(u.name)}</option>`).join('')}
+          ${USERS.filter(u=>u.id!==state.currentUser.id && u.commissionPlanId).map(u=>`<option value="${u.id}" ${m.viewUserId===u.id?'selected':''}>${escapeHtml(u.name)}</option>`).join('')}
         </select>
       </div>` : ''}
       <div style="font-size:20px;font-weight:700;color:var(--edge);margin-bottom:14px;">
@@ -7125,6 +7242,135 @@ function renderPipelineModal(){
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url; a.download = `pipeline_${isOffice?'office':viewLabel.replace(/\s+/g,'_')}_${toLocalDateStr(todayDate())}.csv`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+}
+// "WIP" (Work in Progress) — the pipeline view under a different name, enhanced with
+// clickable deal links, received/past-due dollar amounts, and a due-date range filter.
+// Per the user: no Deal Stage filter and no "min probability" slider, even though the
+// reference report screenshot had them — Start Date / End Date are the only filters wanted.
+// Location and month-by-month scheduled-payment columns from that same reference screenshot
+// are NOT included here: there's no city/location field on a Client/Listing account, and the
+// per-installment due-date fields aren't populated for most deals yet, so a monthly schedule
+// would be mostly blank. Received $ / Past Due $ are computed instead from the two commission
+// installments (paid flags + due dates) that already exist on each deal.
+function renderWipModal(){
+  const m = state.wipModal;
+  const isDBRole = state.currentUser.role==='Admin' || state.currentUser.role==='FullAccess';
+  const isOffice = m.viewUserId==='office';
+  const allRows = pipelineRows();
+  let rows = isOffice ? allRows : allRows.filter(r=>r.userId===m.viewUserId);
+  if(m.startDate) rows = rows.filter(r=>r.dueDate && r.dueDate>=m.startDate);
+  if(m.endDate) rows = rows.filter(r=>r.dueDate && r.dueDate<=m.endDate);
+  const stageLabel = s => LSR_STAGE_MAP[s] ? LSR_STAGE_MAP[s].name : s;
+  const viewLabel = isOffice ? 'Office Total' : nameForSplitUserId(m.viewUserId);
+  const totalFee = rows.reduce((s,r)=>s+r.waValue, 0);
+  const totalReceived = rows.reduce((s,r)=>s+r.receivedAmt, 0);
+  const totalPastDue = rows.reduce((s,r)=>s+r.pastDueAmt, 0);
+  const overlay = document.createElement('div');
+  overlay.className='modal-overlay'; overlay.style.zIndex=207;
+  overlay.innerHTML = `
+  <div class="modal-card" style="max-width:960px;">
+    <div class="modal-head"><div class="modal-title">📋 WIP — Work in Progress</div><button class="modal-close" data-action="closeWipModal">✕</button></div>
+    <div class="modal-body">
+      <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:14px;">
+        ${isDBRole ? `
+        <div class="field" style="margin:0;max-width:220px;">
+          <label>Broker</label>
+          <select id="wipViewSelect">
+            <option value="${state.currentUser.id}" ${m.viewUserId===state.currentUser.id?'selected':''}>Me</option>
+            <option value="office" ${isOffice?'selected':''}>Office Total</option>
+            ${USERS.filter(u=>u.id!==state.currentUser.id && u.commissionPlanId).map(u=>`<option value="${u.id}" ${m.viewUserId===u.id?'selected':''}>${escapeHtml(u.name)}</option>`).join('')}
+          </select>
+        </div>` : ''}
+        <div class="field" style="margin:0;"><label>Start Date</label><input type="date" id="wipStartDate" value="${escapeAttr(m.startDate||'')}"></div>
+        <div class="field" style="margin:0;"><label>End Date</label><input type="date" id="wipEndDate" value="${escapeAttr(m.endDate||'')}"></div>
+        ${(m.startDate||m.endDate) ? `<button class="btn secondary sm" data-action="clearWipDates">Clear dates</button>` : ''}
+      </div>
+      <div style="font-size:20px;font-weight:700;color:var(--edge);margin-bottom:14px;">
+        ${escapeHtml(viewLabel)} — ${totalFee.toLocaleString('en-US',{style:'currency',currency:'USD'})}
+      </div>
+      ${rows.length ? `
+      <div style="overflow-x:auto;">
+      <table style="width:100%;border-collapse:collapse;font-size:12.5px;">
+        <thead><tr style="text-align:left;border-bottom:1px solid var(--line);">
+          <th style="padding:6px 8px;">Deal</th>
+          ${isOffice ? `<th style="padding:6px 8px;">Broker</th>` : ''}
+          <th style="padding:6px 8px;text-align:right;">Broker Share %</th>
+          <th style="padding:6px 8px;text-align:right;">Broker's Fee (Weighted)</th>
+          <th style="padding:6px 8px;text-align:right;">Probability %</th>
+          <th style="padding:6px 8px;">Deal Stage</th>
+          <th style="padding:6px 8px;text-align:right;">Received $</th>
+          <th style="padding:6px 8px;text-align:right;">Past Due $</th>
+        </tr></thead>
+        <tbody>
+          ${rows.sort((a,b)=>b.waValue-a.waValue).map(r=>`
+          <tr style="border-bottom:1px solid var(--line-soft);">
+            <td style="padding:6px 8px;">${r.dealId ? `<a href="#" data-wipopendeal="${escapeAttr(r.dealId)}" data-listid="${escapeAttr(r.listId)}" data-client="${escapeAttr(r.clientId)}" style="color:var(--edge);text-decoration:none;">${escapeHtml(r.clientName)} — ${escapeHtml(r.dealName)}</a>` : `${escapeHtml(r.clientName)} — ${escapeHtml(r.dealName)}`}</td>
+            ${isOffice ? `<td style="padding:6px 8px;">${escapeHtml(nameForSplitUserId(r.userId))}</td>` : ''}
+            <td style="padding:6px 8px;text-align:right;">${r.pct}%</td>
+            <td style="padding:6px 8px;text-align:right;font-weight:600;">${r.waValue.toLocaleString('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0})}</td>
+            <td style="padding:6px 8px;text-align:right;">${Math.round(PIPELINE_STAGE_WA[r.stage]*100)}%</td>
+            <td style="padding:6px 8px;">${escapeHtml(stageLabel(r.stage))}</td>
+            <td style="padding:6px 8px;text-align:right;">${r.receivedAmt.toLocaleString('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0})}</td>
+            <td style="padding:6px 8px;text-align:right;${r.pastDueAmt>0?'color:#b3271c;font-weight:600;':''}">${r.pastDueAmt.toLocaleString('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0})}</td>
+          </tr>`).join('')}
+        </tbody>
+        <tfoot><tr style="border-top:2px solid var(--line);font-weight:700;">
+          <td style="padding:6px 8px;" colspan="${isOffice?2:1}">Total</td>
+          <td></td>
+          <td style="padding:6px 8px;text-align:right;">${totalFee.toLocaleString('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0})}</td>
+          <td></td><td></td>
+          <td style="padding:6px 8px;text-align:right;">${totalReceived.toLocaleString('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0})}</td>
+          <td style="padding:6px 8px;text-align:right;">${totalPastDue.toLocaleString('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0})}</td>
+        </tr></tfoot>
+      </table>
+      </div>` : `<div class="empty-state"><div class="big">Nothing in progress right now.</div><div class="tiny">No deals match this view and date range.</div></div>`}
+    </div>
+    <div class="modal-foot">
+      <button class="btn secondary sm" data-action="exportWip">⬇️ Export to Excel</button>
+      <button class="btn secondary" data-action="closeWipModal">Close</button>
+    </div>
+  </div>`;
+  document.getElementById('app').appendChild(overlay);
+  overlay.querySelectorAll('[data-action="closeWipModal"]').forEach(b=>b.onclick=()=>{ state.wipModal=null; render(); });
+  const viewSelect = document.getElementById('wipViewSelect');
+  if(viewSelect) viewSelect.onchange=()=>{ m.viewUserId = viewSelect.value; render(); };
+  const startEl = document.getElementById('wipStartDate');
+  if(startEl) startEl.onchange=()=>{ m.startDate = startEl.value; render(); };
+  const endEl = document.getElementById('wipEndDate');
+  if(endEl) endEl.onchange=()=>{ m.endDate = endEl.value; render(); };
+  const clearBtn = overlay.querySelector('[data-action="clearWipDates"]');
+  if(clearBtn) clearBtn.onclick=()=>{ m.startDate=''; m.endDate=''; render(); };
+  overlay.querySelectorAll('[data-wipopendeal]').forEach(el=>el.onclick=(ev)=>{
+    ev.preventDefault();
+    const listId = el.dataset.listid || 'clients';
+    state.wipModal = null;
+    state.modalStack = [
+      {kind:'client', listId, clientId:el.dataset.client, viewMode:'all'},
+      {kind:'deal', listId, clientId:el.dataset.client, dealId:el.dataset.wipopendeal}
+    ];
+    render();
+  });
+  const exportBtn = overlay.querySelector('[data-action="exportWip"]');
+  if(exportBtn) exportBtn.onclick=()=>{
+    const header = isOffice
+      ? ['Client','Deal','Broker','Broker Share %',"Broker's Fee (Weighted)",'Probability %','Deal Stage','Received $','Past Due $']
+      : ['Client','Deal','Broker Share %',"Broker's Fee (Weighted)",'Probability %','Deal Stage','Received $','Past Due $'];
+    const csvRows = rows.sort((a,b)=>b.waValue-a.waValue).map(r=>{
+      const base = [r.clientName, r.dealName];
+      if(isOffice) base.push(nameForSplitUserId(r.userId));
+      base.push(`${r.pct}%`, r.waValue.toFixed(2), `${Math.round(PIPELINE_STAGE_WA[r.stage]*100)}%`, stageLabel(r.stage), r.receivedAmt.toFixed(2), r.pastDueAmt.toFixed(2));
+      return base;
+    });
+    csvRows.push([]);
+    csvRows.push([isOffice ? 'Office Total' : `${viewLabel} Total`, '', ...(isOffice?['','','']:['','']), totalFee.toFixed(2), '', '', totalReceived.toFixed(2), totalPastDue.toFixed(2)]);
+    const csv = [header, ...csvRows].map(row=>row.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+    const blob = new Blob([csv], {type:'text/csv'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `wip_${isOffice?'office':viewLabel.replace(/\s+/g,'_')}_${toLocalDateStr(todayDate())}.csv`;
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
   };
@@ -12152,6 +12398,8 @@ document.addEventListener('keydown', (ev)=>{
   if(state.pendingUsersModalOpen){ state.pendingUsersModalOpen=false; render(); return; }
   if(state.pendingDeletionsOpen){ state.pendingDeletionsOpen=false; render(); return; }
   if(state.pipelineView){ state.pipelineView=null; render(); return; }
+  if(state.wipModal){ state.wipModal=null; render(); return; }
+  if(state.allTiersModalUserId){ state.allTiersModalUserId=null; render(); return; }
   if(state.loiImport){ state.loiImport=null; render(); return; }
   if(state.voiceNoteAmbiguous){ state.voiceNoteAmbiguous=null; flashToast('Cancelled — nothing was saved.'); render(); return; }
   if(state.signCallModal){ state.signCallModal=null; render(); return; }
