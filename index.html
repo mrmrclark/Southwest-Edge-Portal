@@ -373,6 +373,11 @@
     color:var(--ink-soft);font-size:15px;display:flex;align-items:center;justify-content:center;cursor:pointer;
   }
   .chat-mic-btn.recording{background:var(--bad);border-color:var(--bad);color:#fff;animation:voicePulse 1.2s ease-in-out infinite;}
+  .chat-item-chip{
+    font-size:12px;padding:5px 10px;border-radius:14px;border:1px solid var(--line);background:#fff;
+    color:var(--edge-darker);cursor:pointer;white-space:nowrap;max-width:260px;overflow:hidden;text-overflow:ellipsis;
+  }
+  .chat-item-chip:hover{background:var(--edge-lighter);border-color:var(--edge);}
 
   /* ---------- MODALS ---------- */
   .modal-overlay{
@@ -6687,7 +6692,79 @@ function renderPortalChatBubble(m){
   if(m.role==='error'){
     return `<div style="align-self:flex-start;max-width:85%;background:var(--edge-light);color:var(--bad);padding:8px 12px;border-radius:12px 12px 12px 2px;font-size:13px;line-height:1.4;">${escapeHtml(m.text)}</div>`;
   }
-  return `<div style="align-self:flex-start;max-width:85%;background:#fff;border:1px solid var(--line);color:var(--ink);padding:8px 12px;border-radius:12px 12px 12px 2px;font-size:13px;line-height:1.4;white-space:pre-wrap;">${escapeHtml(m.text)}</div>`;
+  const bubble = `<div style="align-self:flex-start;max-width:85%;background:#fff;border:1px solid var(--line);color:var(--ink);padding:8px 12px;border-radius:12px 12px 12px 2px;font-size:13px;line-height:1.4;white-space:pre-wrap;">${escapeHtml(m.text)}</div>`;
+  if(!m.items || !m.items.length) return bubble;
+  // Clickable chips for whatever real records the assistant actually looked up this turn
+  // — jumps straight into the same to-do/client screens the rest of the Portal uses,
+  // rather than the person having to go find the thing themselves after being told about it.
+  const chips = m.items.map(it=>{
+    if(it.kind==='todo'){
+      return `<button class="chat-item-chip" data-open-todo="${escapeAttr(it.id)}" title="Open this to-do">📋 ${escapeHtml(it.label)}</button>`;
+    }
+    return `<button class="chat-item-chip" data-open-client="${escapeAttr(it.listId)}|${escapeAttr(it.id)}" title="Open this account">${it.listId==='listings'?'🏢':'👤'} ${escapeHtml(it.label)}</button>`;
+  }).join('');
+  return bubble + `<div style="align-self:flex-start;max-width:100%;display:flex;flex-wrap:wrap;gap:6px;">${chips}</div>`;
+}
+function extractPortalChatItems(newMessages){
+  if(!Array.isArray(newMessages)) return [];
+  const toolUseNames = {};
+  newMessages.forEach(msg=>{
+    if(msg.role==='assistant' && Array.isArray(msg.content)){
+      msg.content.forEach(block=>{ if(block.type==='tool_use') toolUseNames[block.id] = block.name; });
+    }
+  });
+  const seen = new Set();
+  const items = [];
+  newMessages.forEach(msg=>{
+    if(msg.role!=='user' || !Array.isArray(msg.content)) return;
+    msg.content.forEach(block=>{
+      if(block.type!=='tool_result' || toolUseNames[block.tool_use_id]!=='get_portal_data') return;
+      let parsed;
+      try{ parsed = JSON.parse(block.content); }catch(e){ return; }
+      if(!parsed || parsed.error || !Array.isArray(parsed.data)) return;
+      if(parsed.resource==='todos'){
+        parsed.data.forEach(t=>{
+          const key = 'todo:'+t.id;
+          if(seen.has(key) || !t.id || !t.title) return;
+          seen.add(key);
+          items.push({kind:'todo', id:t.id, label:t.title});
+        });
+      } else if(parsed.resource==='clients' || parsed.resource==='listings'){
+        parsed.data.forEach(c=>{
+          const key = 'client:'+c.id;
+          if(seen.has(key) || !c.id || !c.name) return;
+          seen.add(key);
+          items.push({kind:'client', listId:parsed.resource, id:c.id, label:c.name});
+        });
+      }
+    });
+  });
+  return items.slice(0, 12); // keep the chip row from getting out of hand on a big list
+}
+function printPortalChat(){
+  const msgs = state.portalChatMessages || [];
+  if(!msgs.length){ flashToast('Nothing to print yet — ask the assistant something first.'); return; }
+  const win = window.open('', '_blank', 'width=720,height=900');
+  if(!win){ flashToast('Your browser blocked the print window — please allow pop-ups for this site and try again.'); return; }
+  const rows = msgs.filter(m=>m.role!=='error').map(m=>{
+    const who = m.role==='user' ? (state.currentUser.name||'You') : 'Edgy';
+    return `<div style="margin-bottom:16px;"><div style="font-weight:700;font-size:11px;letter-spacing:.03em;text-transform:uppercase;color:#5B6270;margin-bottom:3px;">${escapeHtml(who)}</div><div style="font-size:13.5px;line-height:1.55;white-space:pre-wrap;">${escapeHtml(m.text||'')}</div></div>`;
+  }).join('');
+  win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Edgy, your AI Assistant</title>
+  <style>
+    body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:#20242C;padding:32px;max-width:680px;margin:0 auto;}
+    h1{font-size:16px;margin:0 0 2px;}
+    .sub{color:#5B6270;font-size:12px;margin-bottom:24px;}
+    @media print{ body{padding:0;} }
+  </style>
+  </head><body>
+    <h1>🤖 Edgy, your AI Assistant</h1>
+    <div class="sub">${escapeHtml(state.currentUser.name||'')} — ${escapeHtml(new Date().toLocaleString('en-US'))}</div>
+    ${rows}
+  </body></html>`);
+  win.document.close();
+  win.focus();
+  setTimeout(()=>{ try{ win.print(); }catch(e){} }, 300);
 }
 function chatSpeechSupported(){
   return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
@@ -6701,7 +6778,7 @@ function renderPortalChatWidget(){
   const hasVoiceNoteFab = state.currentUser.email==='mclark@edge-re.com';
   if(!state.portalChatOpen){
     el.innerHTML = `
-    <button id="portalChatToggle" class="portal-chat-fab${hasVoiceNoteFab?' stacked':''}" title="Ask the Portal Assistant">🤖</button>`;
+    <button id="portalChatToggle" class="portal-chat-fab${hasVoiceNoteFab?' stacked':''}" title="Ask Edgy, your AI Assistant">🤖</button>`;
     document.getElementById('app').appendChild(el);
     document.getElementById('portalChatToggle').onclick=()=>{ state.portalChatOpen=true; render(); };
     return;
@@ -6712,11 +6789,14 @@ function renderPortalChatWidget(){
   el.innerHTML = `
   <div style="position:fixed;bottom:24px;right:24px;width:360px;max-width:calc(100vw - 32px);height:520px;max-height:calc(100vh - 48px);background:var(--paper);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);z-index:380;display:flex;flex-direction:column;overflow:hidden;">
     <div style="background:var(--edge);color:#fff;padding:12px 16px;display:flex;align-items:center;justify-content:space-between;flex:none;">
-      <div style="font-weight:600;font-size:13.5px;">🤖 Portal Assistant</div>
-      <button id="portalChatClose" style="background:none;border:none;color:#fff;font-size:16px;cursor:pointer;line-height:1;">✕</button>
+      <div><div style="font-weight:600;font-size:13.5px;">🤖 Edgy</div><div style="font-size:10.5px;opacity:.85;">your AI Assistant</div></div>
+      <div style="display:flex;align-items:center;gap:12px;">
+        <button id="portalChatPrint" title="Print this conversation" style="background:none;border:none;color:#fff;font-size:15px;cursor:pointer;line-height:1;">🖨️</button>
+        <button id="portalChatClose" title="Close" style="background:none;border:none;color:#fff;font-size:16px;cursor:pointer;line-height:1;">✕</button>
+      </div>
     </div>
     <div id="portalChatMessages" style="flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px;background:var(--canvas);">
-      ${msgs.length===0 ? `<div class="tiny" style="color:var(--ink-soft);text-align:center;margin-top:20px;">Ask about your deals, clients, or to-dos — or ask me to log a note or a sign call. ${micSupported?'Tap the mic to ask out loud.':''}</div>` : msgs.map(m=>renderPortalChatBubble(m)).join('')}
+      ${msgs.length===0 ? `<div class="tiny" style="color:var(--ink-soft);text-align:center;margin-top:20px;">Hi, I'm Edgy 👋 Ask about your deals, clients, or to-dos — or ask me to log a note or a sign call. ${micSupported?'Tap the mic to ask out loud.':''}</div>` : msgs.map(m=>renderPortalChatBubble(m)).join('')}
       ${state.portalChatSending ? `<div class="tiny" style="color:var(--ink-soft);">Thinking…</div>` : ''}
       ${recording ? `<div class="tiny" style="color:var(--bad);">Listening…</div>` : ''}
     </div>
@@ -6728,6 +6808,18 @@ function renderPortalChatWidget(){
   </div>`;
   document.getElementById('app').appendChild(el);
   document.getElementById('portalChatClose').onclick=()=>{ state.portalChatOpen=false; render(); };
+  document.getElementById('portalChatPrint').onclick=()=>printPortalChat();
+  el.querySelectorAll('[data-open-todo]').forEach(b=>b.onclick=()=>{
+    state.portalChatOpen=false;
+    openTodoDetail(b.dataset.openTodo);
+    render();
+  });
+  el.querySelectorAll('[data-open-client]').forEach(b=>b.onclick=()=>{
+    const [listId,id] = b.dataset.openClient.split('|');
+    state.portalChatOpen=false;
+    openClientModal(listId,id);
+    render();
+  });
   const input = document.getElementById('portalChatInput');
   const send = ()=>{
     const text = input.value.trim();
@@ -6808,8 +6900,9 @@ async function sendPortalChatMessage(text){
     if(!res.ok || data.error){
       state.portalChatMessages.push({role:'error', text: data.error || "Something went wrong — please try again."});
     } else {
+      const items = extractPortalChatItems(data.newMessages);
       if(Array.isArray(data.newMessages)) state.portalChatHistory.push(...data.newMessages);
-      state.portalChatMessages.push({role:'assistant', text: data.reply || "(no response)"});
+      state.portalChatMessages.push({role:'assistant', text: data.reply || "(no response)", items});
     }
   } catch(e){
     console.error('Portal chat error:', e);
