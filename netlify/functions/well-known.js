@@ -40,4 +40,3 @@ exports.handler = async (event) => {
 
   return { statusCode: 404, body: 'Not found' };
 };
-};
