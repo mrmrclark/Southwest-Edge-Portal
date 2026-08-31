@@ -13,3 +13,21 @@
   from = "/.well-known/oauth-protected-resource"
   to = "/.netlify/functions/well-known"
   status = 200
+
+[[redirects]]
+  from = "/authorize"
+  to = "https://ugtlyzwvnhmcphtqkbke.supabase.co/functions/v1/mcp-oauth/authorize"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/token"
+  to = "https://ugtlyzwvnhmcphtqkbke.supabase.co/functions/v1/mcp-oauth/token"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/register"
+  to = "https://ugtlyzwvnhmcphtqkbke.supabase.co/functions/v1/mcp-oauth/register"
+  status = 200
+  force = true
