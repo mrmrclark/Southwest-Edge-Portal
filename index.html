@@ -2729,6 +2729,7 @@ function render(){
   if(state.taskfireImport) renderTaskFireImportModal();
   if(state.mapsImport) renderMapsImportModal();
   wireTodoRowHandlers(app);
+  renderPortalChatWidget();
   if(state.undoToast) renderUndoToast();
   if(state.toast) showToastNow();
 }
@@ -6664,6 +6665,84 @@ function renderConnectAssistantModal(){
       try{ document.execCommand('copy'); done(); }catch(e){}
     }
   };
+}
+function renderPortalChatBubble(m){
+  if(m.role==='user'){
+    return `<div style="align-self:flex-end;max-width:85%;background:var(--edge);color:#fff;padding:8px 12px;border-radius:12px 12px 2px 12px;font-size:13px;line-height:1.4;white-space:pre-wrap;">${escapeHtml(m.text)}</div>`;
+  }
+  if(m.role==='error'){
+    return `<div style="align-self:flex-start;max-width:85%;background:var(--edge-light);color:var(--bad);padding:8px 12px;border-radius:12px 12px 12px 2px;font-size:13px;line-height:1.4;">${escapeHtml(m.text)}</div>`;
+  }
+  return `<div style="align-self:flex-start;max-width:85%;background:#fff;border:1px solid var(--line);color:var(--ink);padding:8px 12px;border-radius:12px 12px 12px 2px;font-size:13px;line-height:1.4;white-space:pre-wrap;">${escapeHtml(m.text)}</div>`;
+}
+function renderPortalChatWidget(){
+  if(!state.portalChatMessages) state.portalChatMessages = [];
+  const el = document.createElement('div');
+  el.id = 'portalChatWidget';
+  if(!state.portalChatOpen){
+    el.innerHTML = `
+    <button id="portalChatToggle" title="Ask the Portal Assistant" style="position:fixed;bottom:24px;right:24px;width:56px;height:56px;border-radius:50%;background:var(--edge);color:#fff;border:none;box-shadow:var(--shadow);font-size:24px;z-index:380;display:flex;align-items:center;justify-content:center;">🤖</button>`;
+    document.getElementById('app').appendChild(el);
+    document.getElementById('portalChatToggle').onclick=()=>{ state.portalChatOpen=true; render(); };
+    return;
+  }
+  const msgs = state.portalChatMessages;
+  el.innerHTML = `
+  <div style="position:fixed;bottom:24px;right:24px;width:360px;max-width:calc(100vw - 32px);height:520px;max-height:calc(100vh - 48px);background:var(--paper);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);z-index:380;display:flex;flex-direction:column;overflow:hidden;">
+    <div style="background:var(--edge);color:#fff;padding:12px 16px;display:flex;align-items:center;justify-content:space-between;flex:none;">
+      <div style="font-weight:600;font-size:13.5px;">🤖 Portal Assistant</div>
+      <button id="portalChatClose" style="background:none;border:none;color:#fff;font-size:16px;cursor:pointer;line-height:1;">✕</button>
+    </div>
+    <div id="portalChatMessages" style="flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px;background:var(--canvas);">
+      ${msgs.length===0 ? `<div class="tiny" style="color:var(--ink-soft);text-align:center;margin-top:20px;">Ask about your deals, clients, or to-dos — or ask me to log a note or a sign call.</div>` : msgs.map(m=>renderPortalChatBubble(m)).join('')}
+      ${state.portalChatSending ? `<div class="tiny" style="color:var(--ink-soft);">Thinking…</div>` : ''}
+    </div>
+    <div style="flex:none;padding:10px;border-top:1px solid var(--line);display:flex;gap:8px;background:var(--paper);">
+      <input id="portalChatInput" type="text" placeholder="Ask a question…" style="flex:1;padding:9px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;" ${state.portalChatSending?'disabled':''}>
+      <button id="portalChatSend" class="btn sm" ${state.portalChatSending?'disabled':''}>Send</button>
+    </div>
+  </div>`;
+  document.getElementById('app').appendChild(el);
+  document.getElementById('portalChatClose').onclick=()=>{ state.portalChatOpen=false; render(); };
+  const input = document.getElementById('portalChatInput');
+  const send = ()=>{
+    const text = input.value.trim();
+    if(!text || state.portalChatSending) return;
+    sendPortalChatMessage(text);
+  };
+  document.getElementById('portalChatSend').onclick = send;
+  input.onkeydown = (e)=>{ if(e.key==='Enter'){ e.preventDefault(); send(); } };
+  input.focus();
+  const msgBox = document.getElementById('portalChatMessages');
+  msgBox.scrollTop = msgBox.scrollHeight;
+}
+async function sendPortalChatMessage(text){
+  if(!state.portalChatHistory) state.portalChatHistory = [];
+  state.portalChatMessages.push({role:'user', text});
+  state.portalChatHistory.push({role:'user', content: text});
+  state.portalChatSending = true;
+  render();
+  try{
+    const { data: sessionData } = await supabaseClient.auth.getSession();
+    const jwt = sessionData?.session?.access_token;
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/portal-chat`, {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json', 'Authorization': `Bearer ${jwt}` },
+      body: JSON.stringify({ messages: state.portalChatHistory, userName: state.currentUser.name })
+    });
+    const data = await res.json();
+    if(!res.ok || data.error){
+      state.portalChatMessages.push({role:'error', text: data.error || "Something went wrong — please try again."});
+    } else {
+      if(Array.isArray(data.newMessages)) state.portalChatHistory.push(...data.newMessages);
+      state.portalChatMessages.push({role:'assistant', text: data.reply || "(no response)"});
+    }
+  } catch(e){
+    console.error('Portal chat error:', e);
+    state.portalChatMessages.push({role:'error', text:"Couldn't reach the assistant — check your connection and try again."});
+  }
+  state.portalChatSending = false;
+  render();
 }
 function renderDashboardMain(){
   const tier = state.currentUser.dashboardTier || 'standard';
