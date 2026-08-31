@@ -1,5 +1,15 @@
 [[redirects]]
-from = "https://southwestedge.netlify.app/*"
-to = "https://southwestedge.net/:splat"
-status = 301
-force = true
+  from = "https://southwestedge.netlify.app/*"
+  to = "https://southwestedge.net/:splat"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "/.well-known/oauth-authorization-server"
+  to = "/.netlify/functions/well-known"
+  status = 200
+
+[[redirects]]
+  from = "/.well-known/oauth-protected-resource"
+  to = "/.netlify/functions/well-known"
+  status = 200
