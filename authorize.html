@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Southwest Edge Portal</title>
+  <style>
+    body{font-family:sans-serif;max-width:380px;margin:80px auto;padding:0 20px;}
+    input{width:100%;padding:10px;margin:6px 0;border:1px solid #ccc;border-radius:6px;box-sizing:border-box;}
+    button{width:100%;padding:10px;background:#E1531A;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:15px;margin-top:10px;}
+    button:disabled{opacity:.6;cursor:default;}
+    h2{color:#E1531A;}
+    .err{color:#c0392b;font-size:13px;min-height:18px;}
+  </style>
+</head>
+<body>
+  <h2>Southwest Edge Portal</h2>
+  <p>Log in with your Portal account to let Claude access your own data.</p>
+  <form id="f">
+    <input type="email" id="email" placeholder="Email" required>
+    <input type="password" id="password" placeholder="Password" required>
+    <div class="err" id="err"></div>
+    <button type="submit" id="submitBtn">Log In &amp; Authorize</button>
+  </form>
+
+  <script>
+    // This page used to be rendered server-side by the mcp-oauth Supabase function,
+    // which injected redirect_uri/state directly into the HTML before Netlify proxied
+    // it through — that proxy trip was stripping the Content-Type header, so the page
+    // rendered as raw text instead of a form. Serving this as a real static file fixes
+    // that; it reads the same two params from the URL itself instead of having them
+    // baked in server-side. The actual login call below still goes straight to
+    // Supabase as a plain JSON fetch(), same as before — that part was never broken.
+
+    const BASE_URL = 'https://ugtlyzwvnhmcphtqkbke.supabase.co/functions/v1/mcp-oauth';
+
+    const params = new URLSearchParams(window.location.search);
+    const redirectUri = params.get('redirect_uri') || '';
+    const state = params.get('state') || '';
+
+    const form = document.getElementById('f');
+    const errEl = document.getElementById('err');
+    const submitBtn = document.getElementById('submitBtn');
+
+    if (!redirectUri) {
+      errEl.textContent = 'Missing redirect_uri — this link looks incomplete. Please restart the connection from Claude.';
+      submitBtn.disabled = true;
+    }
+
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const email = document.getElementById('email').value;
+      const password = document.getElementById('password').value;
+      errEl.textContent = 'Logging in...';
+      submitBtn.disabled = true;
+      try {
+        const res = await fetch(BASE_URL + '/do-login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password }),
+        });
+        const data = await res.json();
+        if (data.error) {
+          errEl.textContent = data.error;
+          submitBtn.disabled = false;
+          return;
+        }
+        window.location.href = redirectUri + '?code=' + encodeURIComponent(data.code) + '&state=' + encodeURIComponent(state);
+      } catch (err) {
+        errEl.textContent = 'Something went wrong — please try again.';
+        submitBtn.disabled = false;
+      }
+    };
+  </script>
+</body>
+</html>
