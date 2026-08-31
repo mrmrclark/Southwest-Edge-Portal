@@ -15,18 +15,23 @@
   status = 200
 
 [[redirects]]
+  # Served as a real static file (authorize.html) instead of proxying to the
+  # Supabase edge function — the proxy trip was dropping the Content-Type
+  # header, so the login form rendered as raw HTML text instead of a page.
   from = "/authorize"
   to = "/authorize.html"
   status = 200
 
 [[redirects]]
+  # Proxied through a Netlify Function (server-side) instead of redirecting
+  # straight to the external Supabase URL — that external-redirect mechanism
+  # is what mangled headers on /authorize, and was likely doing the same
+  # here even though the JSON body still came through readable.
   from = "/token"
-  to = "https://ugtlyzwvnhmcphtqkbke.supabase.co/functions/v1/mcp-oauth/token"
+  to = "/.netlify/functions/oauth-token"
   status = 200
-  force = true
 
 [[redirects]]
   from = "/register"
-  to = "https://ugtlyzwvnhmcphtqkbke.supabase.co/functions/v1/mcp-oauth/register"
+  to = "/.netlify/functions/oauth-register"
   status = 200
-  force = true
