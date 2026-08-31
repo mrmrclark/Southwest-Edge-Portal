@@ -22,7 +22,11 @@ exports.handler = async (event) => {
       statusCode: 200,
       headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
       body: JSON.stringify({
-        issuer: 'https://southwestedge.net',
+        // Must match the issuer that actually signs the tokens returned by /token
+        // (a Supabase Auth session), not the domain the discovery docs live on —
+        // Claude validates this against the token's own "iss" claim and silently
+        // aborts before ever calling /token if they don't match.
+        issuer: 'https://ugtlyzwvnhmcphtqkbke.supabase.co/auth/v1',
         authorization_endpoint: 'https://southwestedge.net/authorize',
         token_endpoint: 'https://southwestedge.net/token',
         registration_endpoint: 'https://southwestedge.net/register',
@@ -35,4 +39,5 @@ exports.handler = async (event) => {
   }
 
   return { statusCode: 404, body: 'Not found' };
+};
 };
