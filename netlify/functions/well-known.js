@@ -23,9 +23,9 @@ exports.handler = async (event) => {
       headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
       body: JSON.stringify({
         issuer: 'https://southwestedge.net',
-        authorization_endpoint: 'https://ugtlyzwvnhmcphtqkbke.supabase.co/functions/v1/mcp-oauth/authorize',
-        token_endpoint: 'https://ugtlyzwvnhmcphtqkbke.supabase.co/functions/v1/mcp-oauth/token',
-        registration_endpoint: 'https://ugtlyzwvnhmcphtqkbke.supabase.co/functions/v1/mcp-oauth/register',
+        authorization_endpoint: 'https://southwestedge.net/authorize',
+        token_endpoint: 'https://southwestedge.net/token',
+        registration_endpoint: 'https://southwestedge.net/register',
         response_types_supported: ['code'],
         grant_types_supported: ['authorization_code', 'refresh_token'],
         code_challenge_methods_supported: ['S256', 'plain'],
