@@ -5186,7 +5186,7 @@ function renderShell(){
     <div style="${hideSidebar?'display:none;':''}">${renderSidebar()}</div>
     <div class="main" style="${hideMain?'display:none;':''}position:relative;">
       ${renderTopbar()}
-      <div class="content"><div class="content-flex"><div class="content-inner${(state.mainView.type==='dashboard'||state.mainView.type==='wip')?' wide':''}" id="mainContentInner">${renderMainContent()}</div>${renderSidePanel()}</div></div>
+      <div class="content"><div class="content-flex"><div class="content-inner${(state.mainView.type==='dashboard'||state.mainView.type==='wip')?' wide':''}" id="mainContentInner">${renderMainContent()}</div>${state.mainView.type==='wip' ? '' : renderSidePanel()}</div></div>
     </div>
   </div>
   <button class="fab" data-action="newTodo" title="New To-Do">+</button>
@@ -7329,17 +7329,60 @@ function renderPipelineModal(){
     URL.revokeObjectURL(url);
   };
 }
+// WIP's row source: matches the Dashboard's own "All Deals" scope exactly (account access —
+// created it, or authorized on it), NOT the old pipelineRows()/commission-split scoping —
+// that was the root cause of WIP only showing a handful of deals: it required the viewer to
+// be personally on a deal's commission split. Now WIP shows every one of a person's active
+// LOI-and-higher deals (same set the Dashboard and "All Deals" smart list already show),
+// whether or not they happen to be on the split. When they ARE on a deal's split, Broker
+// Share % and the weighted fee reflect their actual cut; when they're not (account access
+// without being added to the split yet), the full deal value is shown instead and Broker
+// Share % is blank — there's no personal "share" to compute in that case. "Office Total"
+// is one row per deal (not one row per split), full deal value, every producer's names
+// listed in the Broker column.
+function wipRowsForUser(viewUserId){
+  const isOffice = viewUserId==='office' || !viewUserId;
+  const base = allDealsForUser(isOffice ? null : viewUserId);
+  const rows = [];
+  base.forEach(r=>{
+    const d = r.deal, c = r.client;
+    const wa = PIPELINE_STAGE_WA[d.stage];
+    if(!wa) return; // defensive — allDealsForUser already excludes dead/prospect
+    const totalFee = parseFloat(d.totalFee) || 0;
+    const mySplit = !isOffice ? (d.splits||[]).find(s=>s.userId===viewUserId) : null;
+    const pct = mySplit ? (parseFloat(mySplit.pct)||0) : null;
+    const shareFactor = pct!=null ? pct/100 : 1;
+    const waValue = totalFee * wa * shareFactor;
+    let receivedAmt = 0, pastDueAmt = 0;
+    if(totalFee>0){
+      const today = todayDate();
+      if(d.commission1Paid) receivedAmt += (totalFee/2) * shareFactor;
+      if(d.commission2Paid) receivedAmt += (totalFee/2) * shareFactor;
+      if(!d.commission1Paid && d.commission1DueDate && new Date(d.commission1DueDate+'T00:00:00')<today) pastDueAmt += (totalFee/2) * shareFactor;
+      if(!d.commission2Paid && d.commission2DueDate && new Date(d.commission2DueDate+'T00:00:00')<today) pastDueAmt += (totalFee/2) * shareFactor;
+    }
+    const brokerNames = (d.splits||[]).map(s=>nameForSplitUserId(s.userId)).filter(Boolean).join(', ') || '—';
+    rows.push({
+      clientId:c.id, clientName:c.name, dealName:d.name, listId:r.listId, dealId:d.id,
+      stage:d.stage, totalFee, pct, waValue, brokerNames,
+      dueDate: d.dueDate ? toLocalDateStr(d.dueDate) : null,
+      receivedAmt, pastDueAmt,
+    });
+  });
+  return rows;
+}
 // "WIP" (Work in Progress) — the pipeline view under a different name, now its own full
 // page (like Clients/Listings) rather than a modal, so there's room to see every deal at
-// once. Enhanced with clickable deal links, received/past-due dollar amounts, and a
-// due-date range filter. Per the user: no Deal Stage filter and no "min probability"
-// slider, even though the reference report screenshot had them — Start Date / End Date
-// are the only filters wanted. Location and month-by-month scheduled-payment columns from
-// that same reference screenshot are NOT included here: there's no city/location field on
-// a Client/Listing account, and the per-installment due-date fields aren't populated for
-// most deals yet, so a monthly schedule would be mostly blank. Received $ / Past Due $ are
-// computed instead from the two commission installments (paid flags + due dates) that
-// already exist on each deal.
+// once — the side widgets panel (Quick Links/Calendar/Weather) is hidden here too, so the
+// table gets the full page width. Enhanced with clickable deal links, received/past-due
+// dollar amounts, and a due-date range filter. Per the user: no Deal Stage filter and no
+// "min probability" slider, even though the reference report screenshot had them — Start
+// Date / End Date are the only filters wanted. Location and month-by-month
+// scheduled-payment columns from that same reference screenshot are NOT included here:
+// there's no city/location field on a Client/Listing account, and the per-installment
+// due-date fields aren't populated for most deals yet, so a monthly schedule would be
+// mostly blank. Received $ / Past Due $ are computed instead from the two commission
+// installments (paid flags + due dates) that already exist on each deal.
 //
 // Permissions match the Dashboard's own tier system exactly, so what a person sees here
 // lines up with what they see there: companyWide/fullOffice (Principals, Office/Admin
@@ -7358,15 +7401,15 @@ function renderWipView(){
   const isFull = tier==='companyWide' || tier==='fullOffice';
   if(!isFull) m.viewUserId = state.currentUser.id; // standard producers only ever see their own numbers, even if state was tampered with
   const isOffice = isFull && m.viewUserId==='office';
-  const allRows = pipelineRows();
-  let rows = isOffice ? allRows : allRows.filter(r=>r.userId===m.viewUserId);
+  let rows = wipRowsForUser(isOffice ? 'office' : m.viewUserId);
   if(m.startDate) rows = rows.filter(r=>r.dueDate && r.dueDate>=m.startDate);
   if(m.endDate) rows = rows.filter(r=>r.dueDate && r.dueDate<=m.endDate);
   const stageLabel = s => LSR_STAGE_MAP[s] ? LSR_STAGE_MAP[s].name : s;
   const viewLabel = isOffice ? 'Office Total' : nameForSplitUserId(m.viewUserId);
-  const totalFee = rows.reduce((s,r)=>s+r.waValue, 0);
-  const totalReceived = rows.reduce((s,r)=>s+r.receivedAmt, 0);
-  const totalPastDue = rows.reduce((s,r)=>s+r.pastDueAmt, 0);
+  const sumTotalFee = rows.reduce((s,r)=>s+r.totalFee, 0);
+  const sumWaValue = rows.reduce((s,r)=>s+r.waValue, 0);
+  const sumReceived = rows.reduce((s,r)=>s+r.receivedAmt, 0);
+  const sumPastDue = rows.reduce((s,r)=>s+r.pastDueAmt, 0);
   return `
   <div style="margin-bottom:12px;"><a href="#" data-action="wipBackToDashboard" style="color:var(--ink-soft);font-size:12.5px;text-decoration:none;">← Back to Dashboard</a></div>
   <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:14px;">
@@ -7385,7 +7428,7 @@ function renderWipView(){
     <button class="btn secondary sm" data-action="exportWip">⬇️ Export to Excel</button>
   </div>
   <div style="font-size:22px;font-weight:700;color:var(--edge);margin-bottom:14px;">
-    ${escapeHtml(viewLabel)} — ${totalFee.toLocaleString('en-US',{style:'currency',currency:'USD'})}
+    ${escapeHtml(viewLabel)} — ${sumWaValue.toLocaleString('en-US',{style:'currency',currency:'USD'})} <span style="font-size:13px;font-weight:400;color:var(--ink-soft);">weighted (${sumTotalFee.toLocaleString('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0})} total fee across ${rows.length} deal${rows.length===1?'':'s'})</span>
   </div>
   ${rows.length ? `
   <div style="overflow-x:auto;">
@@ -7393,8 +7436,9 @@ function renderWipView(){
     <thead><tr style="text-align:left;border-bottom:1px solid var(--line);">
       <th style="padding:6px 8px;">Deal</th>
       ${isOffice ? `<th style="padding:6px 8px;">Broker</th>` : ''}
+      <th style="padding:6px 8px;text-align:right;">Total Fee</th>
       <th style="padding:6px 8px;text-align:right;">Broker Share %</th>
-      <th style="padding:6px 8px;text-align:right;">Broker's Fee (Weighted)</th>
+      <th style="padding:6px 8px;text-align:right;">WA (Broker's Fee Weighted)</th>
       <th style="padding:6px 8px;text-align:right;">Probability %</th>
       <th style="padding:6px 8px;">Deal Stage</th>
       <th style="padding:6px 8px;text-align:right;">Received $</th>
@@ -7404,8 +7448,9 @@ function renderWipView(){
       ${rows.sort((a,b)=>b.waValue-a.waValue).map(r=>`
       <tr style="border-bottom:1px solid var(--line-soft);">
         <td style="padding:6px 8px;">${r.dealId ? `<a href="#" data-opendealdirect="${escapeAttr(r.dealId)}" data-listid="${escapeAttr(r.listId)}" data-client="${escapeAttr(r.clientId)}" style="color:var(--edge);text-decoration:none;">${escapeHtml(r.clientName)} — ${escapeHtml(r.dealName)}</a>` : `${escapeHtml(r.clientName)} — ${escapeHtml(r.dealName)}`}</td>
-        ${isOffice ? `<td style="padding:6px 8px;">${escapeHtml(nameForSplitUserId(r.userId))}</td>` : ''}
-        <td style="padding:6px 8px;text-align:right;">${r.pct}%</td>
+        ${isOffice ? `<td style="padding:6px 8px;">${escapeHtml(r.brokerNames)}</td>` : ''}
+        <td style="padding:6px 8px;text-align:right;">${r.totalFee.toLocaleString('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0})}</td>
+        <td style="padding:6px 8px;text-align:right;">${r.pct!=null ? r.pct+'%' : '—'}</td>
         <td style="padding:6px 8px;text-align:right;font-weight:600;">${r.waValue.toLocaleString('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0})}</td>
         <td style="padding:6px 8px;text-align:right;">${Math.round(PIPELINE_STAGE_WA[r.stage]*100)}%</td>
         <td style="padding:6px 8px;">${escapeHtml(stageLabel(r.stage))}</td>
@@ -7415,11 +7460,12 @@ function renderWipView(){
     </tbody>
     <tfoot><tr style="border-top:2px solid var(--line);font-weight:700;">
       <td style="padding:6px 8px;" colspan="${isOffice?2:1}">Total</td>
+      <td style="padding:6px 8px;text-align:right;">${sumTotalFee.toLocaleString('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0})}</td>
       <td></td>
-      <td style="padding:6px 8px;text-align:right;">${totalFee.toLocaleString('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0})}</td>
+      <td style="padding:6px 8px;text-align:right;">${sumWaValue.toLocaleString('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0})}</td>
       <td></td><td></td>
-      <td style="padding:6px 8px;text-align:right;">${totalReceived.toLocaleString('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0})}</td>
-      <td style="padding:6px 8px;text-align:right;">${totalPastDue.toLocaleString('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0})}</td>
+      <td style="padding:6px 8px;text-align:right;">${sumReceived.toLocaleString('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0})}</td>
+      <td style="padding:6px 8px;text-align:right;">${sumPastDue.toLocaleString('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0})}</td>
     </tr></tfoot>
   </table>
   </div>` : `<div class="empty-state"><div class="big">Nothing in progress right now.</div><div class="tiny">No deals match this view and date range.</div></div>`}`;
@@ -7429,26 +7475,26 @@ function wipExportCsv(){
   const isFull = tier==='companyWide' || tier==='fullOffice';
   const m = state.wipView || {viewUserId: state.currentUser.id, startDate:'', endDate:''};
   const isOffice = isFull && m.viewUserId==='office';
-  const allRows = pipelineRows();
-  let rows = isOffice ? allRows : allRows.filter(r=>r.userId===(isFull?m.viewUserId:state.currentUser.id));
+  let rows = wipRowsForUser(isOffice ? 'office' : (isFull?m.viewUserId:state.currentUser.id));
   if(m.startDate) rows = rows.filter(r=>r.dueDate && r.dueDate>=m.startDate);
   if(m.endDate) rows = rows.filter(r=>r.dueDate && r.dueDate<=m.endDate);
   const stageLabel = s => LSR_STAGE_MAP[s] ? LSR_STAGE_MAP[s].name : s;
   const viewLabel = isOffice ? 'Office Total' : nameForSplitUserId(isFull?m.viewUserId:state.currentUser.id);
-  const totalFee = rows.reduce((s,r)=>s+r.waValue, 0);
-  const totalReceived = rows.reduce((s,r)=>s+r.receivedAmt, 0);
-  const totalPastDue = rows.reduce((s,r)=>s+r.pastDueAmt, 0);
+  const sumTotalFee = rows.reduce((s,r)=>s+r.totalFee, 0);
+  const sumWaValue = rows.reduce((s,r)=>s+r.waValue, 0);
+  const sumReceived = rows.reduce((s,r)=>s+r.receivedAmt, 0);
+  const sumPastDue = rows.reduce((s,r)=>s+r.pastDueAmt, 0);
   const header = isOffice
-    ? ['Client','Deal','Broker','Broker Share %',"Broker's Fee (Weighted)",'Probability %','Deal Stage','Received $','Past Due $']
-    : ['Client','Deal','Broker Share %',"Broker's Fee (Weighted)",'Probability %','Deal Stage','Received $','Past Due $'];
+    ? ['Client','Deal','Broker','Total Fee','Broker Share %',"WA (Broker's Fee Weighted)",'Probability %','Deal Stage','Received $','Past Due $']
+    : ['Client','Deal','Total Fee','Broker Share %',"WA (Broker's Fee Weighted)",'Probability %','Deal Stage','Received $','Past Due $'];
   const csvRows = rows.sort((a,b)=>b.waValue-a.waValue).map(r=>{
     const base = [r.clientName, r.dealName];
-    if(isOffice) base.push(nameForSplitUserId(r.userId));
-    base.push(`${r.pct}%`, r.waValue.toFixed(2), `${Math.round(PIPELINE_STAGE_WA[r.stage]*100)}%`, stageLabel(r.stage), r.receivedAmt.toFixed(2), r.pastDueAmt.toFixed(2));
+    if(isOffice) base.push(r.brokerNames);
+    base.push(r.totalFee.toFixed(2), r.pct!=null ? `${r.pct}%` : '', r.waValue.toFixed(2), `${Math.round(PIPELINE_STAGE_WA[r.stage]*100)}%`, stageLabel(r.stage), r.receivedAmt.toFixed(2), r.pastDueAmt.toFixed(2));
     return base;
   });
   csvRows.push([]);
-  csvRows.push([isOffice ? 'Office Total' : `${viewLabel} Total`, '', ...(isOffice?['','','']:['','']), totalFee.toFixed(2), '', '', totalReceived.toFixed(2), totalPastDue.toFixed(2)]);
+  csvRows.push([isOffice ? 'Office Total' : `${viewLabel} Total`, '', ...(isOffice?['']:[]), sumTotalFee.toFixed(2), '', sumWaValue.toFixed(2), '', '', sumReceived.toFixed(2), sumPastDue.toFixed(2)]);
   const csv = [header, ...csvRows].map(row=>row.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
   const blob = new Blob([csv], {type:'text/csv'});
   const url = URL.createObjectURL(blob);
