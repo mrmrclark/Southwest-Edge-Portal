@@ -4841,12 +4841,16 @@ function renderProjectsListMain(){
     const doneCount = (p.checklistItems||[]).filter(i=>i.done).length;
     const totalChecklist = (p.checklistItems||[]).length;
     const owner = USERS.find(u=>u.id===p.assignedTo);
+    const status = dueStatus(p.dueDate);
+    const dueLabel = p.dueDate ? fmtDate(p.dueDate) : 'No date';
+    const dueCls = status==='overdue' ? 'overdue' : (status==='today' ? 'today' : '');
     return `
     <div class="row-card" data-openproject="${p.id}">
       <div class="nav-icon" style="font-size:20px;">🗂️</div>
       <div class="row-body">
         <div class="row-title">${escapeHtml(p.title)}</div>
         <div class="row-meta">
+          <span class="due ${dueCls}">${dueLabel}</span>
           <span class="tiny">${escapeHtml(getTodoLinkSummary(p))}</span>
           ${owner ? `<span class="pill gray">${escapeHtml(owner.name)}</span>` : ''}
           <span class="pill gray">${childCount} to-do${childCount===1?'':'s'}</span>
@@ -7172,12 +7176,32 @@ function renderDealStageChart(userId, yearFilter){
     return yearFilter==='thisYear' ? y===nowYear : y===nowYear+1;
   });
   const counts = {}, values = {};
+  let grandTotal = 0;
   filtered.forEach(r=>{
     const d = r.deal;
     if(d.stage==='dead' || d.stage==='prospect' || !d.stage) return;
+    const totalFee = parseFloat(d.totalFee) || 0;
+    // Individual view: your actual split share on this deal — same convention WIP uses —
+    // so this reconciles with Paid to Date and with WIP's Total Fee column, instead of
+    // showing the full deal value regardless of what you'd actually collect (the bug that
+    // made "$495,320 In Escrow" include a deal where your split is really only 50%).
+    // Deals you have access to but aren't on the split show their full value here, same as
+    // WIP. Office aggregate (userId===null) always shows full deal values — there's no
+    // single split to apply to the whole office.
+    const mySplit = userId ? findSplitForUser(d, userId) : null;
+    const shareFactor = userId ? (mySplit ? (parseFloat(mySplit.pct)||0)/100 : 1) : 1;
+    const share = totalFee * shareFactor;
     counts[d.stage] = (counts[d.stage]||0) + 1;
-    values[d.stage] = (values[d.stage]||0) + (parseFloat(d.totalFee)||0);
+    values[d.stage] = (values[d.stage]||0) + share;
+    grandTotal += share;
   });
+  const totalDeals = Object.values(counts).reduce((s,n)=>s+n,0);
+  if(!totalDeals) return `<div class="tiny" style="color:var(--ink-soft);">${yearFilter && yearFilter!=='total' ? 'No active deals with a Due Date in this window.' : 'No active deals.'}</div>`;
+  const totalHtml = `
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid var(--line);">
+      <div style="font-size:12.5px;font-weight:700;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.02em;">Total Pipeline <span style="font-weight:400;text-transform:none;letter-spacing:normal;">(${totalDeals} deal${totalDeals===1?'':'s'})</span></div>
+      <div style="font-size:20px;font-weight:800;color:var(--edge);">${grandTotal.toLocaleString('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0})}</div>
+    </div>`;
   const maxValue = Math.max(1, ...Object.values(values));
   const stageOrder = ['loi','signedLOI','negotiating','inEscrow','signedLease','closedEscrow'];
   const bars = stageOrder.filter(id=>counts[id]).map(id=>{
@@ -7193,7 +7217,7 @@ function renderDealStageChart(userId, yearFilter){
       </div>
     </div>`;
   }).join('');
-  return bars || `<div class="tiny" style="color:var(--ink-soft);">${yearFilter && yearFilter!=='total' ? 'No active deals with a Due Date in this window.' : 'No active deals.'}</div>`;
+  return totalHtml + bars;
 }
 function renderExpiringItemsWidget(userId){
   const today = todayDate();
@@ -8332,6 +8356,7 @@ function renderTodoDetailModal(){
     if(val==='today') d = todayDate();
     else if(val==='tomorrow') d = addDays(todayDate(), 1);
     else if(val==='next week') d = addDays(todayDate(), 7);
+    td.dueDate = d;
     document.getElementById('detDue').value = d ? toLocalDateStr(d) : '';
   });
   overlay.querySelector('[data-action="closeTodoDetail"]').onclick=()=>{ if(attemptCloseTodoDetail(td)) render(); };
@@ -8371,8 +8396,12 @@ function renderTodoDetailModal(){
     renderPreservingScroll('.modal-body');
   });
   overlay.querySelectorAll('[data-action="newProjectChildTodo"]').forEach(btn=>btn.onclick=()=>{
+    // A plain render() here would tear down and rebuild this whole To-Do Details modal
+    // (along with everything else on the page) just to stack the New To-Do modal on top
+    // of it — which is what was snapping the page back to the top on mobile. Calling
+    // renderNewTodoModal() directly just appends the new modal without touching this one.
     openNewTodoModal({listId: td.listId, clientId: td.clientId, dealId: td.dealId, entryId: td.entryId, projectId: td.id});
-    render();
+    renderNewTodoModal();
   });
   const addProjectAuthBtn = overlay.querySelector('[data-action="addProjectAuthUser"]'); if(addProjectAuthBtn) addProjectAuthBtn.onclick=safeHandler(async ()=>{
     const sel = document.getElementById('addProjectAuthUserSelect');
@@ -10979,8 +11008,10 @@ function renderNewTodoModal(){
     if(val==='today') d = todayDate();
     else if(val==='tomorrow') d = addDays(todayDate(), 1);
     else if(val==='next week') d = addDays(todayDate(), 7);
-    document.getElementById('ntDue').value = d ? toLocalDateStr(d) : '';
+    m.dueInput = d ? toLocalDateStr(d) : '';
+    document.getElementById('ntDue').value = m.dueInput;
   });
+  const ntDueEl = document.getElementById('ntDue'); if(ntDueEl) ntDueEl.onchange=()=>{ m.dueInput = ntDueEl.value; };
   overlay.querySelectorAll('[data-action="closeNewTodo"]').forEach(btn=>btn.onclick=()=>{ state.newTodoModal=null; render(); });
   overlay.querySelectorAll('[data-action="addNtChecklistItem"]').forEach(btn=>btn.onclick=()=>{
     if(!m.checklistItems) m.checklistItems=[];
