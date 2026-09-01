@@ -7244,7 +7244,7 @@ function renderExpiringItemsWidget(userId){
     return `
     <div style="margin-bottom:14px;">
       <div style="font-weight:700;font-size:12.5px;margin-bottom:4px;">${icon} ${label} (${items.length})</div>
-      ${items.length ? bucketsHtml : `<div class="tiny" style="color:var(--ink-soft);">Nothing expired or expiring in the next 90 days.</div>`}
+      ${items.length ? bucketsHtml : `<div class="tiny" style="color:var(--ink-soft);">Nothing EXPIRED, or due in the next 30, 60, or 90 days.</div>`}
     </div>`;
   };
   return section('Client CAs Expiring', '📄', caItems) + section('Listing Agreements Expiring', '🏢', listingItems);
