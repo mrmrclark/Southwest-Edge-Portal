@@ -6996,17 +6996,17 @@ function renderDashboardMain(){
 
   return `
   ${renderConnectAssistantCard()}
-  <div style="margin-bottom:18px;">
-    <button class="btn" data-action="openWipModal" style="font-size:22px;padding:18px 34px;font-weight:800;box-shadow:var(--shadow-sm);">📋 WIP — Work in Progress</button>
+  <div style="margin-bottom:14px;">
+    <button class="btn" data-action="openWipModal">📋 WIP — Work in Progress</button>
   </div>
   <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px;">
     ${isFull ? `<div style="min-width:220px;">${renderDashboardUserPicker(viewUserId)}</div>` : ''}
   </div>
-  <div style="display:flex;gap:20px;flex-wrap:wrap;justify-content:flex-end;">
+  <div style="display:flex;gap:24px;flex-wrap:wrap;">
     <div style="width:300px;flex:none;">
       ${isOfficeAggregate ? renderOfficeCommissionSummary(year) : renderUserCommissionSummary(viewUserId, year)}
     </div>
-    <div style="width:340px;flex:none;">
+    <div style="flex:1;min-width:340px;">
       <div class="section-label">📊 Deals by Stage</div>
       ${renderDealStageYearToggle()}
       ${renderDealStageChart(isOfficeAggregate ? null : viewUserId, state.dealStageYearFilter||'total')}
