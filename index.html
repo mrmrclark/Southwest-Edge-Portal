@@ -853,6 +853,16 @@ function authIdToLocalUserId(authId){
   const u = USERS.find(x=>x.authId===authId);
   return u ? u.id : null;
 }
+// deal.splits[].userId is NOT reliably one or the other — most rows use the local short id
+// (e.g. 'nault'), but some were saved with the raw Supabase auth UUID instead (e.g. Michael
+// Clark's split on some older deals). Matching only against the local id silently misses
+// those and makes a found split look like "no split for this person" (full deal weight
+// instead of their actual share) — so match against both forms of the same person's id.
+function findSplitForUser(deal, localUserId){
+  if(!localUserId) return null;
+  const authId = localUserIdToAuthId(localUserId);
+  return (deal.splits||[]).find(s=>s.userId===localUserId || (authId && s.userId===authId)) || null;
+}
 
 /* ---------------- BROKERS (Phoenix Broker List) ---------------- */
 function brokerRowToLocal(r){ return {id:r.id, name:r.name, company:r.company||'', email:r.email||'', mobile:r.mobile||'', phone:r.phone||''}; }
@@ -3995,7 +4005,7 @@ function computeBrokerGrossForUser(userId, year){
       (c.deals||[]).forEach(d=>{
         const totalFee = parseFloat(d.totalFee) || 0;
         if(totalFee<=0) return;
-        const mySplit = (d.splits||[]).find(s=>s.userId===userId);
+        const mySplit = findSplitForUser(d, userId);
         if(!mySplit) return;
         const pct = (parseFloat(mySplit.pct)||0)/100;
         const isSale = d.dealType==='sale';
@@ -6175,7 +6185,7 @@ function renderQualifiedOfferPrompt(){
   }));
 }
 function nameForSplitUserId(id){
-  const u = USERS.find(x=>x.id===id);
+  const u = USERS.find(x=>x.id===id || x.authId===id); // splits sometimes store the raw auth UUID instead of the short id
   if(u) return u.name;
   const co = (commissionOnlyPeople||[]).find(x=>x.id===id);
   return co ? co.name : 'Unknown';
@@ -7349,17 +7359,26 @@ function wipRowsForUser(viewUserId){
     const wa = PIPELINE_STAGE_WA[d.stage];
     if(!wa) return; // defensive — allDealsForUser already excludes dead/prospect
     const totalFee = parseFloat(d.totalFee) || 0;
-    const mySplit = !isOffice ? (d.splits||[]).find(s=>s.userId===viewUserId) : null;
+    const mySplit = !isOffice ? findSplitForUser(d, viewUserId) : null;
     const pct = mySplit ? (parseFloat(mySplit.pct)||0) : null;
     const shareFactor = pct!=null ? pct/100 : 1;
     const waValue = totalFee * wa * shareFactor;
+    // Sale deals pay out in one lump sum at close (commission1Paid = the whole fee received);
+    // lease deals pay in two half-fee installments (commission1/commission2) — same split
+    // computeBrokerGrossForUser uses for "Paid to Date", so WIP's Received/Past Due agree with it.
+    const isSale = d.dealType==='sale';
     let receivedAmt = 0, pastDueAmt = 0;
     if(totalFee>0){
       const today = todayDate();
-      if(d.commission1Paid) receivedAmt += (totalFee/2) * shareFactor;
-      if(d.commission2Paid) receivedAmt += (totalFee/2) * shareFactor;
-      if(!d.commission1Paid && d.commission1DueDate && new Date(d.commission1DueDate+'T00:00:00')<today) pastDueAmt += (totalFee/2) * shareFactor;
-      if(!d.commission2Paid && d.commission2DueDate && new Date(d.commission2DueDate+'T00:00:00')<today) pastDueAmt += (totalFee/2) * shareFactor;
+      if(isSale){
+        if(d.commission1Paid) receivedAmt += totalFee * shareFactor;
+        if(!d.commission1Paid && d.commission1DueDate && new Date(d.commission1DueDate+'T00:00:00')<today) pastDueAmt += totalFee * shareFactor;
+      } else {
+        if(d.commission1Paid) receivedAmt += (totalFee/2) * shareFactor;
+        if(d.commission2Paid) receivedAmt += (totalFee/2) * shareFactor;
+        if(!d.commission1Paid && d.commission1DueDate && new Date(d.commission1DueDate+'T00:00:00')<today) pastDueAmt += (totalFee/2) * shareFactor;
+        if(!d.commission2Paid && d.commission2DueDate && new Date(d.commission2DueDate+'T00:00:00')<today) pastDueAmt += (totalFee/2) * shareFactor;
+      }
     }
     const brokerNames = (d.splits||[]).map(s=>nameForSplitUserId(s.userId)).filter(Boolean).join(', ') || '—';
     rows.push({
