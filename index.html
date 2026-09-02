@@ -547,6 +547,10 @@ let state = {
   pendingLoginUser:null,
   showEmailClientPicker:false,
   currentUser:null,
+  isOffline: !navigator.onLine,     // updated live by the online/offline listeners near boot
+  offlineLastSyncedAt:null,          // Date — when persistOfflineSnapshot() last ran successfully
+  offlineDuplicateFlags:null,        // [{payload, match}] — offline-created contacts to review after sync
+  offlineOutboxCount:0,               // cached count of queued-but-unsynced changes, for the banner
   isMobile: window.innerWidth <= 820,
   mobileScreen:'nav',           // 'nav' | 'main' — which pane shows on a phone-width screen
   mainView:{type:'dashboard'},   // what's showing in the main content pane
@@ -827,16 +831,25 @@ async function fetchContactsFromSupabase(){
   db.contacts = all.map(contactRowToLocal);
 }
 async function supaCreateContact(c){
-  const { error } = await supabaseClient.from('contacts').insert(contactLocalToRow(c));
-  if(error){ console.error('supaCreateContact error:', error); flashToast('Saved here, but syncing to the server failed — check your connection. (' + error.message + ')'); render(); }
+  const res = await offlineQueueableWrite('contacts', 'insert', contactLocalToRow(c));
+  if(!res.ok){
+    if(!res.queued){ console.error('supaCreateContact error:', res.error); flashToast('Saved here, but syncing to the server failed — check your connection. (' + res.error.message + ')'); }
+    render();
+  }
 }
 async function supaUpdateContact(c){
-  const { error } = await supabaseClient.from('contacts').update(contactLocalToRow(c)).eq('id', c.id);
-  if(error){ console.error('supaUpdateContact error:', error); flashToast('Saved here, but syncing to the server failed — check your connection. (' + error.message + ')'); render(); }
+  const res = await offlineQueueableWrite('contacts', 'update', contactLocalToRow(c), c.id);
+  if(!res.ok){
+    if(!res.queued){ console.error('supaUpdateContact error:', res.error); flashToast('Saved here, but syncing to the server failed — check your connection. (' + res.error.message + ')'); }
+    render();
+  }
 }
 async function supaDeleteContact(id){
-  const { error } = await supabaseClient.from('contacts').delete().eq('id', id);
-  if(error){ console.error('supaDeleteContact error:', error); flashToast('Deleted here, but syncing to the server failed — check your connection. (' + error.message + ')'); render(); }
+  const res = await offlineQueueableWrite('contacts', 'delete', null, id);
+  if(!res.ok){
+    if(!res.queued){ console.error('supaDeleteContact error:', res.error); flashToast('Deleted here, but syncing to the server failed — check your connection. (' + res.error.message + ')'); }
+    render();
+  }
 }
 
 /* ---------------- SHARED USER-ID MAPPING ----------------
@@ -862,6 +875,21 @@ function findSplitForUser(deal, localUserId){
   if(!localUserId) return null;
   const authId = localUserIdToAuthId(localUserId);
   return (deal.splits||[]).find(s=>s.userId===localUserId || (authId && s.userId===authId)) || null;
+}
+// Same short-id-vs-auth-UUID ambiguity as above, generalized: "does this stored id refer to
+// this local user?" Used by Commission Summary approvals to gate a checkbox to the one person
+// it belongs to.
+function isSameUser(recordUserId, localUserId){
+  if(!recordUserId || !localUserId) return false;
+  if(recordUserId===localUserId) return true;
+  const authId = localUserIdToAuthId(localUserId);
+  return !!authId && recordUserId===authId;
+}
+// Distinguishes a real portal user (can log in, can be emailed, can check their own approval
+// box) from a "commission-only, no login" person on a Commission Summary split — those rows are
+// informational only and never block a Commission Summary from locking.
+function isPortalUser(userId){
+  return USERS.some(u=>u.id===userId || u.authId===userId);
 }
 
 /* ---------------- BROKERS (Phoenix Broker List) ---------------- */
@@ -929,7 +957,7 @@ function clientRowToLocal(r){
           elaEndDate: r.ela_end_date ? new Date(r.ela_end_date+'T00:00:00') : null,
           archivedAt: r.archived_at ? new Date(r.archived_at) : null,
           latitude: r.latitude||null, longitude: r.longitude||null, geocodeFailed: !!r.geocode_failed,
-          listingExpirationDate: r.listing_expiration_date||null};
+          listingExpirationDate: r.listing_expiration_date||null, commissionSummary: r.commission_summary||null};
 }
 function clientLocalToRow(c, listId){
   return {id:c.id, list_id:listId, name:c.name, primary_contact_id:c.primary||null, created_by: localUserIdToAuthId(c.createdBy),
@@ -938,7 +966,7 @@ function clientLocalToRow(c, listId){
           ela_end_date: c.elaEndDate ? toLocalDateStr(c.elaEndDate) : null,
           archived_at: c.archivedAt ? c.archivedAt.toISOString() : null,
           latitude: c.latitude||null, longitude: c.longitude||null, geocode_failed: !!c.geocodeFailed,
-          listing_expiration_date: c.listingExpirationDate||null};
+          listing_expiration_date: c.listingExpirationDate||null, commission_summary: c.commissionSummary||null};
 }
 function dealRowToLocal(r){
   return {id:r.id, name:r.name, complete:r.complete, activeDeal:r.active_deal, caExecuted:r.ca_executed,
@@ -1010,21 +1038,34 @@ async function supaCreateList(list){
 }
 async function supaCreateClient(c, listId){
   if(!c.createdBy) c.createdBy = state.currentUser.id;
-  const { error } = await supabaseClient.from('clients').insert(clientLocalToRow(c, listId));
-  if(error){ console.error('supaCreateClient error:', error); flashToast('Saved here, but syncing to the server failed. (' + error.message + ')'); render(); }
+  const res = await offlineQueueableWrite('clients', 'insert', clientLocalToRow(c, listId));
+  if(!res.ok){
+    if(!res.queued){ console.error('supaCreateClient error:', res.error); flashToast('Saved here, but syncing to the server failed. (' + res.error.message + ')'); }
+    render();
+  }
 }
 async function supaUpdateClientContact(c, listId){
-  const { error } = await supabaseClient.from('clients').update(clientLocalToRow(c, listId)).eq('id', c.id);
-  if(error) console.error('supaUpdateClientContact error:', error);
+  const res = await offlineQueueableWrite('clients', 'update', clientLocalToRow(c, listId), c.id);
+  if(!res.ok){
+    if(!res.queued) console.error('supaUpdateClientContact error:', res.error);
+    render();
+  }
 }
 async function supaArchiveClient(c, listId, archived){
   c.archivedAt = archived ? new Date() : null;
   const { error } = await supabaseClient.from('clients').update({archived_at: c.archivedAt ? c.archivedAt.toISOString() : null}).eq('id', c.id);
   if(error){ console.error('supaArchiveClient error:', error); flashToast('Saved here, but syncing to the server failed. (' + error.message + ')'); render(); }
 }
+async function supaUpdateClientCommissionSummary(c){
+  const { error } = await supabaseClient.from('clients').update({commission_summary: c.commissionSummary||null}).eq('id', c.id);
+  if(error){ console.error('supaUpdateClientCommissionSummary error:', error); flashToast('Saved here, but syncing to the server failed. (' + error.message + ')'); render(); }
+}
 async function supaDeleteClient(id){
-  const { error } = await supabaseClient.from('clients').delete().eq('id', id);
-  if(error){ console.error('supaDeleteClient error:', error); flashToast('Deleted here, but syncing to the server failed. (' + error.message + ')'); render(); }
+  const res = await offlineQueueableWrite('clients', 'delete', null, id);
+  if(!res.ok){
+    if(!res.queued){ console.error('supaDeleteClient error:', res.error); flashToast('Deleted here, but syncing to the server failed. (' + res.error.message + ')'); }
+    render();
+  }
 }
 async function fetchDeletionRequestsFromSupabase(){
   const { data, error } = await supabaseClient.from('client_deletion_requests').select('*');
@@ -1140,16 +1181,25 @@ function renderAddUsersPrompt(){
   };
 }
 async function supaCreateDeal(d, clientId){
-  const { error } = await supabaseClient.from('deals').insert(dealLocalToRow(d, clientId));
-  if(error){ console.error('supaCreateDeal error:', error); flashToast('Saved here, but syncing to the server failed. (' + error.message + ')'); render(); }
+  const res = await offlineQueueableWrite('deals', 'insert', dealLocalToRow(d, clientId));
+  if(!res.ok){
+    if(!res.queued){ console.error('supaCreateDeal error:', res.error); flashToast('Saved here, but syncing to the server failed. (' + res.error.message + ')'); }
+    render();
+  }
 }
 async function supaUpdateDeal(d, clientId){
-  const { error } = await supabaseClient.from('deals').update(dealLocalToRow(d, clientId)).eq('id', d.id);
-  if(error) console.error('supaUpdateDeal error:', error);
+  const res = await offlineQueueableWrite('deals', 'update', dealLocalToRow(d, clientId), d.id);
+  if(!res.ok){
+    if(!res.queued) console.error('supaUpdateDeal error:', res.error);
+    render();
+  }
 }
 async function supaDeleteDeal(id){
-  const { error } = await supabaseClient.from('deals').delete().eq('id', id);
-  if(error){ console.error('supaDeleteDeal error:', error); flashToast('Deleted here, but syncing to the server failed. (' + error.message + ')'); render(); }
+  const res = await offlineQueueableWrite('deals', 'delete', null, id);
+  if(!res.ok){
+    if(!res.queued){ console.error('supaDeleteDeal error:', res.error); flashToast('Deleted here, but syncing to the server failed. (' + res.error.message + ')'); }
+    render();
+  }
 }
 
 /* ---------------- DESIGNATED BROKER REVIEWS + OFFER TRACKER ---------------- */
@@ -1202,6 +1252,18 @@ async function invokeBrokerReviewEmail(reviewId, eventType, actorLocalId){
       body:{ reviewId, eventType, actorId: actorLocalId ? localUserIdToAuthId(actorLocalId) : null }
     });
   }catch(e){ console.error('invokeBrokerReviewEmail error:', e); }
+}
+// One call per portal-user split holder — commission-only (no-login) people have no email on
+// file so are never invited. splitUserId is passed through as-is so the Edge Function can find
+// this exact person's row in the saved commission_summary without re-deriving any id mapping.
+async function invokeCommissionSummaryEmail(clientId, splitUserId, actorLocalId){
+  const recipientId = localUserIdToAuthId(splitUserId);
+  if(!recipientId) return; // no Supabase account yet — nothing to email
+  try{
+    await supabaseClient.functions.invoke('notify-commission-summary', {
+      body:{ clientId, recipientId, splitUserId, actorId: actorLocalId ? localUserIdToAuthId(actorLocalId) : null }
+    });
+  }catch(e){ console.error('invokeCommissionSummaryEmail error:', e); }
 }
 // Called right after a Deal or Prospect is saved with a new stage — compares old vs new
 // and fires off whichever Designated Broker / Office Manager workflow applies.
@@ -1451,24 +1513,35 @@ async function supaRemoveProjectAuthorizedUser(projectId, localUserId){
   if(error) console.error('supaRemoveProjectAuthorizedUser error:', error);
 }
 async function supaCreateTodo(t){
-  const { error } = await supabaseClient.from('todos').insert(todoLocalToRow(t));
-  if(error){ console.error('supaCreateTodo error:', error); flashToast('Saved here, but syncing to the server failed. (' + error.message + ')'); render(); }
+  const res = await offlineQueueableWrite('todos', 'insert', todoLocalToRow(t));
+  if(!res.ok){
+    if(!res.queued){ console.error('supaCreateTodo error:', res.error); flashToast('Saved here, but syncing to the server failed. (' + res.error.message + ')'); }
+    render();
+  }
 }
 async function supaUpdateTodo(t){
-  const { error } = await supabaseClient.from('todos').update(todoLocalToRow(t)).eq('id', t.id);
-  if(error){
-    console.error('supaUpdateTodo error:', error);
-    // Without this, a failed save looks fine in the moment (the change shows locally)
-    // but silently reverts the next time this to-do is loaded from the server — since
-    // the database never actually got the update. Surfacing it here means a save that
-    // didn't take is visible immediately, not discovered later as "this didn't work."
-    flashToast(`"${t.title}" didn't save to the server (${error.message}). Try again, or check your connection.`);
+  const res = await offlineQueueableWrite('todos', 'update', todoLocalToRow(t), t.id);
+  if(!res.ok){
+    if(!res.queued){
+      console.error('supaUpdateTodo error:', res.error);
+      // Without this, a failed save looks fine in the moment (the change shows locally)
+      // but silently reverts the next time this to-do is loaded from the server — since
+      // the database never actually got the update. Surfacing it here means a save that
+      // didn't take is visible immediately, not discovered later as "this didn't work."
+      flashToast(`"${t.title}" didn't save to the server (${res.error.message}). Try again, or check your connection.`);
+    }
+    // Queued (offline) is deliberately quiet here — the persistent offline banner already
+    // says changes are pending, and a toast on every single to-do edit while offline would
+    // just be noise.
     render();
   }
 }
 async function supaDeleteTodo(id){
-  const { error } = await supabaseClient.from('todos').delete().eq('id', id);
-  if(error) console.error('supaDeleteTodo error:', error);
+  const res = await offlineQueueableWrite('todos', 'delete', null, id);
+  if(!res.ok){
+    if(!res.queued) console.error('supaDeleteTodo error:', res.error);
+    render();
+  }
 }
 async function fetchAllAppDataFromSupabase(){
   await fetchContactsFromSupabase();
@@ -2489,6 +2562,307 @@ function seedTodo(t){
   }, t));
 }
 
+/* ==================== OFFLINE SUPPORT ====================
+   A private, per-browser mirror of "your things" — your clients/deals (created by you or
+   you're authorized on), your to-dos plus everyone's (Today-All is a filtered view over the
+   same table, not a separate one), contacts on your in-scope clients, and the shared broker
+   directory — so the Portal keeps working with zero connection (e.g. on a plane) and syncs
+   automatically once you're back online. By explicit design, this is narrower than what an
+   Admin can normally see everywhere else in the app: no other producers' accounts you aren't
+   personally on, even though Admin visibility would normally show you everything. Built for
+   Chrome; not hardened against Safari's more aggressive offline-storage eviction.
+
+   Deliberately NOT mirrored (stay online-only, and are either hidden or show a clear "needs a
+   connection" message while offline): LSR prospects, Hot List/Hit List entries, Sign Calls,
+   Broker Review, Offer Tracker, Smart Lists, company-wide settings, pending-user admin queue,
+   Commission Summary approval emails, Edgy (the AI assistant), and Maps/geocoding. */
+const OFFLINE_DB_NAME = 'swedge_offline';
+const OFFLINE_DB_VERSION = 1;
+const OFFLINE_STORES = ['lists','clients','todos','contacts','brokers','users','outbox','meta'];
+let _offlineDbPromise = null;
+function offlineDb(){
+  if(_offlineDbPromise) return _offlineDbPromise;
+  _offlineDbPromise = new Promise((resolve, reject)=>{
+    if(!('indexedDB' in window)){ reject(new Error('IndexedDB not available in this browser')); return; }
+    const req = indexedDB.open(OFFLINE_DB_NAME, OFFLINE_DB_VERSION);
+    req.onupgradeneeded = ()=>{
+      const dbx = req.result;
+      OFFLINE_STORES.forEach(name=>{
+        if(dbx.objectStoreNames.contains(name)) return;
+        if(name==='outbox') dbx.createObjectStore(name, {keyPath:'seq', autoIncrement:true});
+        else dbx.createObjectStore(name, {keyPath:'id'});
+      });
+    };
+    req.onsuccess = ()=>resolve(req.result);
+    req.onerror = ()=>reject(req.error);
+  });
+  return _offlineDbPromise;
+}
+async function idbTx(storeName, mode){
+  const dbx = await offlineDb();
+  return dbx.transaction(storeName, mode).objectStore(storeName);
+}
+async function idbGetAll(storeName){
+  try{
+    const store = await idbTx(storeName, 'readonly');
+    return await new Promise((resolve, reject)=>{
+      const req = store.getAll();
+      req.onsuccess = ()=>resolve(req.result||[]);
+      req.onerror = ()=>reject(req.error);
+    });
+  }catch(e){ console.error(`idbGetAll(${storeName}) failed:`, e); return []; }
+}
+async function idbPutAll(storeName, items){
+  const dbx = await offlineDb();
+  return new Promise((resolve, reject)=>{
+    const tx = dbx.transaction(storeName, 'readwrite');
+    const store = tx.objectStore(storeName);
+    store.clear();
+    items.forEach(item=>store.put(item));
+    tx.oncomplete = ()=>resolve();
+    tx.onerror = ()=>reject(tx.error);
+  });
+}
+async function idbDelete(storeName, key){
+  const store = await idbTx(storeName, 'readwrite');
+  return new Promise((resolve, reject)=>{
+    const req = store.delete(key);
+    req.onsuccess = ()=>resolve();
+    req.onerror = ()=>reject(req.error);
+  });
+}
+async function idbAddOutbox(item){
+  const store = await idbTx('outbox', 'readwrite');
+  return new Promise((resolve, reject)=>{
+    const req = store.add(item);
+    req.onsuccess = ()=>resolve(req.result);
+    req.onerror = ()=>reject(req.error);
+  });
+}
+async function idbSetMeta(key, value){
+  const store = await idbTx('meta', 'readwrite');
+  return new Promise((resolve, reject)=>{
+    const req = store.put({id:key, value});
+    req.onsuccess = ()=>resolve();
+    req.onerror = ()=>reject(req.error);
+  });
+}
+async function idbGetMeta(key){
+  try{
+    const store = await idbTx('meta', 'readonly');
+    return await new Promise((resolve, reject)=>{
+      const req = store.get(key);
+      req.onsuccess = ()=>resolve(req.result ? req.result.value : null);
+      req.onerror = ()=>reject(req.error);
+    });
+  }catch(e){ return null; }
+}
+async function offlineOutboxCount(){
+  const items = await idbGetAll('outbox');
+  return items.length;
+}
+async function refreshOfflineOutboxCount(){
+  try{ state.offlineOutboxCount = await offlineOutboxCount(); }catch(e){ state.offlineOutboxCount = 0; }
+}
+
+// Called after a fully successful online load. Mirrors just "your things" (see the header
+// comment above) into IndexedDB so the next launch can work with zero connection. Fire-and-
+// forget from the boot sequence — a failure here must never disrupt the online session.
+async function persistOfflineSnapshot(){
+  try{
+    const me = state.currentUser;
+    if(!me) return;
+    const inScopeClients = [];
+    db.lists.filter(l=>l.type==='deep').forEach(l=>{
+      (l.clients||[]).forEach(c=>{
+        const mine = c.createdBy===me.id || (c.authorizedUserIds||[]).includes(me.id);
+        if(mine) inScopeClients.push({...c, _listId:l.id});
+      });
+    });
+    const contactIds = new Set();
+    inScopeClients.forEach(c=>{
+      [c.primary, c.secondContactId, c.thirdContactId].forEach(id=>{ if(id) contactIds.add(id); });
+      (c.deals||[]).forEach(d=>{
+        [d.contactId, d.secondContactId, d.thirdContactId, d.brokerContactId].forEach(id=>{ if(id) contactIds.add(id); });
+      });
+    });
+    const inScopeContacts = (db.contacts||[]).filter(c=>contactIds.has(c.id));
+    const listSkeletons = db.lists.map(l=>({id:l.id, name:l.name, icon:l.icon, type:l.type, isDefault:!!l.isDefault}));
+    const allTodos = [
+      ...(db.todos||[]).map(t=>({...t, _archived:false})),
+      ...(db.archivedTodos||[]).map(t=>({...t, _archived:true})),
+    ];
+    const usersSnapshot = USERS.map(u=>({id:u.id, name:u.name, email:u.email, role:u.role, initials:u.initials, authId:u.authId||null}));
+
+    await idbPutAll('lists', listSkeletons.map(l=>({id:l.id, data:l})));
+    await idbPutAll('clients', inScopeClients.map(c=>({id:c.id, data:c})));
+    await idbPutAll('todos', allTodos.map(t=>({id:t.id, data:t})));
+    await idbPutAll('contacts', inScopeContacts.map(c=>({id:c.id, data:c})));
+    await idbPutAll('brokers', (PHOENIX_BROKER_LIST||[]).map(b=>({id:b.id, data:b})));
+    await idbPutAll('users', usersSnapshot.map(u=>({id:u.id, data:u})));
+    await idbSetMeta('currentUserId', me.id);
+    await idbSetMeta('lastSyncedAt', new Date().toISOString());
+    state.offlineLastSyncedAt = new Date();
+  }catch(e){ console.error('persistOfflineSnapshot failed (non-fatal — online session is unaffected):', e); }
+}
+
+// Rebuilds db/state/USERS from the last snapshot saved by persistOfflineSnapshot(). Returns
+// true if there was something to hydrate (a previous online session on this device), false if
+// this device has never synced anything (nothing to show offline yet).
+async function hydrateFromOfflineSnapshot(){
+  const meId = await idbGetMeta('currentUserId');
+  if(!meId) return false;
+  const [listsSnap, clientsSnap, todosSnap, contactsSnap, brokersSnap, usersSnap] = await Promise.all([
+    idbGetAll('lists'), idbGetAll('clients'), idbGetAll('todos'), idbGetAll('contacts'), idbGetAll('brokers'), idbGetAll('users')
+  ]);
+  if(!usersSnap.length) return false;
+
+  usersSnap.forEach(row=>{
+    const u = row.data;
+    let existing = USERS.find(x=>x.id===u.id);
+    if(!existing){ existing = {id:u.id}; USERS.push(existing); }
+    Object.assign(existing, u);
+  });
+  const me = USERS.find(x=>x.id===meId);
+  if(!me) return false;
+
+  const clientsByList = {};
+  clientsSnap.forEach(row=>{
+    const c = row.data;
+    const listId = c._listId;
+    delete c._listId;
+    (clientsByList[listId] = clientsByList[listId] || []).push(c);
+  });
+  db.lists = listsSnap.map(row=>{
+    const l = row.data;
+    return l.type==='deep' ? {...l, clients: clientsByList[l.id] || []} : {...l, entries: []};
+  });
+  db.todos = []; db.archivedTodos = [];
+  todosSnap.forEach(row=>{
+    const t = row.data;
+    const archived = !!t._archived;
+    delete t._archived;
+    (archived ? db.archivedTodos : db.todos).push(t);
+  });
+  db.contacts = contactsSnap.map(row=>row.data);
+  db.archivedClients = [];
+  db.deletionRequests = []; db.brokerReviews = []; db.dealOffers = []; db.signCalls = [];
+  PHOENIX_BROKER_LIST.length = 0;
+  brokersSnap.forEach(row=>PHOENIX_BROKER_LIST.push(row.data));
+
+  state.currentUser = me;
+  const lastSyncedAt = await idbGetMeta('lastSyncedAt');
+  state.offlineLastSyncedAt = lastSyncedAt ? new Date(lastSyncedAt) : null;
+  return true;
+}
+
+// Does this error look like "no network," as opposed to a real server-side rejection (bad
+// data, a permissions error, etc.)? A fetch() that can't reach the network throws a plain
+// TypeError ("Failed to fetch" in Chrome) — Supabase's own errors come back as a normal
+// {message, code, ...} object from a completed HTTP response, not a thrown TypeError.
+function looksLikeNetworkError(e){
+  if(!e) return false;
+  if(e.name==='TypeError') return true;
+  const msg = (e.message || String(e)).toLowerCase();
+  return msg.includes('failed to fetch') || msg.includes('load failed') || msg.includes('network');
+}
+// The single choke point every offline-aware supa* write function goes through. Tries the real
+// write when there's a connection; if there isn't one (or the attempt fails in a way that looks
+// like a connectivity problem, not a real rejection), queues it in the outbox instead of losing
+// it, and leaves the optimistic local change (already applied by the caller, same as before this
+// feature existed) in place. A genuine non-connectivity error (bad data, RLS denial, etc.) is
+// still surfaced immediately, unchanged from how this app always worked.
+async function offlineQueueableWrite(table, op, payload, matchId){
+  if(navigator.onLine){
+    try{
+      let q = supabaseClient.from(table);
+      if(op==='insert') q = q.insert(payload);
+      else if(op==='update') q = q.update(payload).eq('id', matchId);
+      else if(op==='delete') q = q.delete().eq('id', matchId);
+      const { error } = await q;
+      if(error) throw error;
+      return {ok:true, queued:false};
+    }catch(e){
+      if(!looksLikeNetworkError(e)) return {ok:false, queued:false, error:e};
+      await idbAddOutbox({table, op, payload, matchId, queuedAt:new Date().toISOString()});
+      await refreshOfflineOutboxCount();
+      if(!state.isOffline){ state.isOffline = true; }
+      return {ok:false, queued:true};
+    }
+  } else {
+    await idbAddOutbox({table, op, payload, matchId, queuedAt:new Date().toISOString()});
+    await refreshOfflineOutboxCount();
+    return {ok:false, queued:true};
+  }
+}
+// Drains the outbox in the order things were queued, stopping at the first failure so nothing
+// replays out of order (e.g. a deal referencing a client that hasn't synced up yet). Whatever's
+// left just waits for the next reconnect/retry — nothing is ever dropped. Offline-created
+// contacts get the same duplicate check the live "New Contact" flow already does, just deferred
+// to now instead of blocked at creation time, since it needs the freshest server data to mean
+// anything.
+let _syncingOutbox = false;
+async function syncOutbox(){
+  if(_syncingOutbox || !navigator.onLine) return;
+  _syncingOutbox = true;
+  try{
+    let items = await idbGetAll('outbox');
+    let syncedAny = false;
+    for(const item of items){
+      try{
+        if(item.table==='contacts' && item.op==='insert'){
+          const flagged = await checkOfflineContactDuplicate(item.payload);
+          if(flagged){
+            state.offlineDuplicateFlags = state.offlineDuplicateFlags || [];
+            state.offlineDuplicateFlags.push({payload:item.payload, match:flagged});
+            await idbDelete('outbox', item.seq);
+            syncedAny = true;
+            continue; // don't insert — parked for the user to resolve, see renderOfflineDuplicatesModal
+          }
+        }
+        let q = supabaseClient.from(item.table);
+        if(item.op==='insert') q = q.insert(item.payload);
+        else if(item.op==='update') q = q.update(item.payload).eq('id', item.matchId);
+        else if(item.op==='delete') q = q.delete().eq('id', item.matchId);
+        const { error } = await q;
+        if(error && error.code!=='23505'){ throw error; } // 23505 = already exists — a harmless retry of a prior success
+        await idbDelete('outbox', item.seq);
+        syncedAny = true;
+      }catch(e){
+        if(looksLikeNetworkError(e)){ break; } // connection dropped again mid-sync — stop, try later
+        console.error('syncOutbox: dropping the rest of this attempt at a real error:', item, e);
+        break; // don't skip past a real error and risk replaying out of order — surface it, retry later
+      }
+    }
+    await refreshOfflineOutboxCount();
+    if(syncedAny){
+      state.isOffline = false;
+      flashToast(state.offlineOutboxCount>0 ? 'Back online — syncing (some changes are still queued).' : 'Back online — your offline changes are synced.');
+      render();
+    }
+  } finally {
+    _syncingOutbox = false;
+  }
+}
+// Same check as the live "New Contact" duplicate prompt (exact case-insensitive first+last, or
+// an exact mobile-number match) — run here against the current server state instead of the
+// possibly-stale local copy, since minutes or hours may have passed since this was queued.
+async function checkOfflineContactDuplicate(payload){
+  try{
+    // Pulled unfiltered and compared client-side (same exact-match logic as the live "New
+    // Contact" duplicate check) rather than built into a PostgREST filter string — names with
+    // commas, apostrophes, or parentheses would otherwise break a hand-built .or() filter.
+    const { data, error } = await supabaseClient.from('contacts').select('id, first_name, last_name, mobile');
+    if(error || !data) return null;
+    const first = (payload.first_name||'').toLowerCase();
+    const last = (payload.last_name||'').toLowerCase();
+    const nameMatch = data.find(c=>(c.first_name||'').toLowerCase()===first && (c.last_name||'').toLowerCase()===last);
+    if(nameMatch) return nameMatch;
+    if(payload.mobile) return data.find(c=>c.mobile===payload.mobile) || null;
+    return null;
+  }catch(e){ console.error('checkOfflineContactDuplicate failed (skipping check, inserting normally):', e); return null; }
+}
+
 function seedAll(){
   db.todos = [];
   seedTodo({title:'Send LOI redline to Dana', category:'City Vet', dueDate:addDays(todayDate(),-2), assignedTo:'mclark', createdBy:'mclark', listId:'clients', clientId:'cityvet', dealId:'d1'});
@@ -2714,6 +3088,14 @@ function render(){
     if(state.toast) showToastNow();
     return;
   }
+  if(state.screen==='offline-empty'){
+    app.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;height:100vh;background:var(--canvas);text-align:center;padding:24px;">
+      ${brandLogoImg('Southwest Edge')}
+      <div style="font-size:15px;color:var(--ink);font-weight:600;">No connection, and nothing saved on this device yet</div>
+      <div style="color:var(--ink-soft);font-size:13px;max-width:360px;">Open the Portal once while you're online and signed in — after that, it'll keep working here with no connection at all.</div>
+    </div>`;
+    return;
+  }
   app.innerHTML = renderShell();
   attachShellHandlers();
   if(state.modalStack.length){
@@ -2735,6 +3117,8 @@ function render(){
   if(state.moveTodoPicker) renderMoveTodoPicker();
   if(state.moveDealPicker) renderMoveDealPicker();
   if(state.commissionModal) renderCommissionModal();
+  if(state.commissionSummaryModal) renderCommissionSummaryModal();
+  if(state.offlineDuplicateFlags && state.offlineDuplicateFlags.length) renderOfflineDuplicatesModal();
   if(state.myNotesOpen) renderMyNotesModal();
   if(state.newSmartListModal) renderNewSmartListModal();
   if(state.brokerReviewModal) renderBrokerReviewModal();
@@ -2848,7 +3232,7 @@ function renderEmailClientPicker(){
     state.pendingLoginUser=null;
     state.currentUser=u; state.screen='app'; state.mainView={type:'dashboard'}; if(!appStateWasLoaded) seedAll();
     await fetchAllAppDataFromSupabase();
-    checkTodoDeepLink(); checkBrokerReviewDeepLink();
+    checkTodoDeepLink(); checkBrokerReviewDeepLink(); checkCommissionSummaryDeepLink();
     render();
   });
 }
@@ -3215,7 +3599,7 @@ function attachLoginHandlers(){
     state.currentUser=u; state.screen='app'; state.mainView={type:'dashboard'}; if(!appStateWasLoaded) seedAll(); state.loginTarget=null;
     try{
       await fetchAllAppDataFromSupabase();
-      checkTodoDeepLink(); checkBrokerReviewDeepLink();
+      checkTodoDeepLink(); checkBrokerReviewDeepLink(); checkCommissionSummaryDeepLink();
     } catch(e){
       console.error('Post-login data load failed (still letting the user in):', e);
       flashToast("Signed in, but something went wrong loading your data. Try refreshing — if this keeps happening, tell an admin.");
@@ -5189,14 +5573,24 @@ function renderListMain(listId){
   }
 }
 
+function renderOfflineBanner(){
+  if(!state.isOffline && !state.offlineOutboxCount) return '';
+  const pending = state.offlineOutboxCount||0;
+  const label = state.isOffline
+    ? `🔌 Offline — working from your last sync${pending ? `, ${pending} change${pending===1?'':'s'} waiting to send` : ''}`
+    : `⏳ ${pending} change${pending===1?'':'s'} still syncing…`;
+  return `<div class="offline-banner" data-action="offlineBannerRetry" style="position:fixed;top:0;left:0;right:0;z-index:500;background:${state.isOffline?'#3A3630':'#2C6E9E'};color:#fff;font-size:12.5px;padding:6px 14px;text-align:center;cursor:pointer;">${label}${!state.isOffline && pending ? ' — tap to retry now' : ''}</div>`;
+}
 function renderShell(){
   // On a phone-width screen we show exactly one pane at a time: the nav list, or the
   // main content for whatever was tapped. A modal (client/deal drill-down) always
   // covers the full screen on top of either, so it doesn't need special-casing here.
   const hideSidebar = state.isMobile && state.mobileScreen==='main';
   const hideMain = state.isMobile && state.mobileScreen==='nav';
+  const showOfflineBanner = state.isOffline || !!state.offlineOutboxCount;
   return `
-  <div class="shell">
+  <div class="shell" style="${showOfflineBanner?'padding-top:26px;box-sizing:border-box;':''}">
+    ${renderOfflineBanner()}
     <div style="${hideSidebar?'display:none;':''}">${renderSidebar()}</div>
     <div class="main" style="${hideMain?'display:none;':''}position:relative;">
       ${renderTopbar()}
@@ -5253,6 +5647,11 @@ function wireGlobalSearchResultHandlers(){
   });
 }
 function attachShellHandlers(){
+  const offlineBanner = document.querySelector('[data-action="offlineBannerRetry"]');
+  if(offlineBanner) offlineBanner.onclick=()=>{
+    if(!navigator.onLine){ flashToast("Still no connection — this'll sync automatically once you're back online."); render(); return; }
+    syncOutbox();
+  };
   document.querySelectorAll('[data-nav]').forEach(el=>el.onclick=()=>{
     state.listSearchQuery = '';
     const [type,id]=el.dataset.nav.split(':');
@@ -6864,7 +7263,10 @@ function renderPortalChatWidget(){
     el.innerHTML = `
     <button id="portalChatToggle" class="portal-chat-fab${hasVoiceNoteFab?' stacked':''}" title="Ask Edgy, Your AI Assistant">🤖</button>`;
     document.getElementById('app').appendChild(el);
-    document.getElementById('portalChatToggle').onclick=()=>{ state.portalChatOpen=true; render(); };
+    document.getElementById('portalChatToggle').onclick=()=>{
+      if(state.isOffline){ flashToast("Edgy needs a connection — try again once you're back online."); render(); return; }
+      state.portalChatOpen=true; render();
+    };
     return;
   }
   const msgs = state.portalChatMessages;
@@ -7960,6 +8362,21 @@ function checkBrokerReviewDeepLink(){
   const matchingTodo = db.todos.find(t=>t.brokerReviewId===reviewId && t.assignedTo===state.currentUser.id && !t.completed);
   state.brokerReviewModal = {todoId: matchingTodo ? matchingTodo.id : null, reviewId: rev.id};
 }
+function checkCommissionSummaryDeepLink(){
+  const params = new URLSearchParams(window.location.search);
+  const clientId = params.get('commissionSummary');
+  if(!clientId) return;
+  history.replaceState(null, '', window.location.pathname);
+  const listId = findListIdForClient(clientId);
+  if(!listId){
+    flashToast("That account couldn't be found — it may have been removed.");
+    return;
+  }
+  try{
+    openClientModal(listId, clientId);
+    state.commissionSummaryModal = {clientId, listId};
+  }catch(e){ console.error('Commission Summary deep-link navigation failed:', e); }
+}
 function checkTodoDeepLink(){
   const params = new URLSearchParams(window.location.search);
   const todoId = params.get('todo');
@@ -8769,6 +9186,23 @@ function renderClientModalBody(l,c,viewMode,pendingDel){
       <button class="btn sm" data-action="addAuthUser" data-client="${c.id}">+ Add</button>
     </div>` : ''}
   </div>`;
+  const cs = c.commissionSummary;
+  const csRequiredCount = cs ? cs.splits.filter(s=>isPortalUser(s.userId)).length : 0;
+  const csHtml = `
+  <div class="contact-card" style="background:#FBF3E7;border-color:#EAD9B8;margin-top:20px;">
+    <div class="label" style="color:#8A6A1F;">💰 Commission Summary</div>
+    ${!cs ? `
+      <div style="font-size:12.5px;color:var(--ink-soft);margin:4px 0 8px;">The % split every party signs off on for this ${l.id==='listings'?'listing':'client'} — not created yet.</div>
+      ${canEdit
+        ? `<button class="btn secondary sm" data-action="openCommissionSummary" data-client="${c.id}">+ Create Commission Summary</button>`
+        : `<div class="tiny" style="color:var(--ink-soft);">Only someone with access to this ${l.id==='listings'?'listing':'client'} can create one.</div>`}
+    ` : `
+      <div style="font-size:12.5px;color:var(--ink-soft);margin:4px 0 8px;">
+        ${cs.locked ? '🔒 Locked — every party has approved.' : `${(cs.approvals||[]).length} of ${csRequiredCount} approved.`}
+      </div>
+      <button class="btn secondary sm" data-action="openCommissionSummary" data-client="${c.id}">${cs.locked ? 'View Commission Summary' : 'View / Approve'}</button>
+    `}
+  </div>`;
   return `
   ${!canEdit ? `<div style="background:#F3F1EC;border:1px solid var(--line);border-radius:8px;padding:8px 14px;font-size:12.5px;color:var(--ink-soft);margin-bottom:14px;">👁️ View-only — you have Full Access visibility but aren't personally added to this ${l.id==='listings'?'listing':'client'}, so editing is turned off.</div>` : ''}
   ${showDeals ? `
@@ -8800,7 +9234,7 @@ function renderClientModalBody(l,c,viewMode,pendingDel){
   ` : ''}
   ${showProspecting ? renderLSRInline(c, state.leasingReportMode || viewMode) : ''}
   ${l.id==='listings' ? renderSignCallsSection(l, c) : ''}
-  ${showDeals ? accessHtml : ''}
+  ${showDeals ? accessHtml + csHtml : ''}
   ${l.id==='listings' ? renderElaCard(c, canEdit) : ''}
   <div class="contact-card" style="margin-top:20px;">
     <div class="label">Notes</div>
@@ -9006,6 +9440,195 @@ function renderSplitRowHtml(row,i){
       <span style="font-size:12.5px;color:var(--ink-soft);">%</span>
       <button class="row-trash" data-removesplitrow="${i}">✕</button>
     </div>`;
+}
+function renderCsSplitRowHtml(row,i){
+  return `
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">
+      <select data-cssplituser="${i}" style="flex:1;">
+        ${usersSortedByMe().map(u=>`<option value="${u.id}" ${row.userId===u.id?'selected':''}>${u.name}</option>`).join('')}
+        ${commissionOnlyPeople.length ? `<optgroup label="No login — commission only">
+          ${commissionOnlyPeople.map(p=>`<option value="${p.id}" ${row.userId===p.id?'selected':''}>${p.name}</option>`).join('')}
+        </optgroup>` : ''}
+      </select>
+      <input type="number" step="0.01" data-cssplitpct="${i}" value="${row.pct!=null?row.pct:''}" placeholder="%" style="width:80px;">
+      <span style="font-size:12.5px;color:var(--ink-soft);">%</span>
+      <button class="row-trash" data-removecssplitrow="${i}">✕</button>
+    </div>`;
+}
+// Account-level Commission Summary: the document everyone signs when a new account is opened,
+// showing the % split. Deliberately separate from a deal's own Commission modal/splits above —
+// this is the one-time "who gets what" agreement for the account, not a per-deal calculation.
+// Anyone with access to the account (creator, Admin, or on the Access list — same tier as
+// `canEdit` elsewhere on this page) can create or edit it. "Commission-only, no login" people
+// can be added same as the deal Commission modal, but since they can never log in to check a
+// box themselves, their row is informational only and never counts toward — or blocks — locking.
+function renderCommissionSummaryModal(){
+  const m = state.commissionSummaryModal;
+  const l = db.lists.find(x=>x.id===m.listId); const c = l && l.clients.find(x=>x.id===m.clientId);
+  if(!c){ state.commissionSummaryModal=null; return; }
+  const canManage = state.currentUser.role==='Admin' || c.createdBy===state.currentUser.id || (c.authorizedUserIds||[]).includes(state.currentUser.id);
+  const isAdmin = state.currentUser.role==='Admin';
+  const cs = c.commissionSummary;
+  if(m.editing===undefined) m.editing = !cs;
+  if(m.editing && !m.draft){
+    if(cs && Array.isArray(cs.splits) && cs.splits.length){
+      m.draft = cs.splits.map(s=>({...s}));
+    } else {
+      const accountUserIds = Array.from(new Set([c.createdBy, ...(c.authorizedUserIds||[])].filter(Boolean)));
+      m.draft = accountUserIds.map(userId=>({userId, pct:null}));
+    }
+  }
+  let bodyHtml;
+  if(m.editing){
+    const draft = m.draft;
+    const total = draft.reduce((s,row)=>s + (parseFloat(row.pct)||0), 0);
+    const totalOk = Math.abs(total-100) < 0.02;
+    bodyHtml = `
+      <div class="tiny" style="color:var(--ink-soft);margin-bottom:10px;">These are the % splits every party signs off on for this ${l.id==='listings'?'listing':'client'} — once everyone below has checked their own approval, it locks.${cs ? ' Saving changed numbers here clears any existing approvals, since what people would be approving has changed.' : ''}</div>
+      <div id="csSplitsRows">${draft.map((row,i)=>renderCsSplitRowHtml(row,i)).join('')}</div>
+      <button class="btn secondary sm" data-action="addCsSplitRow" style="margin-top:4px;">+ Add person</button>
+      <button class="btn secondary sm" data-action="addCsCommissionOnlyPerson" style="margin-top:4px;">+ Add someone with no login</button>
+      <div id="csSplitsTotalLine" style="margin-top:8px;font-size:12.5px;font-weight:600;color:${totalOk?'var(--good)':'var(--bad)'};">
+        Total: ${total.toFixed(2)}%${totalOk?' ✓':' — must equal 100%'}
+      </div>
+    `;
+  } else {
+    bodyHtml = `
+      ${cs.locked ? `<div style="background:#EAF6EC;border:1px solid #BFE3C6;border-radius:8px;padding:8px 14px;font-size:12.5px;color:#2E7D42;margin-bottom:14px;">🔒 Locked — every party has approved this Commission Summary.</div>`
+        : `<div class="tiny" style="color:var(--ink-soft);margin-bottom:10px;">Each person below can check off their own approval — no one can check for anyone else. Once everyone has approved, this locks automatically.</div>`}
+      ${cs.splits.map(s=>{
+        const approval = (cs.approvals||[]).find(a=>a.userId===s.userId);
+        const portalUser = isPortalUser(s.userId);
+        const isMine = portalUser && isSameUser(s.userId, state.currentUser.id);
+        const name = nameForSplitUserId(s.userId);
+        return `
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--line-soft);font-size:13.5px;">
+          <div>
+            <div style="font-weight:600;">${escapeHtml(name)}${portalUser?'':` <span class="tiny" style="color:var(--ink-soft);font-weight:400;">(no login)</span>`}</div>
+            <div class="tiny" style="color:var(--ink-soft);">${(parseFloat(s.pct)||0).toFixed(2)}%${approval?` · approved ${fmtDate(new Date(approval.approvedAt))}`:''}</div>
+          </div>
+          ${portalUser ? `
+          <label style="display:flex;align-items:center;gap:7px;">
+            ${!isMine && !approval ? `<span class="tiny" style="color:var(--ink-soft);">Waiting</span>` : ''}
+            <input type="checkbox" data-csapprove="${escapeAttr(s.userId)}" ${approval?'checked':''} ${(isMine && !cs.locked) ? '' : 'disabled'} style="width:18px;height:18px;accent-color:var(--good);">
+          </label>` : `<span class="tiny" style="color:var(--ink-soft);">Not required to approve</span>`}
+        </div>`;
+      }).join('')}
+      ${canManage && !cs.locked ? `<button class="btn secondary sm" data-action="editCsSplits" style="margin-top:12px;">✏️ Edit Splits</button>` : ''}
+      ${isAdmin && cs.locked ? `<button class="btn secondary sm" data-action="resetCs" style="margin-top:12px;">↺ Reset</button>` : ''}
+    `;
+  }
+  const overlay = document.createElement('div');
+  overlay.className='modal-overlay'; overlay.style.zIndex=206;
+  overlay.innerHTML = `
+  <div class="modal-card">
+    <div class="modal-head"><div class="modal-title">💰 Commission Summary — ${escapeHtml(c.name)}</div><button class="modal-close" data-action="closeCommissionSummary">✕</button></div>
+    <div class="modal-body">${bodyHtml}</div>
+    <div class="modal-foot">
+      ${m.editing ? `<button class="btn secondary" data-action="cancelCsEdit">${cs?'Cancel':'Close'}</button><button class="btn" data-action="saveCsSplits">Save</button>` : ''}
+    </div>
+  </div>`;
+  document.getElementById('app').appendChild(overlay);
+  overlay.querySelector('[data-action="closeCommissionSummary"]').onclick=()=>{ state.commissionSummaryModal=null; render(); };
+  if(m.editing){
+    overlay.querySelector('[data-action="addCsSplitRow"]').onclick=()=>{
+      m.draft.push({userId: USERS[0].id, pct:''});
+      renderPreservingScroll('.modal-body');
+    };
+    overlay.querySelectorAll('[data-removecssplitrow]').forEach(el=>el.onclick=()=>{
+      m.draft.splice(parseInt(el.dataset.removecssplitrow), 1);
+      renderPreservingScroll('.modal-body');
+    });
+    const addCsCoBtn = overlay.querySelector('[data-action="addCsCommissionOnlyPerson"]');
+    if(addCsCoBtn) addCsCoBtn.onclick=safeHandler(async ()=>{
+      const name = prompt("This person's name (they'll never get a login — just an informational split entry, not required to approve):");
+      if(!name || !name.trim()) return;
+      const person = await supaCreateCommissionOnlyPerson(name.trim());
+      if(!person) return;
+      m.draft.push({userId: person.id, pct: ''});
+      renderPreservingScroll('.modal-body');
+    });
+    overlay.querySelectorAll('[data-cssplituser]').forEach(el=>el.onchange=()=>{
+      m.draft[parseInt(el.dataset.cssplituser)].userId = el.value;
+    });
+    overlay.querySelectorAll('[data-cssplitpct]').forEach(el=>el.oninput=()=>{
+      m.draft[parseInt(el.dataset.cssplitpct)].pct = el.value;
+      const newTotal = m.draft.reduce((s,row)=>s + (parseFloat(row.pct)||0), 0);
+      const newTotalOk = Math.abs(newTotal-100) < 0.02;
+      const totalLine = document.getElementById('csSplitsTotalLine');
+      if(totalLine){
+        totalLine.style.color = newTotalOk ? 'var(--good)' : 'var(--bad)';
+        totalLine.textContent = `Total: ${newTotal.toFixed(2)}%${newTotalOk?' ✓':' — must equal 100%'}`;
+      }
+    });
+    const cancelBtn = overlay.querySelector('[data-action="cancelCsEdit"]'); if(cancelBtn) cancelBtn.onclick=()=>{
+      if(!cs){ state.commissionSummaryModal=null; render(); return; }
+      m.editing=false; m.draft=null; render();
+    };
+    overlay.querySelector('[data-action="saveCsSplits"]').onclick=()=>{
+      const draft = m.draft;
+      const currentTotal = draft.reduce((s,row)=>s + (parseFloat(row.pct)||0), 0);
+      if(!draft.length || Math.abs(currentTotal-100) >= 0.02){
+        flashToast(`Splits add up to ${currentTotal.toFixed(2)}%, not 100% — fix the percentages before saving.`);
+        renderPreservingScroll('.modal-body');
+        return;
+      }
+      const newSplits = draft.map(row=>({userId:row.userId, pct:parseFloat(row.pct)||0}));
+      const hadCs = !!c.commissionSummary;
+      const changed = !hadCs || JSON.stringify(c.commissionSummary.splits) !== JSON.stringify(newSplits);
+      if(!hadCs){
+        c.commissionSummary = {id:crypto.randomUUID(), splits:newSplits, approvals:[], locked:false, createdBy:state.currentUser.id, createdAt:new Date().toISOString(), lockedAt:null};
+      } else {
+        c.commissionSummary.splits = newSplits;
+        if(changed) c.commissionSummary.approvals = [];
+        c.commissionSummary.locked = false;
+        c.commissionSummary.lockedAt = null;
+      }
+      supaUpdateClientCommissionSummary(c);
+      if(!hadCs || changed){
+        newSplits.filter(row=>isPortalUser(row.userId)).forEach(row=>{
+          invokeCommissionSummaryEmail(c.id, row.userId, state.currentUser.id);
+        });
+      }
+      m.editing=false; m.draft=null;
+      flashToast(changed && hadCs ? 'Splits saved — approvals cleared, everyone needs to re-approve. Emails sent.' : 'Commission Summary saved — approval emails sent.');
+      render();
+    };
+  } else {
+    overlay.querySelectorAll('[data-csapprove]').forEach(el=>el.onchange=()=>{
+      const userId = el.dataset.csapprove;
+      if(!isSameUser(userId, state.currentUser.id)){ renderPreservingScroll('.modal-body'); return; }
+      c.commissionSummary.approvals = c.commissionSummary.approvals || [];
+      if(el.checked){
+        if(!c.commissionSummary.approvals.some(a=>a.userId===userId)){
+          c.commissionSummary.approvals.push({userId, approvedAt: new Date().toISOString()});
+        }
+      } else {
+        c.commissionSummary.approvals = c.commissionSummary.approvals.filter(a=>a.userId!==userId);
+      }
+      const requiredSplits = c.commissionSummary.splits.filter(s=>isPortalUser(s.userId));
+      const allApprovedNow = requiredSplits.length>0 && requiredSplits.every(s=>c.commissionSummary.approvals.some(a=>a.userId===s.userId));
+      if(allApprovedNow && !c.commissionSummary.locked){
+        c.commissionSummary.locked = true;
+        c.commissionSummary.lockedAt = new Date().toISOString();
+        flashToast('Everyone has approved — Commission Summary is now locked.');
+      }
+      supaUpdateClientCommissionSummary(c);
+      renderPreservingScroll('.modal-body');
+    });
+    const editBtn = overlay.querySelector('[data-action="editCsSplits"]'); if(editBtn) editBtn.onclick=()=>{
+      m.editing=true; m.draft=null; render();
+    };
+    const resetBtn = overlay.querySelector('[data-action="resetCs"]'); if(resetBtn) resetBtn.onclick=()=>{
+      if(!confirm('Reset this Commission Summary? This clears every approval and unlocks the splits so they can be edited again.')) return;
+      c.commissionSummary.approvals = [];
+      c.commissionSummary.locked = false;
+      c.commissionSummary.lockedAt = null;
+      supaUpdateClientCommissionSummary(c);
+      flashToast('Commission Summary reset — approvals cleared.');
+      render();
+    };
+  }
 }
 function renderCommissionModal(){
   const m = state.commissionModal;
@@ -10219,6 +10842,12 @@ function attachModalHandlers(root){
     supaRemoveAuthorizedUser(c.id, userId);
     renderPreservingScroll('.modal-body');
   }));
+  const openCsBtn = root.querySelector('[data-action="openCommissionSummary"]'); if(openCsBtn) openCsBtn.onclick=()=>{
+    if(state.isOffline){ flashToast("Commission Summary needs a connection — the approval emails can't be queued for later. Try again once you're back online."); render(); return; }
+    const frame = state.modalStack[0];
+    state.commissionSummaryModal = {clientId: openCsBtn.dataset.client, listId: frame.listId};
+    render();
+  };
   const addEntryAuthBtn = root.querySelector('[data-action="addEntryAuthUser"]'); if(addEntryAuthBtn) addEntryAuthBtn.onclick=safeHandler(async ()=>{
     const sel = document.getElementById('addEntryAuthUserSelect');
     const userId = sel.value;
@@ -10405,6 +11034,7 @@ function attachModalHandlers(root){
     renderPreservingScroll('.modal-body');
   };
   const openClientMapBtn = root.querySelector('[data-action="openClientMap"]'); if(openClientMapBtn) openClientMapBtn.onclick=()=>{
+    if(state.isOffline){ flashToast("The map needs a connection to load — try again once you're back online."); render(); return; }
     const topFrame = state.modalStack[state.modalStack.length-1];
     if(topFrame && topFrame.kind==='client'){
       state.clientMapModal = {listId:topFrame.listId, clientId:topFrame.clientId};
@@ -10625,6 +11255,47 @@ function renderDuplicatePrompt(){
     db.contacts.push(c);
     await supaCreateContact(c); // must finish before we attach it — deals.contact_id has a foreign key to contacts.id
     finishContactPick(c.id);
+  };
+}
+// Resolves contacts that were created offline and, once reconnected, turned out to already
+// exist on the server (see checkOfflineContactDuplicate / syncOutbox). Deliberately simple —
+// this is a rare safety-net path, not the everyday duplicate-contact flow above.
+function renderOfflineDuplicatesModal(){
+  const flags = state.offlineDuplicateFlags || [];
+  if(!flags.length) return;
+  const item = flags[0];
+  const overlay = document.createElement('div');
+  overlay.className='modal-overlay'; overlay.style.zIndex=650;
+  overlay.innerHTML = `
+    <div class="modal-card" style="width:420px;">
+      <div class="modal-head"><div class="modal-title">Possible Duplicate (from offline)</div></div>
+      <div class="modal-body">
+        <p style="font-size:13.5px;line-height:1.5;">A contact you created while offline — <b>${escapeHtml(item.payload.first_name||'')} ${escapeHtml(item.payload.last_name||'')}</b> — matches someone already in the Portal:</p>
+        <div class="contact-card">
+          <div style="font-weight:600;">${escapeHtml(item.match.first_name||'')} ${escapeHtml(item.match.last_name||'')}</div>
+          ${item.match.mobile ? `<div class="tiny" style="color:var(--ink-soft);">${escapeHtml(item.match.mobile)}</div>` : ''}
+        </div>
+        <p style="font-size:12.5px;color:var(--ink-soft);">Same person, or a genuinely different one?</p>
+        ${flags.length>1 ? `<p class="tiny" style="color:var(--ink-soft);">${flags.length-1} more to review after this one.</p>` : ''}
+      </div>
+      <div class="modal-foot">
+        <button class="btn secondary" id="offlineDupSkip">Skip — Don't Create</button>
+        <button class="btn" id="offlineDupCreate">Different Person — Create Anyway</button>
+      </div>
+    </div>`;
+  document.getElementById('app').appendChild(overlay);
+  document.getElementById('offlineDupSkip').onclick=()=>{
+    db.contacts = db.contacts.filter(c=>c.id!==item.payload.id);
+    state.offlineDuplicateFlags.shift();
+    flashToast('Skipped — nothing was created for this one.');
+    render();
+  };
+  document.getElementById('offlineDupCreate').onclick=async ()=>{
+    const { error } = await supabaseClient.from('contacts').insert(item.payload);
+    if(error) console.error('offline duplicate create-anyway failed:', error);
+    state.offlineDuplicateFlags.shift();
+    flashToast(error ? 'That failed to save — try again once fully reconnected.' : 'Created.');
+    render();
   };
 }
 function finishContactPick(contactId){
@@ -12680,11 +13351,40 @@ loadAppState();
 
 render();
 
+// Live connectivity signals — flip state.isOffline the instant the browser notices, and try
+// to drain the outbox the moment a connection comes back (syncOutbox() also gets called
+// opportunistically elsewhere, but this is the main trigger for "I just landed and reconnected").
+window.addEventListener('online', ()=>{ state.isOffline = false; syncOutbox(); render(); });
+window.addEventListener('offline', ()=>{ state.isOffline = true; render(); });
+refreshOfflineOutboxCount().then(()=>render());
+
 // Check for an existing Supabase session (real login persistence — this is the
 // part local storage alone could never do). If found, skip the login screen
 // and go straight into the app. Runs after the first paint so the login card
 // still shows instantly rather than a blank screen while this resolves.
+//
+// Offline-aware: with no connection at all, none of the network calls below can succeed —
+// so this goes straight to the local IndexedDB snapshot from your last online session
+// instead of grinding through a chain of calls that can only fail. The same fallback also
+// covers the messier real-world case where navigator.onLine says "online" (connected to
+// wifi) but there's actually no working internet behind it (e.g. a captive portal) — any
+// unexpected failure below tries the offline snapshot before giving up to the login screen.
+async function bootOffline(){
+  const hydrated = await hydrateFromOfflineSnapshot().catch(e=>{ console.error('Offline hydrate failed:', e); return false; });
+  if(hydrated){
+    state.isOffline = true;
+    state.screen = 'app';
+    await refreshOfflineOutboxCount();
+    checkTodoDeepLink(); checkBrokerReviewDeepLink(); checkCommissionSummaryDeepLink();
+    render();
+    return true;
+  }
+  state.screen = 'offline-empty';
+  render();
+  return false;
+}
 (async ()=>{
+  if(!navigator.onLine){ await bootOffline(); return; }
   try{
     // Directory additions must land BEFORE the session check below — otherwise
     // someone admitted since this code was last deployed, opening the app on a
@@ -12698,7 +13398,7 @@ render();
     if(!session || !session.user){ state.screen='login'; render(); return; }
 
     const profile = await fetchMyProfile(session.user.id);
-    if(!profile){ state.screen='login'; render(); return; }
+    if(!profile){ if(await bootOffline()) return; state.screen='login'; render(); return; }
 
     await fetchAllProfilesIntoUsers();
     const u = USERS.find(x=>x.email.toLowerCase()===profile.email.toLowerCase());
@@ -12719,14 +13419,20 @@ render();
     state.screen = 'app';
     if(!appStateWasLoaded) seedAll();
     await fetchAllAppDataFromSupabase();
-    checkTodoDeepLink(); checkBrokerReviewDeepLink();
+    checkTodoDeepLink(); checkBrokerReviewDeepLink(); checkCommissionSummaryDeepLink();
+    persistOfflineSnapshot(); // fire-and-forget — mirrors "your things" locally for next time you're offline
+    syncOutbox(); // in case something was queued from an earlier offline stretch this tab never reconnected from
     render();
-  } catch(e){ console.error('Session check failed:', e); state.screen='login'; render(); }
+  } catch(e){
+    console.error('Session check failed:', e);
+    if(await bootOffline()) return;
+    state.screen='login'; render();
+  }
 })();
 
 // Register the service worker so this can be "Added to Home Screen" as an installable
-// app. Fails silently anywhere this isn't supported (e.g. this preview sandbox) — the
-// app works exactly the same either way, this is purely additive.
+// app, and — critically now — so the app shell itself (this page plus the two CDN scripts
+// it depends on) can load with no connection at all, not just so it's installable.
 if('serviceWorker' in navigator){
   window.addEventListener('load', ()=>{
     navigator.serviceWorker.register('sw.js').catch(()=>{ /* not available here — fine */ });
