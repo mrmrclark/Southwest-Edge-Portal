@@ -8665,7 +8665,7 @@ function renderProjectSection(td){
   </div>`;
   return `
   <div class="section-label" style="margin-top:10px;">To-Do's</div>
-  <button class="btn secondary sm" data-action="newProjectChildTodo" data-project="${td.id}" style="margin-bottom:10px;">+ New To-Do</button>
+  <button class="btn sm" data-action="newProjectChildTodo" data-project="${td.id}" style="margin-bottom:10px;">+ New To-Do</button>
   ${childTodos.length? renderTodoList(childTodos) : `<div class="empty-state" style="padding:16px;"><div class="tiny">No to-do's yet — add the first action item for this project.</div></div>`}
   <div class="section-label" style="margin-top:18px;">Checklist</div>
   ${renderChecklistSection(td)}
@@ -9232,7 +9232,7 @@ function renderClientModalBody(l,c,viewMode,pendingDel){
     </div>` : ''}
   </div>
   <div class="section-label">General To-Do's <span style="font-weight:400;color:var(--ink-soft);">(not tied to a specific site)</span></div>
-  ${canEdit ? `<button class="btn secondary sm" data-action="newAccountTodo" data-listid="${l.id}" data-client="${c.id}" style="margin-bottom:10px;">+ New To-Do</button>` : ''}
+  ${canEdit ? `<button class="btn sm" data-action="newAccountTodo" data-listid="${l.id}" data-client="${c.id}" style="margin-bottom:10px;">+ New To-Do</button>` : ''}
   ${renderTodoList(db.todos.filter(t=>t.clientId===c.id && !t.dealId).filter(visibleTodo), true)}
   <div class="section-label" style="margin-top:18px;">Sites / Deals</div>
   ${canEdit ? `<button class="btn sm" data-action="addDeal" data-client="${c.id}" style="margin-bottom:10px;">+ Add site / deal</button>` : ''}
@@ -9825,7 +9825,7 @@ function renderDealModalBody(l,c,d){
     </div>` : ''}
   </div>
   <div class="section-label">To-Do's</div>
-  ${canEdit ? `<button class="btn secondary sm" data-action="newTodoInDeal" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}" style="margin-bottom:10px;">+ New To-Do</button>` : ''}
+  ${canEdit ? `<button class="btn sm" data-action="newTodoInDeal" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}" style="margin-bottom:10px;">+ New To-Do</button>` : ''}
   ${todos.length? renderTodoList(todos, true) : `<div class="tiny" style="color:var(--ink-soft);padding:6px 0;">No to-do's yet — add the first action item for this site.</div>`}
   <div class="contact-card" style="margin-top:18px;">
     <div class="label">Broker</div>
