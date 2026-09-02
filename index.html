@@ -7582,9 +7582,15 @@ function renderDealStageChart(userId, yearFilter){
   filtered.forEach(r=>{
     const d = r.deal;
     if(d.stage==='dead' || d.stage==='prospect' || !d.stage) return;
+    // A pipeline is always modeled — every dollar here is discounted by that stage's
+    // likelihood (PIPELINE_STAGE_WA), the same weighting WIP already applies per row.
+    // Per Michael: gross/undiscounted totals don't belong on the Dashboard at all, so
+    // this now matches WIP's weighted total instead of showing the full deal value.
+    const wa = PIPELINE_STAGE_WA[d.stage];
+    if(!wa) return; // no modeled likelihood for this stage — not part of the pipeline
     const totalFee = parseFloat(d.totalFee) || 0;
     // Individual view: your actual split share on this deal — same convention WIP uses —
-    // so this reconciles with Paid to Date and with WIP's Total Fee column, instead of
+    // so this reconciles with Paid to Date and with WIP's WA column, instead of
     // showing the full deal value regardless of what you'd actually collect (the bug that
     // made "$495,320 In Escrow" include a deal where your split is really only 50%).
     // Deals you have access to but aren't on the split show their full value here, same as
@@ -7592,7 +7598,7 @@ function renderDealStageChart(userId, yearFilter){
     // single split to apply to the whole office.
     const mySplit = userId ? findSplitForUser(d, userId) : null;
     const shareFactor = userId ? (mySplit ? (parseFloat(mySplit.pct)||0)/100 : 1) : 1;
-    const share = totalFee * shareFactor;
+    const share = totalFee * shareFactor * wa;
     counts[d.stage] = (counts[d.stage]||0) + 1;
     values[d.stage] = (values[d.stage]||0) + share;
     grandTotal += share;
@@ -7601,7 +7607,7 @@ function renderDealStageChart(userId, yearFilter){
   if(!totalDeals) return `<div class="tiny" style="color:var(--ink-soft);">${yearFilter && yearFilter!=='total' ? 'No active deals with a Due Date in this window.' : 'No active deals.'}</div>`;
   const totalHtml = `
     <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid var(--line);">
-      <div style="font-size:12.5px;font-weight:700;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.02em;">Total Pipeline <span style="font-weight:400;text-transform:none;letter-spacing:normal;">(${totalDeals} deal${totalDeals===1?'':'s'})</span></div>
+      <div style="font-size:12.5px;font-weight:700;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.02em;">Total Pipeline (Modeled) <span style="font-weight:400;text-transform:none;letter-spacing:normal;">(${totalDeals} deal${totalDeals===1?'':'s'})</span></div>
       <div style="font-size:20px;font-weight:800;color:var(--edge);">${grandTotal.toLocaleString('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0})}</div>
     </div>`;
   const maxValue = Math.max(1, ...Object.values(values));
