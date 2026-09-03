@@ -607,6 +607,8 @@ let state = {
   navContextMenu:null,          // {kind:'smart'|'list', id} — which ellipsis menu is open
   showAllSmartLists:false,      // collapse toggle once there are more than 10 smart lists
   notifSettingsOpen:false,      // whether the notification-preferences modal is open
+  msGraphStatus:null,           // {loading, connected, ms_email} — Microsoft 365 connection state, fetched from ms-oauth
+  msOauthFlow:null,             // {user_code, verification_uri, interval, expiresAt, error} — in-progress device-code sign-in
   pendingUsersModalOpen:false,
   sidePanelWidgets:{calendar:true, weather:true, news:true, quicklinks:true},
   showWidgetPicker:false,
@@ -3270,10 +3272,106 @@ function sendDigestNow(forUser){
   openEmailDraft(forUser, 'Your Weekly To-Do Digest — Southwest Edge', generateDigestBody(forUser));
   flashToast(`Digest draft opened for ${forUser.name}.`);
 }
+async function refreshMsGraphStatus(){
+  state.msGraphStatus = { loading:true };
+  const { data, error } = await supabaseClient.functions.invoke('ms-oauth', { body:{ action:'status' } });
+  if(error){ state.msGraphStatus = { loading:false, connected:false, error: error.message }; }
+  else { state.msGraphStatus = { loading:false, connected: !!(data && data.connected), ms_email: data && data.ms_email }; }
+  if(state.notifSettingsOpen) renderPreservingScroll('.modal-body'); else render();
+}
+async function startMsGraphConnect(){
+  const { data, error } = await supabaseClient.functions.invoke('ms-oauth', { body:{ action:'start' } });
+  if(error || !data || !data.user_code){
+    flashToast(`Couldn't start Microsoft 365 sign-in: ${(error && error.message) || (data && data.error) || 'unknown error'}`);
+    return;
+  }
+  state.msOauthFlow = {
+    user_code: data.user_code,
+    verification_uri: data.verification_uri,
+    interval: data.interval || 5,
+    expiresAt: Date.now() + (data.expires_in || 900) * 1000,
+    error: null,
+  };
+  renderPreservingScroll('.modal-body');
+  pollMsGraphOnce();
+}
+async function pollMsGraphOnce(){
+  if(!state.notifSettingsOpen || !state.msOauthFlow) return; // modal closed or cancelled — stop polling
+  if(Date.now() > state.msOauthFlow.expiresAt){
+    state.msOauthFlow.error = "That code expired — click Connect again.";
+    renderPreservingScroll('.modal-body');
+    return;
+  }
+  const { data, error } = await supabaseClient.functions.invoke('ms-oauth', { body:{ action:'poll' } });
+  if(!state.notifSettingsOpen || !state.msOauthFlow) return; // closed/cancelled while this was in flight
+  if(error){
+    state.msOauthFlow.error = error.message || 'Something went wrong — please try again.';
+    renderPreservingScroll('.modal-body');
+    return;
+  }
+  if(data.status === 'connected'){
+    state.msOauthFlow = null;
+    state.msGraphStatus = { loading:false, connected:true, ms_email: data.ms_email };
+    flashToast(`Connected to Microsoft 365 as ${data.ms_email || 'your account'}.`);
+    renderPreservingScroll('.modal-body');
+    return;
+  }
+  if(data.status === 'error'){
+    state.msOauthFlow.error = data.message || 'Sign-in was not completed.';
+    renderPreservingScroll('.modal-body');
+    return;
+  }
+  // still pending — check again after the interval Microsoft asked for
+  setTimeout(pollMsGraphOnce, (state.msOauthFlow.interval || 5) * 1000);
+}
+async function disconnectMsGraph(){
+  if(!confirm('Disconnect Microsoft 365? Edgy will no longer be able to create calendar events or send email for you until you reconnect.')) return;
+  const { error } = await supabaseClient.functions.invoke('ms-oauth', { body:{ action:'disconnect' } });
+  if(error){ flashToast(`Could not disconnect: ${error.message}`); return; }
+  state.msGraphStatus = { loading:false, connected:false };
+  flashToast('Disconnected from Microsoft 365.');
+  renderPreservingScroll('.modal-body');
+}
 function renderNotifSettingsModal(){
   const u = state.currentUser;
   const usingDefault = !u.notifPref;
   const pref = u.notifPref || {type:adminDefaultSchedule.type, days:[...adminDefaultSchedule.days], time:adminDefaultSchedule.time};
+  const msStatus = state.msGraphStatus || {loading:true};
+  const msFlow = state.msOauthFlow;
+  const msSyncHtml = (()=>{
+    if(msFlow){
+      if(msFlow.error){
+        return `
+          <div style="background:#fdecea;border:1px solid var(--bad,#C0392B);border-radius:8px;padding:10px 12px;font-size:12.5px;margin-bottom:8px;">❌ ${escapeHtml(msFlow.error)}</div>
+          <button class="btn secondary sm" data-action="msConnect">Try Again</button>
+        `;
+      }
+      return `
+        <div style="background:var(--edge-lighter);border:1px solid var(--edge-light);border-radius:8px;padding:12px 14px;margin-bottom:8px;">
+          <div style="font-size:12.5px;color:var(--ink-soft);margin-bottom:8px;">1. On any device, go to <b>${escapeHtml(msFlow.verification_uri)}</b><br>2. Enter this code and sign in with your Microsoft 365 account:</div>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+            <div style="font-family:monospace;font-size:20px;font-weight:700;letter-spacing:2px;background:#fff;border:1px solid var(--line);border-radius:6px;padding:6px 12px;">${escapeHtml(msFlow.user_code)}</div>
+            <button class="btn secondary sm" data-action="msCopyCode">Copy Code</button>
+          </div>
+          <div class="tiny" style="color:var(--ink-soft);">⏳ Waiting for you to finish signing in…</div>
+        </div>
+        <button class="btn secondary sm" data-action="msCancelConnect">Cancel</button>
+      `;
+    }
+    if(msStatus.loading){
+      return `<div style="font-size:12px;color:var(--ink-soft);margin-bottom:8px;">Checking connection…</div>`;
+    }
+    if(msStatus.connected){
+      return `
+        <div style="font-size:12.5px;color:var(--good,#1E8E5A);margin-bottom:8px;">✅ Connected as ${escapeHtml(msStatus.ms_email||'your Microsoft 365 account')}</div>
+        <button class="btn secondary sm" data-action="msDisconnect">Disconnect</button>
+      `;
+    }
+    return `
+      <div style="font-size:12px;color:var(--ink-soft);margin-bottom:8px;">Not connected yet.</div>
+      <button class="btn secondary sm" data-action="msConnect">📅 Connect Microsoft 365</button>
+    `;
+  })();
   const overlay = document.createElement('div');
   overlay.className='modal-overlay'; overlay.style.zIndex=170;
   const scheduleFields = (prefix, sched)=>`
@@ -3334,12 +3432,9 @@ function renderNotifSettingsModal(){
         <label style="margin:0;" for="wantsAssignerEmailsCheck">Email me when someone completes or reschedules a to-do I assigned them</label>
       </div>
       <div class="field">
-        <label>Calendar sync</label>
-        <div style="font-size:12px;color:var(--ink-soft);margin-bottom:8px;">Not connected yet.</div>
-        <div style="display:flex;gap:8px;">
-          <button class="btn secondary sm" data-action="connectOutlook">📅 Connect Outlook Calendar</button>
-          <button class="btn secondary sm" data-action="connectGoogle">📅 Connect Google Calendar</button>
-        </div>
+        <label>Microsoft 365 (Calendar &amp; Email)</label>
+        <div style="font-size:11.5px;color:var(--ink-soft);margin-bottom:8px;line-height:1.5;">Connect your own Microsoft 365 account so Edgy (the AI assistant) can create real calendar events and send real emails as you.</div>
+        ${msSyncHtml}
       </div>
       <div class="section-label">My reminder schedule</div>
       <div class="field" style="display:flex;align-items:center;gap:8px;">
@@ -3388,7 +3483,21 @@ function renderNotifSettingsModal(){
   wireScheduleControls('my', false);
   wireScheduleControls('admin', true);
 
-  overlay.querySelectorAll('[data-action="closeNotifSettings"]').forEach(b=>b.onclick=()=>{ state.notifSettingsOpen=false; render(); });
+  overlay.querySelectorAll('[data-action="closeNotifSettings"]').forEach(b=>b.onclick=()=>{ state.notifSettingsOpen=false; state.msOauthFlow=null; render(); });
+  const msConnectBtn = overlay.querySelector('[data-action="msConnect"]'); if(msConnectBtn) msConnectBtn.onclick=safeHandler(startMsGraphConnect);
+  const msDisconnectBtn = overlay.querySelector('[data-action="msDisconnect"]'); if(msDisconnectBtn) msDisconnectBtn.onclick=safeHandler(disconnectMsGraph);
+  const msCancelBtn = overlay.querySelector('[data-action="msCancelConnect"]'); if(msCancelBtn) msCancelBtn.onclick=()=>{ state.msOauthFlow=null; renderPreservingScroll('.modal-body'); };
+  const msCopyBtn = overlay.querySelector('[data-action="msCopyCode"]'); if(msCopyBtn) msCopyBtn.onclick=()=>{
+    const code = (state.msOauthFlow && state.msOauthFlow.user_code) || '';
+    const done=()=>{ msCopyBtn.textContent='Copied!'; setTimeout(()=>{ msCopyBtn.textContent='Copy Code'; },1500); };
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(code).then(done).catch(()=>{
+        const tmp=document.createElement('input'); tmp.value=code; document.body.appendChild(tmp); tmp.select(); try{document.execCommand('copy');}catch(e){} document.body.removeChild(tmp); done();
+      });
+    } else {
+      const tmp=document.createElement('input'); tmp.value=code; document.body.appendChild(tmp); tmp.select(); try{document.execCommand('copy');}catch(e){} document.body.removeChild(tmp); done();
+    }
+  };
   const useDefaultToggle = document.getElementById('useDefaultToggle');
   if(useDefaultToggle) useDefaultToggle.onchange=()=>{
     if(useDefaultToggle.checked){ u.notifPref=null; supaSaveMyNotifPref(true); }
@@ -3454,9 +3563,6 @@ function renderNotifSettingsModal(){
       if(error){ console.error('Saving notif_assigner_emails failed:', error); flashToast('Saved locally, but syncing to the server failed — try again. (' + error.message + ')'); return; }
     }
     flashToast(u.wantsAssignerEmails ? "You'll get an email when your assignees complete or reschedule a to-do." : "Those emails are turned off for you.");
-  };
-  const googleBtn = overlay.querySelector('[data-action="connectGoogle"]'); if(googleBtn) googleBtn.onclick=()=>{
-    alert("Real Google Calendar sync needs a Google Cloud project registered to your account (or your Google Workspace admin) plus your portal's real, final web address — same idea as Outlook. Once you're on a stable Netlify domain, this is genuinely buildable client-side with no backend server. For now nothing is synced yet.");
   };
 }
 function portalUrl(todoId){
@@ -5853,11 +5959,11 @@ function attachShellHandlers(){
     renderPreservingScroll('.sidebar');
   };
   const notifBtn=document.querySelector('[data-action="openNotifSettings"]'); if(notifBtn) notifBtn.onclick=()=>{
-    state.notifSettingsOpen=true; render();
+    state.notifSettingsOpen=true; render(); refreshMsGraphStatus();
   };
   const refreshBtn=document.querySelector('[data-action="refreshApp"]'); if(refreshBtn) refreshBtn.onclick=()=>{ doAppRefresh(); };
   const myNotesBtn=document.querySelector('[data-action="openMyNotes"]'); if(myNotesBtn) myNotesBtn.onclick=()=>{ state.myNotesOpen=true; state.showUserMenu=false; render(); };
-  const notifFromMenuBtn=document.querySelector('[data-action="openNotifSettingsFromMenu"]'); if(notifFromMenuBtn) notifFromMenuBtn.onclick=()=>{ state.notifSettingsOpen=true; state.showUserMenu=false; render(); };
+  const notifFromMenuBtn=document.querySelector('[data-action="openNotifSettingsFromMenu"]'); if(notifFromMenuBtn) notifFromMenuBtn.onclick=()=>{ state.notifSettingsOpen=true; state.showUserMenu=false; render(); refreshMsGraphStatus(); };
   const changePwBtn=document.querySelector('[data-action="openChangePassword"]'); if(changePwBtn) changePwBtn.onclick=()=>{ state.changePasswordModalOpen=true; state.showUserMenu=false; render(); };
   const newEmailBtn=document.querySelector('[data-action="openBlankEmail"]'); if(newEmailBtn) newEmailBtn.onclick=()=>{
     openBlankEmailDraft();
@@ -5916,9 +6022,6 @@ function attachShellHandlers(){
     state.widgetOrder.splice(toIdx, 0, moved);
     supaSaveWidgetOrder();
     render();
-  });
-  document.querySelectorAll('[data-action="connectOutlook"]').forEach(outlookBtn=>outlookBtn.onclick=()=>{
-    alert("Real Outlook Calendar sync needs a Microsoft-registered app (one-time setup by whoever admins your Microsoft 365) plus your portal's real, final web address — that can't be wired up from a plain preview URL. Once you're on a stable Netlify domain, this is genuinely buildable with no backend server required. For now nothing is synced yet.");
   });
   const dashboardSelect = document.getElementById('dashboardViewSelect'); if(dashboardSelect) dashboardSelect.onchange=()=>{
     state.dashboardViewUserId = dashboardSelect.value;
@@ -6335,7 +6438,7 @@ async function handleAdminAction(a){
   if(a==='adminImportTodos'){ state.importTodosModal = {step:'upload'}; }
   if(a==='adminImportTaskFire'){ state.taskfireImport = {step:'upload'}; }
   if(a==='adminImportMaps'){ state.mapsImport = {step:'upload', clientQuery:'', pickedClient:null, newClientName:''}; }
-  if(a==='adminDigest'){ state.notifSettingsOpen=true; }
+  if(a==='adminDigest'){ state.notifSettingsOpen=true; refreshMsGraphStatus(); }
   if(a==='adminUsers'){
     // Refresh every profile fresh from the server first — without this, anyone who
     // logged in for the first time after this browser's own session started would
@@ -6344,7 +6447,7 @@ async function handleAdminAction(a){
     await fetchAllProfilesIntoUsers();
     state.manageUsersModalOpen=true;
   }
-  if(a==='adminTimes'){ state.notifSettingsOpen=true; }
+  if(a==='adminTimes'){ state.notifSettingsOpen=true; refreshMsGraphStatus(); }
   if(a==='adminReset'){
     // Same fix as adminUsers above — refresh profiles fresh first, so someone who
     // logged in for the first time after this browser session started doesn't
