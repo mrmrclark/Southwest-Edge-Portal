@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Calendar widget — preview</title>
+<style>
+  :root{
+    --edge:#E1531A;
+    --edge-dark:#B8410F;
+    --edge-darker:#8F3009;
+    --edge-light:#FDECE3;
+    --edge-lighter:#FFF7F3;
+    --ink:#20242C;
+    --ink-soft:#5B6270;
+    --line:#E7E5E2;
+    --line-soft:#F0EEEB;
+    --paper:#FFFFFF;
+    --canvas:#FAF9F7;
+    --good:#3E8E5B;
+    --bad:#D64545;
+    --shadow-sm:0 2px 8px rgba(32,20,10,0.06);
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; min-height:100vh; padding:32px;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:var(--canvas); color:var(--ink);
+    display:flex; flex-direction:column; align-items:center; gap:14px;
+  }
+  .preview-note{font-size:12px;color:var(--ink-soft);max-width:300px;text-align:center;line-height:1.5;}
+  .preview-note b{color:var(--ink);}
+  .btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:6px 12px;font-size:12.5px;cursor:pointer;}
+  .btn.secondary{background:var(--paper);color:var(--ink);}
+  .btn.secondary:hover{background:var(--line-soft);}
+  .btn.sm{padding:5px 10px;font-size:12px;}
+
+  /* ---- exact copy of the real widget CSS ---- */
+  .widget-card{width:300px;background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:16px;box-shadow:var(--shadow-sm);}
+  .widget-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
+  .widget-title{font-size:12.5px;font-weight:700;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.04em;}
+  .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;text-align:center;}
+  .cal-dow{font-size:9.5px;color:var(--ink-soft);font-weight:700;padding-bottom:4px;}
+  .cal-day{font-size:11.5px;padding:5px 0;border-radius:6px;position:relative;color:var(--ink);}
+  .cal-day.today{background:var(--edge);color:#fff;font-weight:700;}
+  .cal-day.blank{visibility:hidden;}
+  .mscal-nav-btn{background:none;border:none;color:var(--ink-soft);font-size:15px;line-height:1;padding:2px 6px;border-radius:6px;cursor:pointer;}
+  .mscal-nav-btn:hover{background:var(--line-soft);color:var(--ink);}
+  .mscal-agenda{padding-top:10px;margin-top:8px;border-top:1px solid var(--line);}
+  .mscal-day-group{margin-bottom:10px;}
+  .mscal-day-group:last-child{margin-bottom:0;}
+  .mscal-day-label{font-size:11.5px;font-weight:700;color:var(--ink);margin-bottom:4px;}
+  .mscal-event-row{display:flex;align-items:flex-start;gap:8px;padding:5px 4px;margin:0 -4px;border-radius:6px;cursor:pointer;}
+  .mscal-event-row:hover{background:var(--edge-lighter);}
+  .mscal-event-row.no-link{cursor:default;}
+  .mscal-event-row.no-link:hover{background:none;}
+  .mscal-time-col{flex:0 0 52px;font-size:10.5px;color:var(--ink-soft);padding-top:1px;text-align:right;line-height:1.3;}
+  .mscal-bar{flex:0 0 3px;align-self:stretch;border-radius:2px;min-height:28px;}
+  .mscal-bar.solid{background:var(--edge);}
+  .mscal-bar.allday{background:var(--edge-light);border:1px solid var(--edge);}
+  .mscal-event-body{min-width:0;flex:1;}
+  .mscal-event-title{font-size:12px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .mscal-event-sub{font-size:10.5px;color:var(--ink-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px;}
+
+  #toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--ink);color:#fff;
+    padding:9px 16px;border-radius:8px;font-size:12.5px;opacity:0;transition:opacity .18s,transform .18s;pointer-events:none;max-width:80vw;text-align:center;}
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+</style>
+</head>
+<body>
+  <div class="preview-note">This is a static mock with made-up events, wired up exactly like the real widget will be — nav arrows work, the ~10-event cast-out logic runs for real, and clicking a row shows what it would do. <b>Nothing here talks to Supabase or Outlook.</b></div>
+  <div id="widget"></div>
+  <div id="toast"></div>
+
+<script>
+  // ---- fake data, shaped exactly like what ms-oauth's 'events' action returns ----
+  function iso(daysFromNow, h, m){
+    const d = new Date();
+    d.setHours(0,0,0,0);
+    d.setDate(d.getDate()+daysFromNow);
+    d.setHours(h,m,0,0);
+    return d.toISOString();
+  }
+  const MOCK_EVENTS = [
+    {subject:'MRC PLLC CC Due', start:iso(0,0,0), end:iso(1,0,0), isAllDay:true, location:null, webLink:'https://outlook.office.com/calendar/item/mock1'},
+    {subject:'Stay: Fairfield by Marriott Inn & Suites', start:iso(0,0,0), end:iso(1,0,0), isAllDay:true, location:'Fairfield by Marriott Inn & Suites', webLink:'https://outlook.office.com/calendar/item/mock2'},
+    {subject:'Olga - Haircut', start:iso(0,17,45), end:iso(0,18,30), isAllDay:false, location:null, webLink:'https://outlook.office.com/calendar/item/mock3'},
+    {subject:'Su Vida AZ call', start:iso(1,12,30), end:iso(1,13,0), isAllDay:false, location:'Microsoft Teams Meeting', webLink:'https://outlook.office.com/calendar/item/mock4'},
+    {subject:'Meraki - Catch Up', start:iso(1,14,0), end:iso(1,14,30), isAllDay:false, location:'Microsoft Teams Meeting', webLink:'https://outlook.office.com/calendar/item/mock5'},
+    {subject:'Amazon Music Trial Ends', start:iso(3,0,0), end:iso(4,0,0), isAllDay:true, location:null, webLink:'https://outlook.office.com/calendar/item/mock6'},
+    {subject:'El Monte Leasing Call', start:iso(4,9,30), end:iso(4,10,0), isAllDay:false, location:'https://us06web.zoom.us/j/6812345678', webLink:'https://outlook.office.com/calendar/item/mock7'},
+    {subject:'EdgeSW - Office Meeting', start:iso(5,9,30), end:iso(5,10,30), isAllDay:false, location:'Microsoft Teams Meeting', webLink:'https://outlook.office.com/calendar/item/mock8'},
+    {subject:'Cafe Recovery Alumni Meeting', start:iso(5,17,30), end:iso(5,18,30), isAllDay:false, location:'Cafe Recovery - Arizona IOP', webLink:'https://outlook.office.com/calendar/item/mock9'},
+    {subject:'Edge / Dutch Bros. Quick Chat', start:iso(6,10,0), end:iso(6,10,30), isAllDay:false, location:'Microsoft Teams Meeting', webLink:'https://outlook.office.com/calendar/item/mock10'},
+    {subject:'Listing tour follow-up', start:iso(9,11,0), end:iso(9,11,30), isAllDay:false, location:null, webLink:'https://outlook.office.com/calendar/item/mock11'},
+  ];
+
+  function escapeHtml(str){ return String(str==null?'':str).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function escapeAttr(str){ return escapeHtml(str); }
+
+  let calWidgetCursor = null; // {year, month} — mirrors state.calWidgetCursor in the real app
+
+  function renderCalendarWidget(){
+    const now = new Date();
+    const cursor = calWidgetCursor || {year: now.getFullYear(), month: now.getMonth()};
+    const year = cursor.year, month = cursor.month;
+    const firstDay = new Date(year, month, 1).getDay();
+    const daysInMonth = new Date(year, month+1, 0).getDate();
+    const monthName = new Date(year, month, 1).toLocaleDateString('en-US', {month:'long', year:'numeric'});
+    const isCurrentMonth = year===now.getFullYear() && month===now.getMonth();
+
+    const eventDayNums = new Set();
+    MOCK_EVENTS.forEach(ev=>{
+      const d = new Date(ev.start);
+      if(d.getFullYear()===year && d.getMonth()===month) eventDayNums.add(d.getDate());
+    });
+
+    let cells = '';
+    for(let i=0;i<firstDay;i++) cells += `<div class="cal-day blank"></div>`;
+    for(let d=1; d<=daysInMonth; d++){
+      const isToday = isCurrentMonth && d===now.getDate();
+      const hasEvent = eventDayNums.has(d);
+      cells += `<div class="cal-day ${isToday?'today':''}" style="position:relative;">${d}${hasEvent?'<div style="position:absolute;bottom:2px;left:50%;transform:translateX(-50%);width:4px;height:4px;border-radius:50%;background:var(--edge);"></div>':''}</div>`;
+    }
+
+    const TARGET_COUNT = 10;
+    const dayKeyOf = d => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+    const groups = []; const byKey = {};
+    MOCK_EVENTS.slice().sort((a,b)=>new Date(a.start)-new Date(b.start)).forEach(ev=>{
+      const d = new Date(ev.start);
+      const key = dayKeyOf(d);
+      if(!byKey[key]){ byKey[key] = {date:d, events:[]}; groups.push(byKey[key]); }
+      byKey[key].events.push(ev);
+    });
+    const shown = []; let total = 0;
+    for(const g of groups){ shown.push(g); total += g.events.length; if(total >= TARGET_COUNT) break; }
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const agendaHtml = `<div class="mscal-agenda">
+      ${shown.map(g=>{
+        const dayStart = new Date(g.date.getFullYear(), g.date.getMonth(), g.date.getDate());
+        const diffDays = Math.round((dayStart-todayStart)/86400000);
+        let label;
+        if(diffDays===0) label='Today';
+        else if(diffDays===1) label='Tomorrow';
+        else if(diffDays>=2 && diffDays<=6) label=g.date.toLocaleDateString('en-US',{weekday:'long'});
+        else label=g.date.toLocaleDateString('en-US',{weekday:'short', month:'short', day:'numeric'});
+        return `<div class="mscal-day-group">
+          <div class="mscal-day-label">${label}</div>
+          ${g.events.map(ev=>{
+            const d = new Date(ev.start);
+            const timeLabel = ev.isAllDay ? 'All day' : d.toLocaleTimeString('en-US',{hour:'numeric', minute:'2-digit'});
+            return `<div class="mscal-event-row${ev.webLink?'':' no-link'}"${ev.webLink?` data-mscal-open="${escapeAttr(ev.webLink)}" data-mscal-title="${escapeAttr(ev.subject)}"`:''}>
+              <div class="mscal-time-col">${timeLabel}</div>
+              <div class="mscal-bar ${ev.isAllDay?'allday':'solid'}"></div>
+              <div class="mscal-event-body">
+                <div class="mscal-event-title">${escapeHtml(ev.subject||'(No subject)')}</div>
+                ${ev.location?`<div class="mscal-event-sub">${escapeHtml(ev.location)}</div>`:''}
+              </div>
+            </div>`;
+          }).join('')}
+        </div>`;
+      }).join('')}
+    </div>`;
+
+    return `
+    <div class="widget-card">
+      <div class="widget-head">
+        <button class="mscal-nav-btn" data-mscal-nav="prev" aria-label="Previous month">‹</button>
+        <div class="widget-title">${monthName}</div>
+        <button class="mscal-nav-btn" data-mscal-nav="next" aria-label="Next month">›</button>
+      </div>
+      <div class="cal-grid">
+        ${['S','M','T','W','T','F','S'].map(d=>`<div class="cal-dow">${d}</div>`).join('')}
+        ${cells}
+      </div>
+      ${agendaHtml}
+    </div>`;
+  }
+
+  let toastTimer=null;
+  function flashToast(msg){
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(()=>t.classList.remove('show'), 2600);
+  }
+
+  function wire(){
+    document.querySelectorAll('[data-mscal-nav]').forEach(el=>el.onclick=(ev)=>{
+      ev.preventDefault();
+      const now = new Date();
+      let {year, month} = calWidgetCursor || {year: now.getFullYear(), month: now.getMonth()};
+      month += (el.dataset.mscalNav==='next' ? 1 : -1);
+      if(month<0){ month=11; year--; } else if(month>11){ month=0; year++; }
+      calWidgetCursor = {year, month};
+      draw();
+    });
+    document.querySelectorAll('[data-mscal-open]').forEach(el=>el.onclick=()=>{
+      flashToast(`Would open "${el.dataset.mscalTitle}" in Outlook →`);
+    });
+  }
+  function draw(){
+    document.getElementById('widget').innerHTML = renderCalendarWidget();
+    wire();
+  }
+  draw();
+</script>
+</body>
+</html>
