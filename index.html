@@ -4400,18 +4400,42 @@ const LOI_COUNTER_CODES = {
   'listings-lease': {code:'TC', label:'Tenant Counter (TC)'},
   'listings-sale': {code:'BC', label:'Buyer Counter (BC)'},
 };
+// The AI extraction hands back propertyDescription in two different shapes depending on
+// the source document — "Cactus & Reems - NEC" (corner trailing, after a dash) and "NEC of
+// Cactus & Reems, Surprise, AZ 85379" (corner leading, plus trailing city/state/zip). The
+// original parser only handled the trailing-dash shape, so the leading-corner shape fell
+// through untouched and polluted both street names with "NECof"/city/state/zip text (seen
+// live 2026-09-06 on a real Dutch Bros LOI — fixed here). Shared by the filename and the
+// Egnyte deal-subfolder name so both stay in sync.
+function parsePropertyStreetsAndCorner(propertyDescription){
+  let text = (propertyDescription||'').trim();
+  let corner = '';
+  const leading = text.match(/^(NEC|NWC|SEC|SWC|NE|NW|SE|SW)\b\s*(?:of\s*)?/i);
+  if(leading){ corner = leading[1].toUpperCase(); text = text.slice(leading[0].length); }
+  const dashParts = text.split('-');
+  if(dashParts.length>1){
+    if(!corner) corner = dashParts[1].trim().toUpperCase().replace(/[^A-Z]/g,'');
+    text = dashParts[0];
+  }
+  text = text.split(',')[0]; // drop trailing city/state/zip, if any
+  const streets = text.split(/&|\/|\band\b/i).map(s=>s.trim().replace(/[^a-zA-Z0-9]/g,'')).filter(Boolean);
+  return {streets, corner};
+}
 function computeEgnyteFilename(docType, accountName, propertyDescription, counterCode){
   const cleanName = (accountName||'Unknown').replace(/[^a-zA-Z0-9]/g,'');
-  // Split "Street & Street - SEC" into the two arterials plus an optional corner suffix.
-  const parts = (propertyDescription||'').split('-');
-  const streetsPart = parts[0]||'';
-  const corner = parts.length>1 ? parts[1].trim().toUpperCase().replace(/[^A-Z]/g,'') : '';
-  const streets = streetsPart.split(/&|\/|\band\b/i).map(s=>s.trim().replace(/[^a-zA-Z0-9]/g,'')).filter(Boolean);
+  const {streets, corner} = parsePropertyStreetsAndCorner(propertyDescription);
   const streetPart = streets.length ? streets.join('_') : 'UnknownLocation';
   const cornerPart = corner ? '_'+corner : '';
   const codePart = counterCode ? '_'+counterCode : '';
   const datePart = toLocalDateStr(todayDate()).replace(/-/g,'');
   return `${docType}_${cleanName}_${streetPart}${cornerPart}${codePart}_${datePart}`;
+}
+// The Egnyte deal-level subfolder name, e.g. "Cactus_Reems_NEC" — same cross-streets +
+// corner data as the filename above, just without the doc type/account/date/counter parts.
+function computeEgnyteDealFolderName(propertyDescription){
+  const {streets, corner} = parsePropertyStreetsAndCorner(propertyDescription);
+  const streetPart = streets.length ? streets.join('_') : 'UnknownDeal';
+  return corner ? `${streetPart}_${corner}` : streetPart;
 }
 /* ==================== EGNYTE AUTO-FILING ====================
    Egnyte's own Public API isn't available on Edge's current plan (blocked at the account/
@@ -4459,29 +4483,41 @@ async function egnyteGetOrCreateDir(rootHandle, segments){
   }
   return dir;
 }
+// Dutch Bros' real Egnyte folder nests deals one level deeper than every other client —
+// Dutch Bros\Active Deals_Corporate\<Deal>\, not Dutch Bros\<Deal>\ — confirmed with
+// Michael 2026-09-06 after the first live test filed a document one level too shallow.
+// Add other clients here if the same thing turns up for them.
+const EGNYTE_CLIENT_DEAL_MIDDLE_FOLDER = { 'Dutch Bros': 'Active Deals_Corporate' };
 // The connected root is expected to be Z:\Shared itself (that's what the folder picker
 // prompt asks the broker to select). Both sides land in the same account folder whether
 // it's a Client or a Listing — for Listings, that's the property/shopping-center name;
 // the tenant's name lives in the filename instead (per the naming convention), not the
 // folder, so no separate branch is needed here beyond which top-level category to use.
-function egnyteFolderSegments(dropSide, accountName){
+// Every client/listing gets a deal-level subfolder underneath its own folder (e.g.
+// "Cactus_Reems_NEC") — added 2026-09-06 after the first live test showed documents
+// need to go one level deeper than just the client folder.
+function egnyteFolderSegments(dropSide, accountName, dealFolderName){
   const clean = (accountName||'Unknown').trim();
-  return dropSide==='clients'
+  const middle = EGNYTE_CLIENT_DEAL_MIDDLE_FOLDER[clean];
+  const base = dropSide==='clients'
     ? ['Phoenix', '1. Clients', 'Active', clean]
     : ['Phoenix', '2. Listings', 'Active', clean];
+  if(middle) base.push(middle);
+  base.push(dealFolderName || 'General');
+  return base;
 }
 // Writes `blob` as `filename` into the right client/listing folder under the connected
 // Egnyte root. Throws with a user-readable message on any failure — callers show it
 // rather than swallowing it, since silently failing to file a real deal document is worse
 // than a visible error with a manual-save fallback.
-async function egnyteSaveFile(dropSide, accountName, filename, blob){
+async function egnyteSaveFile(dropSide, accountName, dealFolderName, filename, blob){
   if(!egnyteSupported()) throw new Error("This browser can't save straight to Egnyte — use Chrome or Edge, or save the file manually using the button below.");
   const rootHandle = await egnyteGetStoredRootHandle();
   if(!rootHandle) throw new Error("Egnyte folder isn't connected yet — connect it once in Settings, or save the file manually using the button below.");
   let granted = false;
   try{ granted = (await rootHandle.queryPermission({mode:'readwrite'}))==='granted'; }catch(e){ granted=false; }
   if(!granted) throw new Error('NEEDS_PERMISSION'); // special-cased by callers to prompt for re-grant instead of a dead-end error
-  const segments = egnyteFolderSegments(dropSide, accountName);
+  const segments = egnyteFolderSegments(dropSide, accountName, dealFolderName);
   const dir = await egnyteGetOrCreateDir(rootHandle, segments);
   const fileHandle = await dir.getFileHandle(filename, {create:true});
   const writable = await fileHandle.createWritable();
@@ -4597,16 +4633,40 @@ function matchLoiToAccount(){
 // The filtered pick-list shown when the automatic Client/Listing match fails — its own
 // function so the search box's oninput can patch just this container (see the "never
 // call render() from a live search box" convention used by the global/list search boxes).
+// Scoped the same way the main sidebar list is (2026-09-06 fix — this used to show every
+// client/listing in the system to everyone): an Admin/FullAccess user sees their own
+// clients first, alphabetically, with everyone else's tucked behind a collapsed "Other
+// <list>" toggle, same as renderMainListBody; anyone else only ever sees what they have
+// access to at all.
 function renderLoiClientPickerResultsHtml(){
   const m = state.loiImport;
   const l = db.lists.find(x=>x.id===(m.dropSide==='clients'?'clients':'listings'));
   const q = (m.clientPickerQuery||'').trim().toLowerCase();
-  const matches = (q ? l.clients.filter(c=>c.name.toLowerCase().includes(q)) : l.clients).slice(0,50);
-  if(!matches.length) return `<div class="tiny" style="color:var(--ink-soft);margin-bottom:6px;">No matches.</div>`;
-  return matches.map(c=>`
+  const pool = q ? l.clients.filter(c=>c.name.toLowerCase().includes(q)) : l.clients;
+  const byName = (a,b)=>a.name.localeCompare(b.name);
+  const me = state.currentUser.id;
+  const hasAccess = c => c.createdBy===me || (c.authorizedUserIds||[]).includes(me);
+  const renderRow = c=>`
     <div class="row-card" data-pickloiclient="${escapeAttr(c.id)}" style="cursor:pointer;margin-bottom:6px;">
       <div class="row-body"><div class="row-title">${escapeHtml(c.name)}</div></div>
-    </div>`).join('');
+    </div>`;
+  const isAdmin = state.currentUser.role==='Admin' || state.currentUser.role==='FullAccess';
+  if(!isAdmin){
+    const visible = pool.filter(hasAccess).sort(byName).slice(0,50);
+    if(!visible.length) return `<div class="tiny" style="color:var(--ink-soft);margin-bottom:6px;">No matches.</div>`;
+    return visible.map(renderRow).join('');
+  }
+  const mine = pool.filter(hasAccess).sort(byName).slice(0,50);
+  const others = pool.filter(c=>!hasAccess(c)).sort(byName).slice(0,50);
+  if(!mine.length && !others.length) return `<div class="tiny" style="color:var(--ink-soft);margin-bottom:6px;">No matches.</div>`;
+  const otherOpen = !!m.otherClientsOpen;
+  return mine.map(renderRow).join('') +
+    (others.length ? `
+    <div class="nav-section-label" style="cursor:pointer;margin-top:10px;" data-action="toggleLoiOtherClients">
+      <span>${otherOpen?'▾':'▸'} Other ${l.name} <span class="tiny" style="color:var(--ink-soft);">(${others.length} — you're not on ${others.length===1?'this one':'these'})</span></span>
+    </div>
+    ${otherOpen ? others.map(renderRow).join('') : ''}
+    ` : '');
 }
 async function confirmLoiImport(){
   const m = state.loiImport;
@@ -4651,6 +4711,7 @@ async function confirmLoiImport(){
   // The Egnyte folder is always the Client/Listing's own name (c.name) regardless of side —
   // on the Listings side the tenant name goes into the filename above instead, not the folder.
   m.egnyteAccountName = c.name;
+  m.egnyteDealFolderName = computeEgnyteDealFolderName(ex.propertyDescription);
   m.egnyteSaveState = 'idle';
   m.step = 'done';
   render();
@@ -4674,7 +4735,7 @@ async function attemptEgnyteAutoSave(){
   try{
     const ext = detectLoiFileType(m.file) || 'pdf';
     const filename = `${m.computedFilename}.${ext}`;
-    m.egnyteSavedPath = await egnyteSaveFile(m.dropSide, m.egnyteAccountName, filename, m.file);
+    m.egnyteSavedPath = await egnyteSaveFile(m.dropSide, m.egnyteAccountName, m.egnyteDealFolderName, filename, m.file);
     m.egnyteSaveState = 'success';
   }catch(e){
     console.error('Egnyte auto-save failed:', e);
@@ -7233,6 +7294,12 @@ function renderLoiImportModal(){
         if(client) loiPopulateDealMatch(client);
         render();
       });
+      const toggleOthersBtn = overlay.querySelector('[data-action="toggleLoiOtherClients"]');
+      if(toggleOthersBtn) toggleOthersBtn.onclick=()=>{
+        m.otherClientsOpen = !m.otherClientsOpen;
+        const resultsBox = overlay.querySelector('#loiClientPickerResults');
+        if(resultsBox){ resultsBox.innerHTML = renderLoiClientPickerResultsHtml(); wireLoiClientPickerRows(); }
+      };
     };
     wireLoiClientPickerRows();
     const pickerSearchEl = overlay.querySelector('#loiClientPickerSearch');
