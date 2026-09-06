@@ -625,6 +625,7 @@ let state = {
   showAllSmartLists:false,      // collapse toggle once there are more than 10 smart lists
   notifSettingsOpen:false,      // whether the notification-preferences modal is open
   msGraphStatus:null,           // {loading, connected, ms_email} — Microsoft 365 connection state, fetched from ms-oauth
+  egnyteFolderStatus:null,      // {supported, connected, folderName, needsReconnect} — local File System Access permission state, from refreshEgnyteFolderStatus()
   msOauthFlow:null,             // {user_code, verification_uri, interval, expiresAt, error} — in-progress device-code sign-in
   calWidgetCursor:null,         // {year, month} — which month the small Calendar widget's mini-grid is browsing; null = current month
   pendingUsersModalOpen:false,
@@ -3419,6 +3420,27 @@ function renderNotifSettingsModal(){
       <button class="btn secondary sm" data-action="msConnect">📅 Connect Microsoft 365</button>
     `;
   })();
+  const egnyteStatus = state.egnyteFolderStatus;
+  const egnyteSyncHtml = (()=>{
+    if(!egnyteStatus) return `<div style="font-size:12px;color:var(--ink-soft);margin-bottom:8px;">Checking…</div>`;
+    if(!egnyteStatus.supported) return `<div style="font-size:12.5px;color:var(--ink-soft);">Not available in this browser — open the Portal in Chrome or Edge on this computer to use this feature.</div>`;
+    if(egnyteStatus.connected && egnyteStatus.needsReconnect){
+      return `
+        <div style="font-size:12.5px;color:var(--bad,#C0392B);margin-bottom:8px;">⚠️ Access to "${escapeHtml(egnyteStatus.folderName)}" needs to be reconfirmed.</div>
+        <button class="btn secondary sm" data-action="egnyteConnect">Reconnect</button>
+      `;
+    }
+    if(egnyteStatus.connected){
+      return `
+        <div style="font-size:12.5px;color:var(--good,#1E8E5A);margin-bottom:8px;">✅ Connected — saving into "${escapeHtml(egnyteStatus.folderName)}"</div>
+        <button class="btn secondary sm" data-action="egnyteDisconnect">Disconnect</button>
+      `;
+    }
+    return `
+      <div style="font-size:12px;color:var(--ink-soft);margin-bottom:8px;">Not connected yet.</div>
+      <button class="btn secondary sm" data-action="egnyteConnect">📁 Connect Egnyte Folder</button>
+    `;
+  })();
   const overlay = document.createElement('div');
   overlay.className='modal-overlay'; overlay.style.zIndex=170;
   const scheduleFields = (prefix, sched)=>`
@@ -3483,6 +3505,13 @@ function renderNotifSettingsModal(){
         <div style="font-size:11.5px;color:var(--ink-soft);margin-bottom:8px;line-height:1.5;">Connect your own Microsoft 365 account so Edgy (the AI assistant) can create real calendar events and send real emails as you.</div>
         ${msSyncHtml}
       </div>
+      ${state.currentUser.email==='mclark@edge-re.com' ? `
+      <div class="field">
+        <label>Egnyte Auto-Filing (AI Import)</label>
+        <div style="font-size:11.5px;color:var(--ink-soft);margin-bottom:8px;line-height:1.5;">Connect your Egnyte-synced <code>Z:\\Shared</code> folder once so the ✨ AI Import feature can save the correctly-named document straight into it, instead of just showing you the filename to save by hand. Chrome or Edge only.</div>
+        ${egnyteSyncHtml}
+      </div>
+      ` : ''}
       <div class="section-label">My reminder schedule</div>
       <div class="field" style="display:flex;align-items:center;gap:8px;">
         <input type="checkbox" id="useDefaultToggle" style="width:auto;" ${usingDefault?'checked':''}>
@@ -3531,6 +3560,16 @@ function renderNotifSettingsModal(){
   wireScheduleControls('admin', true);
 
   overlay.querySelectorAll('[data-action="closeNotifSettings"]').forEach(b=>b.onclick=()=>{ state.notifSettingsOpen=false; state.msOauthFlow=null; render(); });
+  const egnyteConnectBtn = overlay.querySelector('[data-action="egnyteConnect"]'); if(egnyteConnectBtn) egnyteConnectBtn.onclick=safeHandler(async ()=>{
+    const handle = await egnyteConnectFolder();
+    if(handle) flashToast('Egnyte folder connected.');
+    refreshEgnyteFolderStatus();
+  });
+  const egnyteDisconnectBtn = overlay.querySelector('[data-action="egnyteDisconnect"]'); if(egnyteDisconnectBtn) egnyteDisconnectBtn.onclick=safeHandler(async ()=>{
+    await egnyteDisconnectFolder();
+    flashToast('Egnyte folder disconnected.');
+    refreshEgnyteFolderStatus();
+  });
   const msConnectBtn = overlay.querySelector('[data-action="msConnect"]'); if(msConnectBtn) msConnectBtn.onclick=safeHandler(startMsGraphConnect);
   const msDisconnectBtn = overlay.querySelector('[data-action="msDisconnect"]'); if(msDisconnectBtn) msDisconnectBtn.onclick=safeHandler(disconnectMsGraph);
   const msCancelBtn = overlay.querySelector('[data-action="msCancelConnect"]'); if(msCancelBtn) msCancelBtn.onclick=()=>{ state.msOauthFlow=null; renderPreservingScroll('.modal-body'); };
@@ -3983,7 +4022,7 @@ function renderTopbar(){
         style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px;">
       <div id="globalSearchResultsBox">${renderGlobalSearchResultsHtml()}</div>
     </div>
-    ${(state.currentUser.email==='mclark@edge-re.com' && !state.isMobile) ? `<button class="icon-btn" data-action="openLoiImport" title="Import LOI (AI)" style="margin-left:8px;font-size:17px;">✨</button>` : ''}
+    ${(state.currentUser.email==='mclark@edge-re.com' && !state.isMobile) ? `<button class="icon-btn" data-action="openLoiImport" title="Import Deal Document (AI)" style="margin-left:8px;font-size:17px;">✨</button>` : ''}
     <div class="topbar-spacer"></div>
     ${showTodoToggle ? `
     <div class="segmented">
@@ -4374,6 +4413,93 @@ function computeEgnyteFilename(docType, accountName, propertyDescription, counte
   const datePart = toLocalDateStr(todayDate()).replace(/-/g,'');
   return `${docType}_${cleanName}_${streetPart}${cornerPart}${codePart}_${datePart}`;
 }
+/* ==================== EGNYTE AUTO-FILING ====================
+   Egnyte's own Public API isn't available on Edge's current plan (blocked at the account/
+   plan tier — a Dallas-corporate business decision, not something this code can work
+   around). But Egnyte's Desktop App already maps a live network drive (Z:\ "edgecloud")
+   on each broker's own computer, and that drive needs an active connection to even browse
+   — meaning it's not a "cache now, sync later" local copy, it's a direct connection to
+   Egnyte itself. So writing a file into it while online *is* filing it in Egnyte, with no
+   separate upload step needed.
+   Mechanism: the browser's File System Access API (Chrome/Edge only — no Safari/Firefox).
+   Each broker grants access to their own Z:\Shared folder once; the resulting handle is
+   persisted per-browser via idbSetMeta/idbGetMeta (key 'egnyteRootHandle'). That grant can
+   lapse (browser-dependent, not something either side controls precisely), so every save
+   re-checks permission and asks again rather than failing silently. */
+function egnyteSupported(){
+  return typeof window.showDirectoryPicker === 'function';
+}
+async function egnyteGetStoredRootHandle(){
+  try{ return await idbGetMeta('egnyteRootHandle'); }catch(e){ return null; }
+}
+// Must be called directly from a click handler — browsers refuse to show the folder
+// picker (or the permission prompt) except as a direct response to a real user gesture.
+// Returns null (not an error) if the person just closes the picker without choosing.
+async function egnyteConnectFolder(){
+  if(!egnyteSupported()) throw new Error("This browser can't save straight to a local folder — use Chrome or Edge for this feature.");
+  let handle;
+  try{
+    handle = await window.showDirectoryPicker({id:'egnyte-shared', mode:'readwrite'});
+  }catch(e){
+    if(e && e.name==='AbortError') return null; // person cancelled — not an error
+    throw e;
+  }
+  await idbSetMeta('egnyteRootHandle', handle);
+  return handle;
+}
+async function egnyteDisconnectFolder(){
+  await idbSetMeta('egnyteRootHandle', null);
+}
+// Walks/creates a chain of subfolders under a root handle, returning the final directory handle.
+async function egnyteGetOrCreateDir(rootHandle, segments){
+  let dir = rootHandle;
+  for(const seg of segments){
+    if(!seg) continue;
+    dir = await dir.getDirectoryHandle(seg, {create:true});
+  }
+  return dir;
+}
+// The connected root is expected to be Z:\Shared itself (that's what the folder picker
+// prompt asks the broker to select). Both sides land in the same account folder whether
+// it's a Client or a Listing — for Listings, that's the property/shopping-center name;
+// the tenant's name lives in the filename instead (per the naming convention), not the
+// folder, so no separate branch is needed here beyond which top-level category to use.
+function egnyteFolderSegments(dropSide, accountName){
+  const clean = (accountName||'Unknown').trim();
+  return dropSide==='clients'
+    ? ['Phoenix', '1. Clients', 'Active', clean]
+    : ['Phoenix', '2. Listings', 'Active', clean];
+}
+// Writes `blob` as `filename` into the right client/listing folder under the connected
+// Egnyte root. Throws with a user-readable message on any failure — callers show it
+// rather than swallowing it, since silently failing to file a real deal document is worse
+// than a visible error with a manual-save fallback.
+async function egnyteSaveFile(dropSide, accountName, filename, blob){
+  if(!egnyteSupported()) throw new Error("This browser can't save straight to Egnyte — use Chrome or Edge, or save the file manually using the button below.");
+  const rootHandle = await egnyteGetStoredRootHandle();
+  if(!rootHandle) throw new Error("Egnyte folder isn't connected yet — connect it once in Settings, or save the file manually using the button below.");
+  let granted = false;
+  try{ granted = (await rootHandle.queryPermission({mode:'readwrite'}))==='granted'; }catch(e){ granted=false; }
+  if(!granted) throw new Error('NEEDS_PERMISSION'); // special-cased by callers to prompt for re-grant instead of a dead-end error
+  const segments = egnyteFolderSegments(dropSide, accountName);
+  const dir = await egnyteGetOrCreateDir(rootHandle, segments);
+  const fileHandle = await dir.getFileHandle(filename, {create:true});
+  const writable = await fileHandle.createWritable();
+  await writable.write(blob);
+  await writable.close();
+  return segments.join('\\') + '\\' + filename;
+}
+// Populates state.egnyteFolderStatus for the Settings UI — a pure local/permission check,
+// no network call, so it's cheap enough to run every time Notification Settings opens.
+async function refreshEgnyteFolderStatus(){
+  if(!egnyteSupported()){ state.egnyteFolderStatus = {supported:false}; render(); return; }
+  const handle = await egnyteGetStoredRootHandle();
+  if(!handle){ state.egnyteFolderStatus = {supported:true, connected:false}; render(); return; }
+  let granted = false;
+  try{ granted = (await handle.queryPermission({mode:'readwrite'}))==='granted'; }catch(e){ granted=false; }
+  state.egnyteFolderStatus = {supported:true, connected:true, folderName: handle.name, needsReconnect: !granted};
+  render();
+}
 async function readFileAsBase64(file){
   return new Promise((resolve, reject)=>{
     const reader = new FileReader();
@@ -4399,6 +4525,7 @@ async function processLoiFile(file, dropSide){
   }
   m.dropSide = dropSide;
   m.fileName = file.name;
+  m.file = file; // kept through to the 'done' step so it can actually be filed/downloaded, not just described
   m.loading = true;
   m.error = null;
   render();
@@ -4521,8 +4648,80 @@ async function confirmLoiImport(){
   const counterInfo = m.counterChoice==='none' ? null : LOI_COUNTER_CODES[key];
   const accountNameForFile = m.dropSide==='clients' ? c.name : ex.accountName;
   m.computedFilename = computeEgnyteFilename(ex.documentType||'LOI', accountNameForFile, ex.propertyDescription, counterInfo?counterInfo.code:null);
+  // The Egnyte folder is always the Client/Listing's own name (c.name) regardless of side —
+  // on the Listings side the tenant name goes into the filename above instead, not the folder.
+  m.egnyteAccountName = c.name;
+  m.egnyteSaveState = 'idle';
   m.step = 'done';
   render();
+  attemptEgnyteAutoSave(); // fire-and-forget; patches the modal body itself as it progresses
+}
+// Tries to file the just-saved document straight into Egnyte, entirely automatically when
+// possible (no extra click needed as long as folder access is already granted). Only falls
+// back to asking for a click when the browser genuinely requires a user gesture — a lapsed
+// permission grant (requestPermission) or the initial connect (showDirectoryPicker).
+async function attemptEgnyteAutoSave(){
+  const m = state.loiImport;
+  if(!m || m.step!=='done' || !m.file) return;
+  if(!egnyteSupported()){ m.egnyteSaveState='unsupported'; renderPreservingScroll('.modal-body'); return; }
+  const rootHandle = await egnyteGetStoredRootHandle();
+  if(!rootHandle){ m.egnyteSaveState='notconnected'; renderPreservingScroll('.modal-body'); return; }
+  let granted = false;
+  try{ granted = (await rootHandle.queryPermission({mode:'readwrite'}))==='granted'; }catch(e){ granted=false; }
+  if(!granted){ m.egnyteSaveState='needsPermission'; renderPreservingScroll('.modal-body'); return; }
+  m.egnyteSaveState = 'saving';
+  renderPreservingScroll('.modal-body');
+  try{
+    const ext = detectLoiFileType(m.file) || 'pdf';
+    const filename = `${m.computedFilename}.${ext}`;
+    m.egnyteSavedPath = await egnyteSaveFile(m.dropSide, m.egnyteAccountName, filename, m.file);
+    m.egnyteSaveState = 'success';
+  }catch(e){
+    console.error('Egnyte auto-save failed:', e);
+    m.egnyteSaveState = 'error';
+    m.egnyteSaveError = (e && e.message) || String(e);
+  }
+  renderPreservingScroll('.modal-body');
+}
+// Only reachable when a folder's already connected but its permission has lapsed — this
+// runs from a real click, so requestPermission (unlike queryPermission) is allowed to
+// show the browser's own prompt.
+async function retryEgnyteSaveWithPermission(){
+  const rootHandle = await egnyteGetStoredRootHandle();
+  if(!rootHandle) return;
+  let granted = false;
+  try{ granted = (await rootHandle.requestPermission({mode:'readwrite'}))==='granted'; }catch(e){ granted=false; }
+  if(!granted){ flashToast('Egnyte folder access was not granted.'); return; }
+  await attemptEgnyteAutoSave();
+}
+function egnyteManualDownload(){
+  const m = state.loiImport;
+  if(!m || !m.file) return;
+  const ext = detectLoiFileType(m.file) || 'pdf';
+  const url = URL.createObjectURL(m.file);
+  const a = document.createElement('a');
+  a.href = url; a.download = `${m.computedFilename}.${ext}`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+function renderEgnyteSaveStatusHtml(m){
+  const downloadBtn = `<button class="btn secondary sm" data-action="egnyteManualDownload" style="margin-top:2px;">⬇️ Download Renamed File</button>`;
+  switch(m.egnyteSaveState){
+    case 'saving':
+      return `<div class="tiny" style="color:var(--ink-soft);">⏳ Filing to Egnyte…</div>`;
+    case 'success':
+      return `<div class="tiny" style="color:var(--good,#1E8E5A);">✅ Filed to <code>${escapeHtml(m.egnyteSavedPath||'')}</code></div>`;
+    case 'needsPermission':
+      return `<div class="tiny" style="color:var(--bad,#C0392B);margin-bottom:6px;">⚠️ Egnyte folder access needs to be reconfirmed.</div><button class="btn secondary sm" data-action="egnyteRetryPermission">🔓 Grant Access &amp; Save</button>`;
+    case 'notconnected':
+      return `<div class="tiny" style="color:var(--ink-soft);margin-bottom:6px;">Egnyte auto-filing isn't connected yet — connect it once in Settings → Notification Settings, or save this manually:</div>${downloadBtn}`;
+    case 'unsupported':
+      return `<div class="tiny" style="color:var(--ink-soft);margin-bottom:6px;">This browser can't save straight to Egnyte (use Chrome or Edge) — save this manually:</div>${downloadBtn}`;
+    case 'error':
+      return `<div class="tiny" style="color:var(--bad,#C0392B);margin-bottom:6px;">⚠️ Couldn't file automatically: ${escapeHtml(m.egnyteSaveError||'unknown error')}</div>${downloadBtn}`;
+    default:
+      return `<div class="tiny" style="color:var(--ink-soft);">Checking Egnyte connection…</div>`;
+  }
 }
 function findClientById(clientId){
   for(const l of db.lists){
@@ -5901,7 +6100,7 @@ function renderAdminMenu(){
     <div class="admin-item" data-action="goToDashboard">🏠 Dashboard</div>
     <div class="admin-item" data-action="openPipelineView">📈 Pipeline View</div>
     <div class="admin-item" data-action="openGeocodeIssues">📍 Geocoding Issues</div>
-    ${isMichael && !state.isMobile ? `<div class="admin-item" data-action="openLoiImport">✨ Import LOI (AI)</div>` : ''}
+    ${isMichael && !state.isMobile ? `<div class="admin-item" data-action="openLoiImport">✨ Import Deal Document (AI)</div>` : ''}
   </div>`;
 }
 
@@ -6122,11 +6321,11 @@ function attachShellHandlers(){
     renderPreservingScroll('.sidebar');
   };
   const notifBtn=document.querySelector('[data-action="openNotifSettings"]'); if(notifBtn) notifBtn.onclick=()=>{
-    state.notifSettingsOpen=true; render(); refreshMsGraphStatus();
+    state.notifSettingsOpen=true; render(); refreshMsGraphStatus(); refreshEgnyteFolderStatus();
   };
   const refreshBtn=document.querySelector('[data-action="refreshApp"]'); if(refreshBtn) refreshBtn.onclick=()=>{ doAppRefresh(); };
   const myNotesBtn=document.querySelector('[data-action="openMyNotes"]'); if(myNotesBtn) myNotesBtn.onclick=()=>{ state.myNotesOpen=true; state.showUserMenu=false; render(); };
-  const notifFromMenuBtn=document.querySelector('[data-action="openNotifSettingsFromMenu"]'); if(notifFromMenuBtn) notifFromMenuBtn.onclick=()=>{ state.notifSettingsOpen=true; state.showUserMenu=false; render(); refreshMsGraphStatus(); };
+  const notifFromMenuBtn=document.querySelector('[data-action="openNotifSettingsFromMenu"]'); if(notifFromMenuBtn) notifFromMenuBtn.onclick=()=>{ state.notifSettingsOpen=true; state.showUserMenu=false; render(); refreshMsGraphStatus(); refreshEgnyteFolderStatus(); };
   const changePwBtn=document.querySelector('[data-action="openChangePassword"]'); if(changePwBtn) changePwBtn.onclick=()=>{ state.changePasswordModalOpen=true; state.showUserMenu=false; render(); };
   const newEmailBtn=document.querySelector('[data-action="openBlankEmail"]'); if(newEmailBtn) newEmailBtn.onclick=()=>{
     openBlankEmailDraft();
@@ -6617,8 +6816,8 @@ async function handleAdminAction(a){
   if(a==='adminImportTodos'){ state.importTodosModal = {step:'upload'}; }
   if(a==='adminImportTaskFire'){ state.taskfireImport = {step:'upload'}; }
   if(a==='adminImportMaps'){ state.mapsImport = {step:'upload', clientQuery:'', pickedClient:null, newClientName:''}; }
-  if(a==='adminDigest'){ state.notifSettingsOpen=true; refreshMsGraphStatus(); }
-  if(a==='openMsCalendarConnect'){ state.notifSettingsOpen=true; refreshMsGraphStatus(); }
+  if(a==='adminDigest'){ state.notifSettingsOpen=true; refreshMsGraphStatus(); refreshEgnyteFolderStatus(); }
+  if(a==='openMsCalendarConnect'){ state.notifSettingsOpen=true; refreshMsGraphStatus(); refreshEgnyteFolderStatus(); }
   if(a==='adminUsers'){
     // Refresh every profile fresh from the server first — without this, anyone who
     // logged in for the first time after this browser's own session started would
@@ -6627,7 +6826,7 @@ async function handleAdminAction(a){
     await fetchAllProfilesIntoUsers();
     state.manageUsersModalOpen=true;
   }
-  if(a==='adminTimes'){ state.notifSettingsOpen=true; refreshMsGraphStatus(); }
+  if(a==='adminTimes'){ state.notifSettingsOpen=true; refreshMsGraphStatus(); refreshEgnyteFolderStatus(); }
   if(a==='adminReset'){
     // Same fix as adminUsers above — refresh profiles fresh first, so someone who
     // logged in for the first time after this browser session started doesn't
@@ -6884,7 +7083,7 @@ function renderLoiImportModal(){
 
   if(m.step==='drop'){
     body = `
-      <p class="tiny" style="margin-bottom:14px;color:var(--ink-soft);">Drag an LOI (PDF or Word) onto the side that matches who Edge represents on this deal.</p>
+      <p class="tiny" style="margin-bottom:14px;color:var(--ink-soft);">Drag an LOI, PSA, Lease, or Commission Agreement (PDF or Word) onto the side that matches who Edge represents on this deal.</p>
       <div style="display:flex;gap:14px;">
         <div id="loiDropClients" style="flex:1;border:2px dashed var(--line);border-radius:10px;padding:32px 14px;text-align:center;cursor:pointer;">
           <div style="font-size:28px;margin-bottom:8px;">📄</div>
@@ -6950,12 +7149,13 @@ function renderLoiImportModal(){
       `;
     }
   } else if(m.step==='done'){
+    const ext = m.file ? (detectLoiFileType(m.file)||'pdf') : 'pdf';
     body = `
       <div class="empty-state"><div class="big">✓ Saved to ${escapeHtml(m.savedName)}</div></div>
       <div class="field">
         <label>Egnyte Filing</label>
-        <div class="tiny" style="color:var(--ink-soft);margin-bottom:8px;">Egnyte isn't connected yet, so this couldn't be filed automatically. Once it's set up, this step happens on its own — for now, here's the file renamed to the standard convention, ready to save manually:</div>
-        <div style="font-family:monospace;background:var(--canvas);padding:10px;border-radius:6px;font-size:13px;">${escapeHtml(m.computedFilename)}.pdf</div>
+        <div style="font-family:monospace;background:var(--canvas);padding:10px;border-radius:6px;font-size:13px;margin-bottom:8px;">${escapeHtml(m.computedFilename)}.${ext}</div>
+        <div id="egnyteSaveStatus">${renderEgnyteSaveStatusHtml(m)}</div>
       </div>
       <button class="btn" data-action="loiStartOver" style="width:100%;margin-top:10px;">Import Another</button>
       <button class="btn secondary" data-action="closeLoiImport" style="width:100%;margin-top:8px;">Close</button>
@@ -6964,7 +7164,7 @@ function renderLoiImportModal(){
 
   overlay.innerHTML = `
   <div class="modal-card" style="max-width:520px;">
-    <div class="modal-head"><div class="modal-title">✨ Import LOI (AI)</div><button class="modal-close" data-action="closeLoiImport">✕</button></div>
+    <div class="modal-head"><div class="modal-title">✨ Import Deal Document (AI)</div><button class="modal-close" data-action="closeLoiImport">✕</button></div>
     <div class="modal-body">${body}</div>
   </div>`;
   document.getElementById('app').appendChild(overlay);
@@ -7016,6 +7216,13 @@ function renderLoiImportModal(){
       m.counterChoice = document.getElementById('loiCounterChoice').value;
       await confirmLoiImport();
     });
+  }
+
+  if(m.step==='done'){
+    const egnyteRetryBtn = overlay.querySelector('[data-action="egnyteRetryPermission"]');
+    if(egnyteRetryBtn) egnyteRetryBtn.onclick=safeHandler(retryEgnyteSaveWithPermission);
+    const egnyteDownloadBtn = overlay.querySelector('[data-action="egnyteManualDownload"]');
+    if(egnyteDownloadBtn) egnyteDownloadBtn.onclick=egnyteManualDownload;
   }
 
   if(m.step==='review' && !m.matchedClient){
@@ -13875,7 +14082,7 @@ async function bootOffline(){
     checkTodoDeepLink(); checkBrokerReviewDeepLink(); checkCommissionSummaryDeepLink();
     persistOfflineSnapshot(); // fire-and-forget — mirrors "your things" locally for next time you're offline
     syncOutbox(); // in case something was queued from an earlier offline stretch this tab never reconnected from
-    refreshMsGraphStatus(); // fire-and-forget — so Connect Microsoft 365 buttons know their real state without the user opening Settings first
+    refreshMsGraphStatus(); refreshEgnyteFolderStatus(); // fire-and-forget — so Connect Microsoft 365 buttons know their real state without the user opening Settings first
     render();
   } catch(e){
     console.error('Session check failed:', e);
