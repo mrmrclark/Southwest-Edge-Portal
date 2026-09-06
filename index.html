@@ -272,6 +272,23 @@
     border-radius:50%;background:var(--edge);
   }
   .cal-day.blank{visibility:hidden;}
+  .mscal-nav-btn{background:none;border:none;color:var(--ink-soft);font-size:15px;line-height:1;padding:2px 6px;border-radius:6px;cursor:pointer;}
+  .mscal-nav-btn:hover{background:var(--line-soft);color:var(--ink);}
+  .mscal-agenda{padding-top:10px;margin-top:8px;border-top:1px solid var(--line);}
+  .mscal-day-group{margin-bottom:10px;}
+  .mscal-day-group:last-child{margin-bottom:0;}
+  .mscal-day-label{font-size:11.5px;font-weight:700;color:var(--ink);margin-bottom:4px;}
+  .mscal-event-row{display:flex;align-items:flex-start;gap:8px;padding:5px 4px;margin:0 -4px;border-radius:6px;cursor:pointer;}
+  .mscal-event-row:hover{background:var(--edge-lighter);}
+  .mscal-event-row.no-link{cursor:default;}
+  .mscal-event-row.no-link:hover{background:none;}
+  .mscal-time-col{flex:0 0 52px;font-size:10.5px;color:var(--ink-soft);padding-top:1px;text-align:right;line-height:1.3;}
+  .mscal-bar{flex:0 0 3px;align-self:stretch;border-radius:2px;min-height:28px;}
+  .mscal-bar.solid{background:var(--edge);}
+  .mscal-bar.allday{background:var(--edge-light);border:1px solid var(--edge);}
+  .mscal-event-body{min-width:0;flex:1;}
+  .mscal-event-title{font-size:12px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .mscal-event-sub{font-size:10.5px;color:var(--ink-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px;}
   .weather-row{display:flex;align-items:center;gap:12px;}
   .weather-temp{font-size:30px;font-weight:700;color:var(--edge-darker);}
   .weather-icon{font-size:32px;}
@@ -609,6 +626,7 @@ let state = {
   notifSettingsOpen:false,      // whether the notification-preferences modal is open
   msGraphStatus:null,           // {loading, connected, ms_email} — Microsoft 365 connection state, fetched from ms-oauth
   msOauthFlow:null,             // {user_code, verification_uri, interval, expiresAt, error} — in-progress device-code sign-in
+  calWidgetCursor:null,         // {year, month} — which month the small Calendar widget's mini-grid is browsing; null = current month
   pendingUsersModalOpen:false,
   sidePanelWidgets:{calendar:true, weather:true, news:true, quicklinks:true},
   showWidgetPicker:false,
@@ -1182,7 +1200,22 @@ function renderAddUsersPrompt(){
     render();
   };
 }
+// A brand-new deal/prospect starts with no splits of its own. If the account already has
+// a signed Commission Summary, seed this one from it right away — otherwise it would sit
+// blank until someone happened to re-save the CS, which per the locking rule (see
+// propagateCommissionSummaryToItems) might never touch it again once it has any splits
+// at all. No-ops if the item already has its own splits (nothing here should ever
+// overwrite something that was deliberately entered).
+function seedSplitsFromCommissionSummary(item, clientId){
+  if(item.splits && item.splits.length) return;
+  const client = db.lists.flatMap(l=>l.clients||[]).find(c=>c.id===clientId);
+  const cs = client && client.commissionSummary;
+  if(cs && Array.isArray(cs.splits) && cs.splits.length){
+    item.splits = cs.splits.map(s=>({...s}));
+  }
+}
 async function supaCreateDeal(d, clientId){
+  seedSplitsFromCommissionSummary(d, clientId);
   const res = await offlineQueueableWrite('deals', 'insert', dealLocalToRow(d, clientId));
   if(!res.ok){
     if(!res.queued){ console.error('supaCreateDeal error:', res.error); flashToast('Saved here, but syncing to the server failed. (' + res.error.message + ')'); }
@@ -1415,6 +1448,7 @@ async function fetchProspectsFromSupabase(){
   });
 }
 async function supaCreateProspect(p, listingId){
+  seedSplitsFromCommissionSummary(p, listingId);
   const { error } = await supabaseClient.from('prospects').insert(prospectLocalToRow(p, listingId));
   if(error){ console.error('supaCreateProspect error:', error); flashToast('Saved here, but syncing to the server failed. (' + error.message + ')'); render(); }
 }
@@ -3324,11 +3358,24 @@ async function pollMsGraphOnce(){
   // still pending — check again after the interval Microsoft asked for
   setTimeout(pollMsGraphOnce, (state.msOauthFlow.interval || 5) * 1000);
 }
+let msCalendarCache = null; // {events:[...], fetchedAt} | {error:true, fetchedAt} | {loading:true, fetchedAt} | null
+function fetchMsCalendarIfNeeded(){
+  if(!state.msGraphStatus || !state.msGraphStatus.connected) return;
+  if(msCalendarCache && msCalendarCache.loading) return;
+  if(msCalendarCache && !msCalendarCache.loading && (Date.now()-msCalendarCache.fetchedAt) < 5*60*1000) return;
+  msCalendarCache = {loading:true, fetchedAt:Date.now()};
+  supabaseClient.functions.invoke('ms-oauth', {body:{action:'events'}}).then(({data,error})=>{
+    if(error || !data || data.error){ msCalendarCache = {error:true, fetchedAt:Date.now()}; render(); return; }
+    msCalendarCache = {events: data.events||[], fetchedAt:Date.now()};
+    render();
+  }).catch(()=>{ msCalendarCache = {error:true, fetchedAt:Date.now()}; render(); });
+}
 async function disconnectMsGraph(){
   if(!confirm('Disconnect Microsoft 365? Edgy will no longer be able to create calendar events or send email for you until you reconnect.')) return;
   const { error } = await supabaseClient.functions.invoke('ms-oauth', { body:{ action:'disconnect' } });
   if(error){ flashToast(`Could not disconnect: ${error.message}`); return; }
   state.msGraphStatus = { loading:false, connected:false };
+  msCalendarCache = null;
   flashToast('Disconnected from Microsoft 365.');
   renderPreservingScroll('.modal-body');
 }
@@ -4384,32 +4431,55 @@ async function processLoiFile(file, dropSide){
     render();
   }
 }
-// Finds the matching Client/Listing (hard requirement) and, within it, the matching
-// Deal/Prospect (soft — falls back to a pick-list + Create New if no confident match).
-function matchLoiToAccount(){
+// Given a known Client/Listing (whether matched automatically or picked by hand), finds
+// the matching Deal/Prospect within it — soft match, falls back to a pick-list + Create
+// New if nothing's confident. Shared by the automatic matcher below and the manual
+// client/listing picker, so both land in the exact same state shape.
+function loiPopulateDealMatch(client){
   const m = state.loiImport;
   const ex = m.extracted;
+  m.matchedClient = client;
   if(m.dropSide==='clients'){
-    const l = db.lists.find(x=>x.id==='clients');
-    const client = l.clients.find(c=>fuzzyTextMatch(c.name, ex.accountName));
-    if(!client){ m.matchedClient=null; m.matchedDeal=null; m.candidateDeals=[]; return; }
-    m.matchedClient = client;
     const candidates = client.deals||[];
     m.candidateDeals = candidates;
     const confident = candidates.find(d=>fuzzyTextMatch(d.building||d.name, ex.propertyDescription));
     m.matchedDeal = confident || null;
     m.isNewDeal = !confident;
   } else {
-    const l = db.lists.find(x=>x.id==='listings');
-    const client = l.clients.find(c=>fuzzyTextMatch(c.name, ex.propertyDescription));
-    if(!client){ m.matchedClient=null; m.matchedDeal=null; m.candidateDeals=[]; return; }
-    m.matchedClient = client;
     const candidates = client.prospects||[];
     m.candidateDeals = candidates;
     const confident = candidates.find(p=>fuzzyTextMatch(p.tenantName, ex.accountName));
     m.matchedDeal = confident || null;
     m.isNewDeal = !confident;
   }
+}
+// Finds the matching Client/Listing automatically (e.g. by the LOI's stated account name).
+// This is a soft match too now — when nothing matches (the LOI is filed under the shopping
+// center's name instead of the intersection, say), the review screen offers a manual
+// search/pick + Create New instead of a dead end.
+function matchLoiToAccount(){
+  const m = state.loiImport;
+  const ex = m.extracted;
+  const l = db.lists.find(x=>x.id===(m.dropSide==='clients'?'clients':'listings'));
+  const client = m.dropSide==='clients'
+    ? l.clients.find(c=>fuzzyTextMatch(c.name, ex.accountName))
+    : l.clients.find(c=>fuzzyTextMatch(c.name, ex.propertyDescription));
+  if(!client){ m.matchedClient=null; m.matchedDeal=null; m.candidateDeals=[]; return; }
+  loiPopulateDealMatch(client);
+}
+// The filtered pick-list shown when the automatic Client/Listing match fails — its own
+// function so the search box's oninput can patch just this container (see the "never
+// call render() from a live search box" convention used by the global/list search boxes).
+function renderLoiClientPickerResultsHtml(){
+  const m = state.loiImport;
+  const l = db.lists.find(x=>x.id===(m.dropSide==='clients'?'clients':'listings'));
+  const q = (m.clientPickerQuery||'').trim().toLowerCase();
+  const matches = (q ? l.clients.filter(c=>c.name.toLowerCase().includes(q)) : l.clients).slice(0,50);
+  if(!matches.length) return `<div class="tiny" style="color:var(--ink-soft);margin-bottom:6px;">No matches.</div>`;
+  return matches.map(c=>`
+    <div class="row-card" data-pickloiclient="${escapeAttr(c.id)}" style="cursor:pointer;margin-bottom:6px;">
+      <div class="row-body"><div class="row-title">${escapeHtml(c.name)}</div></div>
+    </div>`).join('');
 }
 async function confirmLoiImport(){
   const m = state.loiImport;
@@ -4699,23 +4769,116 @@ function renderNewsWidget(){
 /* ==================== CALENDAR VIEW (desktop only) ==================== */
 function renderCalendarWidget(){
   const now = new Date();
-  const year = now.getFullYear(), month = now.getMonth();
+  // The mini-grid can be browsed independently of "today" via the nav arrows; the agenda
+  // below it always stays anchored on the real today, regardless of what the grid shows.
+  const cursor = state.calWidgetCursor || {year: now.getFullYear(), month: now.getMonth()};
+  const year = cursor.year, month = cursor.month;
   const firstDay = new Date(year, month, 1).getDay();
   const daysInMonth = new Date(year, month+1, 0).getDate();
-  const monthName = now.toLocaleDateString('en-US', {month:'long', year:'numeric'});
+  const monthName = new Date(year, month, 1).toLocaleDateString('en-US', {month:'long', year:'numeric'});
+  const isCurrentMonth = year===now.getFullYear() && month===now.getMonth();
+
+  // Real Outlook events, once Microsoft 365 is connected — kicks off a fetch (cached 5 min)
+  // the same way renderWeatherWidget does, and re-renders itself when data lands.
+  const msConnected = !!(state.msGraphStatus && state.msGraphStatus.connected);
+  if(msConnected) fetchMsCalendarIfNeeded();
+  const eventDayNums = new Set(); // days in the GRID's month that have at least one event, for the dot markers
+  if(msConnected && msCalendarCache && msCalendarCache.events){
+    msCalendarCache.events.forEach(ev=>{
+      if(!ev.start) return;
+      const d = new Date(ev.start);
+      if(d.getFullYear()===year && d.getMonth()===month) eventDayNums.add(d.getDate());
+    });
+  }
+
   let cells = '';
   for(let i=0;i<firstDay;i++) cells += `<div class="cal-day blank"></div>`;
   for(let d=1; d<=daysInMonth; d++){
-    const isToday = d===now.getDate();
-    cells += `<div class="cal-day ${isToday?'today':''}">${d}</div>`;
+    const isToday = isCurrentMonth && d===now.getDate();
+    const hasEvent = eventDayNums.has(d);
+    cells += `<div class="cal-day ${isToday?'today':''}" style="position:relative;">${d}${hasEvent?'<div style="position:absolute;bottom:2px;left:50%;transform:translateX(-50%);width:4px;height:4px;border-radius:50%;background:var(--edge);"></div>':''}</div>`;
   }
+
+  // Agenda: grouped by day, cast out as far as it takes to gather ~10 events — a size limit
+  // on the widget, not a hard cap on how many events a single busy day can show. Each row
+  // opens the real event in Outlook (webLink), so this stays read-only from the portal's side.
+  const TARGET_COUNT = 10;
+  let agendaHtml;
+  if(!msConnected){
+    agendaHtml = `<div class="mscal-agenda" style="font-size:11.5px;color:var(--ink-soft);">
+      <div style="margin-bottom:6px;">Connect Microsoft 365 to see your real Outlook events here.</div>
+      <button class="btn secondary sm" data-action="openMsCalendarConnect">Connect Microsoft 365</button>
+    </div>`;
+  } else if(!msCalendarCache || msCalendarCache.loading){
+    agendaHtml = `<div class="mscal-agenda" style="font-size:11.5px;color:var(--ink-soft);">Loading your calendar…</div>`;
+  } else if(msCalendarCache.error){
+    agendaHtml = `<div class="mscal-agenda" style="font-size:11.5px;color:var(--bad,#C0392B);">Couldn't load your Outlook calendar.</div>`;
+  } else {
+    const events = msCalendarCache.events || [];
+    if(!events.length){
+      agendaHtml = `<div class="mscal-agenda" style="font-size:12px;color:var(--ink-soft);">Nothing on your calendar in the next 60 days.</div>`;
+    } else {
+      const dayKeyOf = d => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+      const groups = [];
+      const byKey = {};
+      events.forEach(ev=>{
+        if(!ev.start) return;
+        const d = new Date(ev.start);
+        const key = dayKeyOf(d);
+        if(!byKey[key]){ byKey[key] = {date:d, events:[]}; groups.push(byKey[key]); }
+        byKey[key].events.push(ev);
+      });
+      // Events arrive sorted by start, so groups are already in chronological order —
+      // take whole days until the running total reaches the target.
+      const shown = [];
+      let total = 0;
+      for(const g of groups){
+        shown.push(g);
+        total += g.events.length;
+        if(total >= TARGET_COUNT) break;
+      }
+      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      agendaHtml = `<div class="mscal-agenda">
+        ${shown.map(g=>{
+          const dayStart = new Date(g.date.getFullYear(), g.date.getMonth(), g.date.getDate());
+          const diffDays = Math.round((dayStart-todayStart)/86400000);
+          let label;
+          if(diffDays===0) label='Today';
+          else if(diffDays===1) label='Tomorrow';
+          else if(diffDays>=2 && diffDays<=6) label=g.date.toLocaleDateString('en-US',{weekday:'long'});
+          else label=g.date.toLocaleDateString('en-US',{weekday:'short', month:'short', day:'numeric'});
+          return `<div class="mscal-day-group">
+            <div class="mscal-day-label">${label}</div>
+            ${g.events.map(ev=>{
+              const d = ev.start ? new Date(ev.start) : null;
+              const timeLabel = ev.isAllDay ? 'All day' : (d ? d.toLocaleTimeString('en-US',{hour:'numeric', minute:'2-digit'}) : '');
+              return `<div class="mscal-event-row${ev.webLink?'':' no-link'}"${ev.webLink?` data-mscal-open="${escapeAttr(ev.webLink)}"`:''}>
+                <div class="mscal-time-col">${timeLabel}</div>
+                <div class="mscal-bar ${ev.isAllDay?'allday':'solid'}"></div>
+                <div class="mscal-event-body">
+                  <div class="mscal-event-title">${escapeHtml(ev.subject||'(No subject)')}</div>
+                  ${ev.location?`<div class="mscal-event-sub">${escapeHtml(ev.location)}</div>`:''}
+                </div>
+              </div>`;
+            }).join('')}
+          </div>`;
+        }).join('')}
+      </div>`;
+    }
+  }
+
   return `
   <div class="widget-card">
-    <div class="widget-head"><div class="widget-title">${monthName}</div></div>
+    <div class="widget-head">
+      <button class="mscal-nav-btn" data-mscal-nav="prev" aria-label="Previous month">‹</button>
+      <div class="widget-title">${monthName}</div>
+      <button class="mscal-nav-btn" data-mscal-nav="next" aria-label="Next month">›</button>
+    </div>
     <div class="cal-grid">
       ${['S','M','T','W','T','F','S'].map(d=>`<div class="cal-dow">${d}</div>`).join('')}
       ${cells}
     </div>
+    ${agendaHtml}
   </div>`;
 }
 function openCalendarView(){
@@ -6102,8 +6265,24 @@ function attachShellHandlers(){
     flashToast(`${name} added to ${l.name}.`);
     render();
   });
-  ['adminPending','adminFullTeam','adminImportTodos','adminImportTaskFire','adminImportMaps','adminDigest','adminUsers','adminTimes','adminReset','openBrokerReviewLog','openPipelineView','openLoiImport','openGeocodeIssues','goToDashboard'].forEach(a=>{
+  ['adminPending','adminFullTeam','adminImportTodos','adminImportTaskFire','adminImportMaps','adminDigest','adminUsers','adminTimes','adminReset','openBrokerReviewLog','openPipelineView','openLoiImport','openGeocodeIssues','goToDashboard','openMsCalendarConnect'].forEach(a=>{
     document.querySelectorAll(`[data-action="${a}"]`).forEach(e=>{ e.onclick=()=>{ state.showAdminMenu=false; handleAdminAction(a); }; });
+  });
+  // Calendar widget: month-nav arrows browse the mini-grid independently of the agenda below it.
+  document.querySelectorAll('[data-mscal-nav]').forEach(el=>el.onclick=(ev)=>{
+    ev.preventDefault();
+    const now = new Date();
+    let {year, month} = state.calWidgetCursor || {year: now.getFullYear(), month: now.getMonth()};
+    month += (el.dataset.mscalNav==='next' ? 1 : -1);
+    if(month<0){ month=11; year--; } else if(month>11){ month=0; year++; }
+    state.calWidgetCursor = {year, month};
+    render();
+  });
+  // Calendar widget: clicking an event opens the real event in Outlook (webLink) — the widget
+  // itself only ever reads the calendar, so this is the only way to act on what it shows.
+  document.querySelectorAll('[data-mscal-open]').forEach(el=>el.onclick=()=>{
+    const url = el.dataset.mscalOpen;
+    if(url) window.open(url, '_blank', 'noopener');
   });
 }
 
@@ -6439,6 +6618,7 @@ async function handleAdminAction(a){
   if(a==='adminImportTaskFire'){ state.taskfireImport = {step:'upload'}; }
   if(a==='adminImportMaps'){ state.mapsImport = {step:'upload', clientQuery:'', pickedClient:null, newClientName:''}; }
   if(a==='adminDigest'){ state.notifSettingsOpen=true; refreshMsGraphStatus(); }
+  if(a==='openMsCalendarConnect'){ state.notifSettingsOpen=true; refreshMsGraphStatus(); }
   if(a==='adminUsers'){
     // Refresh every profile fresh from the server first — without this, anyone who
     // logged in for the first time after this browser's own session started would
@@ -6723,11 +6903,14 @@ function renderLoiImportModal(){
   } else if(m.step==='review'){
     const ex = m.extracted;
     if(!m.matchedClient){
+      const label = m.dropSide==='clients' ? 'Client' : 'Listing';
       body = `
         <div class="tiny" style="color:var(--ink-soft);margin-bottom:10px;">Extracted from ${escapeHtml(m.fileName)}: <b>${escapeHtml(ex.accountName||'—')}</b> at <b>${escapeHtml(ex.propertyDescription||'—')}</b></div>
-        <div class="empty-state"><div class="big">${m.dropSide==='clients'?'Client':'Listing'} not found.</div>
-        <div class="tiny">You must create a ${m.dropSide==='clients'?'Client':'Listing'} before a new deal can be created.</div></div>
-        <button class="btn secondary" data-action="loiStartOver" style="margin-top:14px;">Start Over</button>
+        <div class="tiny" style="margin-bottom:10px;">Couldn't match this to a ${label} automatically — often just means it's filed under a different name (e.g. the shopping center instead of the intersection). Pick the right one below, or create a new one.</div>
+        <div class="field"><label>Search ${label}s</label><input id="loiClientPickerSearch" placeholder="Start typing a name…" value="${escapeAttr(m.clientPickerQuery||'')}"></div>
+        <div id="loiClientPickerResults">${renderLoiClientPickerResultsHtml()}</div>
+        <button class="btn secondary sm" data-action="loiCreateNewClient" style="margin:10px 0 14px;">+ Create New ${label}</button>
+        <button class="btn secondary" data-action="loiStartOver" style="width:100%;">Start Over</button>
       `;
     } else {
       const key = `${m.dropSide}-${ex.transactionType==='sale'?'sale':'lease'}`;
@@ -6832,6 +7015,40 @@ function renderLoiImportModal(){
       m.extracted.propertyDescription = document.getElementById('loiProperty').value.trim();
       m.counterChoice = document.getElementById('loiCounterChoice').value;
       await confirmLoiImport();
+    });
+  }
+
+  if(m.step==='review' && !m.matchedClient){
+    const wireLoiClientPickerRows = ()=>{
+      overlay.querySelectorAll('[data-pickloiclient]').forEach(el=>el.onclick=()=>{
+        const l = db.lists.find(x=>x.id===(m.dropSide==='clients'?'clients':'listings'));
+        const client = l.clients.find(c=>c.id===el.dataset.pickloiclient);
+        if(client) loiPopulateDealMatch(client);
+        render();
+      });
+    };
+    wireLoiClientPickerRows();
+    const pickerSearchEl = overlay.querySelector('#loiClientPickerSearch');
+    if(pickerSearchEl) pickerSearchEl.oninput=()=>{
+      m.clientPickerQuery = pickerSearchEl.value;
+      // Same fix as the global/list search boxes: never call render() from here — it
+      // would tear down and rebuild this very input mid-keystroke. Patch just the
+      // results list below it instead.
+      const resultsBox = overlay.querySelector('#loiClientPickerResults');
+      if(resultsBox){ resultsBox.innerHTML = renderLoiClientPickerResultsHtml(); wireLoiClientPickerRows(); }
+    };
+    const createClientBtn = overlay.querySelector('[data-action="loiCreateNewClient"]');
+    if(createClientBtn) createClientBtn.onclick=safeHandler(async ()=>{
+      const label = m.dropSide==='clients' ? 'client' : 'listing';
+      const name = prompt(`Name this ${label}:`);
+      if(!name || !name.trim()) return;
+      const l = db.lists.find(x=>x.id===(m.dropSide==='clients'?'clients':'listings'));
+      const newClient = {id:crypto.randomUUID(), name:name.trim(), primary:null, secondContactId:null, thirdContactId:null, deals:[], createdBy:state.currentUser.id, authorizedUserIds:[]};
+      if(l.id==='listings'){ newClient.prospects=[]; newClient.categoryConfig=newLSRCategoryConfig(); }
+      l.clients.push(newClient);
+      await supaCreateClient(newClient, l.id);
+      loiPopulateDealMatch(newClient);
+      render();
     });
   }
 }
@@ -7675,14 +7892,9 @@ function renderDealStageYearToggle(){
 function renderDealStageChart(userId, yearFilter){
   const rows = allDealsForUser(userId);
   const nowYear = todayDate().getFullYear();
-  const filtered = (!yearFilter || yearFilter==='total') ? rows : rows.filter(r=>{
-    if(!r.deal.dueDate) return false;
-    const y = new Date(r.deal.dueDate).getFullYear();
-    return yearFilter==='thisYear' ? y===nowYear : y===nowYear+1;
-  });
   const counts = {}, values = {};
   let grandTotal = 0;
-  filtered.forEach(r=>{
+  rows.forEach(r=>{
     const d = r.deal;
     if(d.stage==='dead' || d.stage==='prospect' || !d.stage) return;
     // A pipeline is always modeled — every dollar here is discounted by that stage's
@@ -7692,6 +7904,32 @@ function renderDealStageChart(userId, yearFilter){
     const wa = PIPELINE_STAGE_WA[d.stage];
     if(!wa) return; // no modeled likelihood for this stage — not part of the pipeline
     const totalFee = parseFloat(d.totalFee) || 0;
+
+    // A lease's commission is really two separate halves, each landing on its own due
+    // date — a $10,000 lease with 1st Half due in 2026 and 2nd Half due in 2027 puts
+    // $5,000 in the 2026 bucket and $5,000 in 2027, never both halves in one bucket
+    // together. A sale isn't split like that — the whole fee lands at COE. Per Michael.
+    let amountInWindow;
+    if(!yearFilter || yearFilter==='total'){
+      amountInWindow = totalFee;
+    } else if(d.dealType==='sale'){
+      const y = d.coeDueDate ? new Date(d.coeDueDate+'T00:00:00').getFullYear() : null;
+      const inYear = y!=null && (yearFilter==='thisYear' ? y===nowYear : y===nowYear+1);
+      amountInWindow = inYear ? totalFee : 0;
+    } else {
+      const halfFee = totalFee/2;
+      amountInWindow = 0;
+      if(d.commission1DueDate){
+        const y1 = new Date(d.commission1DueDate+'T00:00:00').getFullYear();
+        if(yearFilter==='thisYear' ? y1===nowYear : y1===nowYear+1) amountInWindow += halfFee;
+      }
+      if(d.commission2DueDate){
+        const y2 = new Date(d.commission2DueDate+'T00:00:00').getFullYear();
+        if(yearFilter==='thisYear' ? y2===nowYear : y2===nowYear+1) amountInWindow += halfFee;
+      }
+    }
+    if(amountInWindow<=0) return;
+
     // Individual view: your actual split share on this deal — same convention WIP uses —
     // so this reconciles with Paid to Date and with WIP's WA column, instead of
     // showing the full deal value regardless of what you'd actually collect (the bug that
@@ -7701,7 +7939,7 @@ function renderDealStageChart(userId, yearFilter){
     // single split to apply to the whole office.
     const mySplit = userId ? findSplitForUser(d, userId) : null;
     const shareFactor = userId ? (mySplit ? (parseFloat(mySplit.pct)||0)/100 : 1) : 1;
-    const share = totalFee * shareFactor * wa;
+    const share = amountInWindow * shareFactor * wa;
     counts[d.stage] = (counts[d.stage]||0) + 1;
     values[d.stage] = (values[d.stage]||0) + share;
     grandTotal += share;
@@ -9564,13 +9802,33 @@ function renderCsSplitRowHtml(row,i){
       <button class="row-trash" data-removecssplitrow="${i}">✕</button>
     </div>`;
 }
+// Copies the Commission Summary's % split down into every deal/prospect under this account
+// that doesn't yet have its own splits set. Once an item has splits, it's treated as locked
+// to that number from here on — a later CS change (renegotiating the office split, a new
+// hire joining) only reaches whatever's still unset at that point, so it never rewrites a
+// deal that was already booked under the old numbers. Per Michael's explicit call: NEW
+// deals get the NEW %s, deals already in progress keep what they were given.
+async function propagateCommissionSummaryToItems(c, newSplits){
+  const splitsCopy = ()=>newSplits.map(s=>({...s}));
+  const writes = [];
+  (c.deals||[]).forEach(d=>{
+    if(!d.splits || !d.splits.length){ d.splits = splitsCopy(); writes.push(supaUpdateDeal(d, c.id)); }
+  });
+  (c.prospects||[]).forEach(p=>{
+    if(!p.splits || !p.splits.length){ p.splits = splitsCopy(); writes.push(supaUpdateProspect(p, c.id)); }
+  });
+  if(writes.length) await Promise.all(writes);
+  return writes.length;
+}
 // Account-level Commission Summary: the document everyone signs when a new account is opened,
-// showing the % split. Deliberately separate from a deal's own Commission modal/splits above —
-// this is the one-time "who gets what" agreement for the account, not a per-deal calculation.
-// Anyone with access to the account (creator, Admin, or on the Access list — same tier as
-// `canEdit` elsewhere on this page) can create or edit it. "Commission-only, no login" people
-// can be added same as the deal Commission modal, but since they can never log in to check a
-// box themselves, their row is informational only and never counts toward — or blocks — locking.
+// showing the % split. Saving it here is also what actually sets each deal/prospect's own
+// split (see propagateCommissionSummaryToItems above) — anything under this account that
+// doesn't already have its own splits picks up whatever's saved here; anything that already
+// has splits keeps them untouched. Anyone with access to the account (creator, Admin, or on
+// the Access list — same tier as `canEdit` elsewhere on this page) can create or edit it.
+// "Commission-only, no login" people can be added same as the deal Commission modal, but
+// since they can never log in to check a box themselves, their row is informational only and
+// never counts toward — or blocks — locking.
 function renderCommissionSummaryModal(){
   const m = state.commissionSummaryModal;
   const l = db.lists.find(x=>x.id===m.listId); const c = l && l.clients.find(x=>x.id===m.clientId);
@@ -9674,7 +9932,7 @@ function renderCommissionSummaryModal(){
       if(!cs){ state.commissionSummaryModal=null; render(); return; }
       m.editing=false; m.draft=null; render();
     };
-    overlay.querySelector('[data-action="saveCsSplits"]').onclick=()=>{
+    overlay.querySelector('[data-action="saveCsSplits"]').onclick=safeHandler(async ()=>{
       const draft = m.draft;
       const currentTotal = draft.reduce((s,row)=>s + (parseFloat(row.pct)||0), 0);
       if(!draft.length || Math.abs(currentTotal-100) >= 0.02){
@@ -9699,10 +9957,14 @@ function renderCommissionSummaryModal(){
           invokeCommissionSummaryEmail(c.id, row.userId, state.currentUser.id);
         });
       }
+      // Push these %s down into whatever deals/prospects here don't already have their own —
+      // freshly-created ones with splits:[] most of all, so they're never left blank.
+      const propagatedCount = await propagateCommissionSummaryToItems(c, newSplits);
       m.editing=false; m.draft=null;
-      flashToast(changed && hadCs ? 'Splits saved — approvals cleared, everyone needs to re-approve. Emails sent.' : 'Commission Summary saved — approval emails sent.');
+      const savedMsg = changed && hadCs ? 'Splits saved — approvals cleared, everyone needs to re-approve. Emails sent.' : 'Commission Summary saved — approval emails sent.';
+      flashToast(propagatedCount ? `${savedMsg} Applied to ${propagatedCount} deal${propagatedCount===1?'':'s'} with no splits of its own yet.` : savedMsg);
       render();
-    };
+    });
   } else {
     overlay.querySelectorAll('[data-csapprove]').forEach(el=>el.onchange=()=>{
       const userId = el.dataset.csapprove;
@@ -9789,12 +10051,20 @@ function renderCommissionModal(){
           Total: ${total.toFixed(2)}%${totalOk?' ✓':' — must equal 100%'}
         </div>
       </div>
+      ${m.kind==='deal' ? `
+      <div style="display:flex;gap:12px;margin-top:10px;">
+        <div class="field" style="margin:0;flex:1;"><label>COE Date</label><input type="date" id="commCoeDue" value="${escapeAttr(obj.coeDueDate||'')}"></div>
+        <div class="field" style="margin:0;flex:1;"><label>1st Half Due</label><input type="date" id="comm1Due" value="${escapeAttr(obj.commission1DueDate||'')}"></div>
+        <div class="field" style="margin:0;flex:1;"><label>2nd Half Due</label><input type="date" id="comm2Due" value="${escapeAttr(obj.commission2DueDate||'')}"></div>
+      </div>
+      <div class="tiny" style="color:var(--ink-soft);margin-top:4px;">These are what the pipeline uses to sort a deal into "this year" vs "next year" — ${obj.dealType==='sale' ? 'a <b>sale</b> uses its COE Date.' : 'a <b>lease</b> uses 1st Half Due, falling back to 2nd Half Due.'} Without one set, this deal won't land in either year bucket.</div>
+      ` : ''}
       ${(()=>{
         const sourceTable = m.kind==='deal' ? 'deals' : 'prospects';
         const approved = brokerReviewApproved(sourceTable, obj.id, obj.dealType);
         const gateMsg = 'Cannot mark paid until the Designated Broker has approved this deal';
         return `
-      <div style="display:flex;gap:20px;margin-top:6px;">
+      <div style="display:flex;gap:20px;margin-top:14px;">
         <label style="display:flex;align-items:center;gap:7px;font-size:13px;" ${approved?'':`title="${gateMsg}"`}>
           <input type="checkbox" id="comm1Paid" ${obj.commission1Paid?'checked':''} ${approved?'':'disabled'} style="width:auto;accent-color:var(--good);">
           1st Half Paid
@@ -9859,6 +10129,11 @@ function renderCommissionModal(){
     obj.splits = draft.map(row=>({userId:row.userId, pct:parseFloat(row.pct)||0}));
     obj.commission1Paid = document.getElementById('comm1Paid').checked;
     obj.commission2Paid = document.getElementById('comm2Paid').checked;
+    if(m.kind==='deal'){
+      obj.coeDueDate = document.getElementById('commCoeDue').value || null;
+      obj.commission1DueDate = document.getElementById('comm1Due').value || null;
+      obj.commission2DueDate = document.getElementById('comm2Due').value || null;
+    }
     saveFn();
     state.commissionModal=null;
     flashToast('Commission details saved.');
@@ -13531,6 +13806,7 @@ async function bootOffline(){
     checkTodoDeepLink(); checkBrokerReviewDeepLink(); checkCommissionSummaryDeepLink();
     persistOfflineSnapshot(); // fire-and-forget — mirrors "your things" locally for next time you're offline
     syncOutbox(); // in case something was queued from an earlier offline stretch this tab never reconnected from
+    refreshMsGraphStatus(); // fire-and-forget — so Connect Microsoft 365 buttons know their real state without the user opening Settings first
     render();
   } catch(e){
     console.error('Session check failed:', e);
