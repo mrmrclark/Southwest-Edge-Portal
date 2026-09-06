@@ -9674,6 +9674,18 @@ function renderDealRowInClient(l,c,d){
     </div>
   </div>`;
 }
+// Deals/prospects are often named "<store code> - <intersection>" (e.g. "AZ1650 - Camelback
+// & 20th - SSWC" — see extractAddressFromName above). Within a stage group, alphabetize by
+// that store code when one's present, not by the intersection that follows it — two deals
+// for the same client should line up by their code, not scatter by cross-street name.
+function dealSortKey(name){
+  if(!name) return '';
+  const m = name.match(/^([A-Za-z]{2}\d{2,6})\s*-\s*/);
+  return m ? m[1] : name;
+}
+function sortDealRowsByName(rows){
+  return rows.slice().sort((a,b)=>dealSortKey(a.name).localeCompare(dealSortKey(b.name), undefined, {numeric:true, sensitivity:'base'}));
+}
 // Groups a client's Sites/Deals list into collapsible sub-sections. "Open for Business"
 // (d.complete) takes priority over stage — a deal lives in exactly one group.
 const DEAL_GROUPS = {
@@ -9689,7 +9701,7 @@ const DEAL_GROUPS = {
 };
 function renderDealGroupsInClient(l,c){
   const rowsByKey = {};
-  Object.keys(DEAL_GROUPS).forEach(k=>{ rowsByKey[k] = c.deals.filter(DEAL_GROUPS[k].match); });
+  Object.keys(DEAL_GROUPS).forEach(k=>{ rowsByKey[k] = sortDealRowsByName(c.deals.filter(DEAL_GROUPS[k].match)); });
   // In Escrow always sits directly below Signed Lease, whether or not anything is
   // currently in that stage — a fixed position, not one that shifts around based on
   // what's in it. Dead stays last — it's a terminal, out-of-the-running state, not
