@@ -11801,10 +11801,17 @@ function finishContactPick(contactId){
 
 /* ---------------- NEW TODO MODAL ---------------- */
 function accountsFlatForPicker(){
+  // Only clients/listings this person can actually see (same rule as everywhere else —
+  // Admin/FullAccess see all, everyone else only what they created or were given access
+  // to), alphabetized so a long list is actually scannable.
+  const me = state.currentUser.id;
   const out = [];
   db.lists.filter(l=>l.type==='deep').forEach(l=>{
-    l.clients.forEach(c=>out.push({id:c.id, name:c.name, listId:l.id, listName:l.name, deals:c.deals}));
+    l.clients.forEach(c=>{
+      if(userHasClientAccess(me, c.id)) out.push({id:c.id, name:c.name, listId:l.id, listName:l.name, deals:c.deals});
+    });
   });
+  out.sort((a,b)=>a.name.localeCompare(b.name));
   return out;
 }
 function renderNtpAccountListHtml(matches){
@@ -11846,7 +11853,7 @@ function renderNewTodoPickerModal(){
     const acct = p.pickedAccount;
     title = acct.name;
     const dq = (p.dealQuery||'').trim().toLowerCase();
-    const dealMatches = acct.deals.filter(d=>!dq || d.name.toLowerCase().includes(dq));
+    const dealMatches = sortDealRowsByName(acct.deals.filter(d=>!dq || d.name.toLowerCase().includes(dq)));
     body = `
       <button class="btn" data-action="ntpStopAtAccount" style="width:100%;margin-bottom:16px;">Not associated with a Deal — create it under ${escapeHtml(acct.name)}</button>
       <div class="section-label">Or pick a specific deal:</div>
@@ -11945,7 +11952,7 @@ function renderNewTodoPickerModal(){
     p.dealQuery = dealSearchEl.value;
     const dq = p.dealQuery.trim().toLowerCase();
     const acct = p.pickedAccount;
-    const newMatches = acct.deals.filter(d=>!dq || d.name.toLowerCase().includes(dq));
+    const newMatches = sortDealRowsByName(acct.deals.filter(d=>!dq || d.name.toLowerCase().includes(dq)));
     const listBox = document.getElementById('ntpDealList');
     if(listBox){
       listBox.innerHTML = renderNtpDealListHtml(newMatches);
