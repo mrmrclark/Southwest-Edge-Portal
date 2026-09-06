@@ -126,7 +126,7 @@
     body:has(#mapPrintOverlay) #app{ display:none !important; }
     #mapPrintOverlay{ position:static !important; }
     #mapPrintOverlay h2{ font-size:16px !important; margin:0 0 6px 0 !important; }
-    #mapPrintOverlay img{ max-width:100% !important; max-height:7in !important; width:auto !important; height:auto !important; }
+    #mapPrintOverlay img{ max-width:100% !important; max-height:10in !important; width:auto !important; height:auto !important; }
     .no-print{display:none !important;}
     .print-only{display:block !important;}
     /* Release every ancestor's scroll/height/overflow clipping so the report can
@@ -7258,7 +7258,11 @@ function buildStaticMapUrl(deals, mapType, center, zoom){
   // pin, since a zoomed-in view of one intersection should print that same close-up view,
   // not zoom out to fit every other pin on the map too.
   const viewParams = `center=${center.lat},${center.lng}&zoom=${zoom}`;
-  return `https://maps.googleapis.com/maps/api/staticmap?size=1280x720&scale=2&maptype=${staticMapType}&${viewParams}&${markerParams}&key=${GOOGLE_MAPS_JS_KEY}`;
+  // Static Maps API caps each side at 640px — 640x414 keeps that cap while matching a
+  // Tabloid-landscape (17x11) aspect ratio, and scale=2 doubles the returned pixels
+  // (~1280x828) without exceeding the cap, since scale multiplies the delivered image,
+  // not the size= request itself.
+  return `https://maps.googleapis.com/maps/api/staticmap?size=640x414&scale=2&maptype=${staticMapType}&${viewParams}&${markerParams}&key=${GOOGLE_MAPS_JS_KEY}`;
 }
 function printClientMap(c){
   const geocodedDeals = (c.deals||[]).filter(d=>d.stage!=='dead' && !(d.commission1Paid && d.commission2Paid) && d.latitude && d.longitude);
@@ -7280,8 +7284,23 @@ function printClientMap(c){
   overlay.style.cssText = 'position:fixed;inset:0;background:#fff;z-index:99999;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;';
   overlay.innerHTML = `<h2 style="font-family:sans-serif;margin:0;">${escapeHtml(c.name)}</h2><img style="max-width:96%;max-height:88vh;">`;
   document.body.appendChild(overlay);
+  // Print the map at Tabloid landscape (17x11) — the source image is captured at that
+  // larger size (see buildStaticMapUrl) so it stays sharp when downscaled. This only
+  // overrides @page while the map overlay is up; the shared 11x8.5 @page rule used by
+  // the LSR report print (below) is untouched. The browser's print dialog still lets
+  // the person pick Letter at print time — this just sets the page's native/default size.
+  const existingPageStyle = document.getElementById('mapPrintPageSize');
+  if(existingPageStyle) existingPageStyle.remove();
+  const pageStyle = document.createElement('style');
+  pageStyle.id = 'mapPrintPageSize';
+  pageStyle.textContent = '@media print{ @page{ size:17in 11in; margin:0.4in; } }';
+  document.head.appendChild(pageStyle);
   const img = overlay.querySelector('img');
-  const cleanup = ()=>{ const el = document.getElementById('mapPrintOverlay'); if(el) el.remove(); window.removeEventListener('afterprint', cleanup); };
+  const cleanup = ()=>{
+    const el = document.getElementById('mapPrintOverlay'); if(el) el.remove();
+    const ps = document.getElementById('mapPrintPageSize'); if(ps) ps.remove();
+    window.removeEventListener('afterprint', cleanup);
+  };
   window.addEventListener('afterprint', cleanup);
   img.onload = ()=>{ window.print(); };
   img.onerror = ()=>{ flashToast('Could not load the map image for printing.'); cleanup(); };
@@ -10051,20 +10070,31 @@ function renderCommissionModal(){
           Total: ${total.toFixed(2)}%${totalOk?' ✓':' — must equal 100%'}
         </div>
       </div>
-      ${m.kind==='deal' ? `
+      ${m.kind==='deal' ? (obj.dealType==='sale' ? `
       <div style="display:flex;gap:12px;margin-top:10px;">
         <div class="field" style="margin:0;flex:1;"><label>COE Date</label><input type="date" id="commCoeDue" value="${escapeAttr(obj.coeDueDate||'')}"></div>
+      </div>
+      <div class="tiny" style="color:var(--ink-soft);margin-top:4px;">This is what the pipeline uses to sort this sale into "this year" vs "next year." Without it set, it won't land in either year bucket.</div>
+      ` : `
+      <div style="display:flex;gap:12px;margin-top:10px;">
         <div class="field" style="margin:0;flex:1;"><label>1st Half Due</label><input type="date" id="comm1Due" value="${escapeAttr(obj.commission1DueDate||'')}"></div>
         <div class="field" style="margin:0;flex:1;"><label>2nd Half Due</label><input type="date" id="comm2Due" value="${escapeAttr(obj.commission2DueDate||'')}"></div>
       </div>
-      <div class="tiny" style="color:var(--ink-soft);margin-top:4px;">These are what the pipeline uses to sort a deal into "this year" vs "next year" — ${obj.dealType==='sale' ? 'a <b>sale</b> uses its COE Date.' : 'a <b>lease</b> uses 1st Half Due, falling back to 2nd Half Due.'} Without one set, this deal won't land in either year bucket.</div>
-      ` : ''}
+      <div class="tiny" style="color:var(--ink-soft);margin-top:4px;">The pipeline splits this lease's commission into two halves and sorts each into "this year" vs "next year" by its own due date above — a half with no date set doesn't land in either bucket.</div>
+      `) : ''}
       ${(()=>{
         const sourceTable = m.kind==='deal' ? 'deals' : 'prospects';
         const approved = brokerReviewApproved(sourceTable, obj.id, obj.dealType);
         const gateMsg = 'Cannot mark paid until the Designated Broker has approved this deal';
+        const isSaleDeal = m.kind==='deal' && obj.dealType==='sale';
         return `
       <div style="display:flex;gap:20px;margin-top:14px;">
+        ${isSaleDeal ? `
+        <label style="display:flex;align-items:center;gap:7px;font-size:13px;" ${approved?'':`title="${gateMsg}"`}>
+          <input type="checkbox" id="commPaidSale" ${obj.commission1Paid?'checked':''} ${approved?'':'disabled'} style="width:auto;accent-color:var(--good);">
+          Commission Paid
+        </label>
+        ` : `
         <label style="display:flex;align-items:center;gap:7px;font-size:13px;" ${approved?'':`title="${gateMsg}"`}>
           <input type="checkbox" id="comm1Paid" ${obj.commission1Paid?'checked':''} ${approved?'':'disabled'} style="width:auto;accent-color:var(--good);">
           1st Half Paid
@@ -10073,6 +10103,7 @@ function renderCommissionModal(){
           <input type="checkbox" id="comm2Paid" ${obj.commission2Paid?'checked':''} ${approved?'':'disabled'} style="width:auto;accent-color:var(--good);">
           2nd Half Paid
         </label>
+        `}
       </div>
       ${approved?'':`<div class="tiny" style="color:var(--bad);margin-top:6px;">${gateMsg}</div>`}
       `;})()}
@@ -10127,12 +10158,31 @@ function renderCommissionModal(){
     obj.commissionStructure = document.getElementById('commStructure').value.trim();
     obj.totalFee = document.getElementById('commTotalFee').value.trim();
     obj.splits = draft.map(row=>({userId:row.userId, pct:parseFloat(row.pct)||0}));
-    obj.commission1Paid = document.getElementById('comm1Paid').checked;
-    obj.commission2Paid = document.getElementById('comm2Paid').checked;
-    if(m.kind==='deal'){
-      obj.coeDueDate = document.getElementById('commCoeDue').value || null;
-      obj.commission1DueDate = document.getElementById('comm1Due').value || null;
-      obj.commission2DueDate = document.getElementById('comm2Due').value || null;
+    // A sale pays out in one lump sum at close — one checkbox, one date (COE). Everything
+    // downstream (WIP report, Pipeline, "fully paid" checks across the app) still reads
+    // commission1Paid/2Paid and commission1/2DueDate in pairs, so mirror the single sale
+    // value into both halves instead of special-casing every one of those call sites.
+    const isSaleDeal = m.kind==='deal' && obj.dealType==='sale';
+    if(isSaleDeal){
+      const paidEl = document.getElementById('commPaidSale');
+      obj.commission1Paid = paidEl ? paidEl.checked : false;
+      obj.commission2Paid = obj.commission1Paid;
+      const coeEl = document.getElementById('commCoeDue');
+      const coeVal = coeEl ? (coeEl.value || null) : null;
+      obj.coeDueDate = coeVal;
+      obj.commission1DueDate = coeVal;
+      obj.commission2DueDate = coeVal;
+    } else {
+      const comm1El = document.getElementById('comm1Paid');
+      const comm2El = document.getElementById('comm2Paid');
+      obj.commission1Paid = comm1El ? comm1El.checked : false;
+      obj.commission2Paid = comm2El ? comm2El.checked : false;
+      if(m.kind==='deal'){
+        const c1El = document.getElementById('comm1Due');
+        const c2El = document.getElementById('comm2Due');
+        if(c1El) obj.commission1DueDate = c1El.value || null;
+        if(c2El) obj.commission2DueDate = c2El.value || null;
+      }
     }
     saveFn();
     state.commissionModal=null;
