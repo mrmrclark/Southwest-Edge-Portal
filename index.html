@@ -1465,11 +1465,19 @@ async function supaDeleteProspect(id){
 /* ---------------- ENTRIES (Hot List / Hit List) ---------------- */
 function entryRowToLocal(r){
   return {id:r.id, name:r.name, lastCall:r.last_call? new Date(r.last_call+'T00:00:00'):null, feedback:r.feedback||'',
-          contactId:r.contact_id, ownerId: authIdToLocalUserId(r.owner_id) || r.owner_id};
+          contactId:r.contact_id, ownerId: authIdToLocalUserId(r.owner_id) || r.owner_id,
+          // kind is null/undefined for a normal prospect; 'convention' or 'markettrip' for a
+          // Hit List event — same entries/entry_authorized_users sharing model either way.
+          kind: r.kind || null, startDate: r.start_date? new Date(r.start_date+'T00:00:00'):null,
+          endDate: r.end_date? new Date(r.end_date+'T00:00:00'):null, location: r.location||'',
+          checklistItems: (r.checklist_items || []).map(item=>({...item}))};
 }
 function entryLocalToRow(e, listId){
   return {id:e.id, list_id:listId, name:e.name, last_call:e.lastCall? toLocalDateStr(e.lastCall):null,
-          feedback:e.feedback||null, contact_id:e.contactId||null, owner_id: localUserIdToAuthId(e.ownerId)};
+          feedback:e.feedback||null, contact_id:e.contactId||null, owner_id: localUserIdToAuthId(e.ownerId),
+          kind: e.kind||null, start_date: e.startDate? toLocalDateStr(e.startDate):null,
+          end_date: e.endDate? toLocalDateStr(e.endDate):null, location: e.location||null,
+          checklist_items: e.checklistItems || []};
 }
 async function fetchEntriesFromSupabase(){
   const { data, error } = await supabaseClient.from('entries').select('*');
@@ -2945,10 +2953,16 @@ let smartListsArr = SMART_LIST_DEFAULTS.map(s=>({...s, isDefault:true}));
 // Lists (by their id) and the three special rows (by these fixed keys) mixed together,
 // so all of them can be dragged/reordered relative to each other, not just among
 // themselves. Reconciled against current db.lists on load (see loadAppState).
-let sidebarListsOrder = ['clients','listings','hotlist','hitlist','contacts','projects','archived-clients'];
+let sidebarListsOrder = ['clients','listings','hotlist','hitlist','contacts','projects','checklists','archived-clients'];
 const SPECIAL_NAV_ITEMS = {
   contacts: {icon:'👤', label:'Contacts', navTarget:'contacts', getCount:()=>db.contacts.length + PHOENIX_BROKER_LIST.length},
   projects: {icon:'🗂️', label:'Projects', navTarget:'projects', getCount:()=>visibleProjectsList().length},
+  // Added 2026-09-06 — Projects and Checklists used to only ever show up mixed into the
+  // regular To-Do views (Today/Overdue/Smart Lists/etc, filtered out in smartListTodosRaw
+  // below). Checklists get their own top-level section here, mirroring Projects exactly —
+  // a standalone checklist is created/browsed from here now, though a checklist can still
+  // live *inside* a Project (a Project's own inline checklist section is unaffected).
+  checklists: {icon:'✅', label:'Checklists', navTarget:'checklists', getCount:()=>visibleChecklistsList().length},
   'archived-clients': {icon:'🗄️', label:'Archived', navTarget:'archived-clients', getCount:()=>(db.archivedClients||[]).length, adminOnly:true},
 };
 
@@ -3021,7 +3035,13 @@ function inMySphere(td){
   return td.assignedTo===me || td.createdBy===me;
 }
 function smartListTodosRaw(key){
-  const t = db.todos.filter(td=>true);
+  // 2026-09-06: Projects and Checklists get their own top-level sections (sidebar
+  // "Projects"/"Checklists") and no longer show up in the regular To-Do views — Today,
+  // Overdue, Week, Month, Smart Lists, etc. all only ever dealt with plain tasks anyway
+  // conceptually; this is what actually enforces it. A checklist that lives *inside* a
+  // Project is unaffected — that's the Project's own inline checklistItems section, not
+  // a separate `db.todos` row, so nothing here touches it.
+  const t = db.todos.filter(td=>(td.type||'task')==='task'); // missing/null type defaults to task, same convention as todoLocalToRow
   const me = state.currentUser.id;
   switch(key){
     case 'todayMe': return t.filter(td=>!td.completed && td.assignedTo===me && dueStatus(td.dueDate)==='today');
@@ -3034,7 +3054,7 @@ function smartListTodosRaw(key){
     case 'allMe': return t.filter(td=>!td.completed && inMySphere(td));
     case 'someday': return t.filter(td=>!td.completed && !td.dueDate && inMySphere(td));
     case 'completed': return t.filter(td=>td.completed && inMySphere(td));
-    case 'archived': return db.archivedTodos.filter(td=>inMySphere(td));
+    case 'archived': return db.archivedTodos.filter(td=>inMySphere(td) && (td.type||'task')==='task');
     case 'everything': return t.filter(td=>!td.completed && inMySphere(td));
     case 'fullTeam': return t.filter(td=>!td.completed); // Admin-only, unrestricted — genuinely everyone
     default: {
@@ -3139,6 +3159,7 @@ function render(){
     renderModalStack();
   }
   if(state.newTodoModal) renderNewTodoModal();
+  if(state.newEventModal) renderNewEventModal();
   if(state.contactModal) renderContactModal();
   if(state.duplicatePrompt) renderDuplicatePrompt();
   if(state.todoDetailModal) renderTodoDetailModal();
@@ -3995,6 +4016,8 @@ function renderTopbar(){
     title='Archived'; eyebrow='Clients & Listings';
   } else if(state.mainView.type==='projects'){
     title='Projects'; eyebrow='List';
+  } else if(state.mainView.type==='checklists'){
+    title='Checklists'; eyebrow='List';
   } else if(state.mainView.type==='dashboard'){
     title='Dashboard'; eyebrow=state.currentUser.name;
   } else if(state.mainView.type==='wip'){
@@ -5703,6 +5726,7 @@ function renderMainContent(){
   if(state.mainView.type==='contacts') return renderContactsScreen();
   if(state.mainView.type==='archived-clients') return renderArchivedClientsMain();
   if(state.mainView.type==='projects') return renderProjectsListMain();
+  if(state.mainView.type==='checklists') return renderChecklistsListMain();
   if(state.mainView.type==='list') return renderListMain(state.mainView.id);
   // smart list
   const id = state.mainView.id;
@@ -5748,8 +5772,9 @@ function renderProjectsListMain(){
   let projects = visibleProjectsList();
   const searchQ = (state.listSearchQuery||'').trim();
   if(searchQ) projects = projects.filter(p=>matchesSearchTokens(p.title, searchQ));
-  if(!projects.length) return searchQ ? `<div class="empty-state"><div class="big">No matches for "${escapeHtml(searchQ)}".</div><div class="tiny">Try a different search, or clear it to see everything.</div></div>` : `<div class="empty-state"><div class="big">No Projects yet.</div><div class="tiny">Open any to-do and switch it to "Project" to start one — it'll show up here no matter where it lives.</div></div>`;
-  return projects.map(p=>{
+  const addBtn = `<button class="btn sm" data-action="newProject" style="margin-bottom:14px;">+ New Project</button>`;
+  if(!projects.length) return addBtn + (searchQ ? `<div class="empty-state"><div class="big">No matches for "${escapeHtml(searchQ)}".</div><div class="tiny">Try a different search, or clear it to see everything.</div></div>` : `<div class="empty-state"><div class="big">No Projects yet.</div><div class="tiny">Create one to get started, or open any to-do and switch it to "Project".</div></div>`);
+  return addBtn + projects.map(p=>{
     const childCount = db.todos.filter(t=>t.projectId===p.id).length;
     const doneCount = (p.checklistItems||[]).filter(i=>i.done).length;
     const totalChecklist = (p.checklistItems||[]).length;
@@ -5767,6 +5792,36 @@ function renderProjectsListMain(){
           <span class="tiny">${escapeHtml(getTodoLinkSummary(p))}</span>
           ${owner ? `<span class="pill gray">${escapeHtml(owner.name)}</span>` : ''}
           <span class="pill gray">${childCount} to-do${childCount===1?'':'s'}</span>
+          ${totalChecklist ? `<span class="pill gray">${doneCount}/${totalChecklist} checklist</span>` : ''}
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+// A Checklist row has no child-to-do count (checklists don't have children, only their own
+// inline checklistItems — see visibleChecklistsList) but otherwise mirrors a Project row.
+function renderChecklistsListMain(){
+  let checklists = visibleChecklistsList();
+  const searchQ = (state.listSearchQuery||'').trim();
+  if(searchQ) checklists = checklists.filter(c=>matchesSearchTokens(c.title, searchQ));
+  const addBtn = `<button class="btn sm" data-action="newChecklist" style="margin-bottom:14px;">+ New Checklist</button>`;
+  if(!checklists.length) return addBtn + (searchQ ? `<div class="empty-state"><div class="big">No matches for "${escapeHtml(searchQ)}".</div><div class="tiny">Try a different search, or clear it to see everything.</div></div>` : `<div class="empty-state"><div class="big">No Checklists yet.</div><div class="tiny">Create one to get started, or open any to-do and switch it to "Checklist".</div></div>`);
+  return addBtn + checklists.map(c=>{
+    const doneCount = (c.checklistItems||[]).filter(i=>i.done).length;
+    const totalChecklist = (c.checklistItems||[]).length;
+    const owner = USERS.find(u=>u.id===c.assignedTo);
+    const status = dueStatus(c.dueDate);
+    const dueLabel = c.dueDate ? fmtDate(c.dueDate) : 'No date';
+    const dueCls = status==='overdue' ? 'overdue' : (status==='today' ? 'today' : '');
+    return `
+    <div class="row-card" data-openproject="${c.id}">
+      <div class="nav-icon" style="font-size:20px;">✅</div>
+      <div class="row-body">
+        <div class="row-title">${escapeHtml(c.title)}</div>
+        <div class="row-meta">
+          <span class="due ${dueCls}">${dueLabel}</span>
+          <span class="tiny">${escapeHtml(getTodoLinkSummary(c))}</span>
+          ${owner ? `<span class="pill gray">${escapeHtml(owner.name)}</span>` : ''}
           ${totalChecklist ? `<span class="pill gray">${doneCount}/${totalChecklist} checklist</span>` : ''}
         </div>
       </div>
@@ -6067,6 +6122,9 @@ function renderListMain(listId){
     const isAdmin = state.currentUser.role==='Admin';
     const me = state.currentUser.id;
     const hasAccess = e => e.ownerId===me || (e.authorizedUserIds||[]).includes(me);
+    // Conventions/Market Trips are entries too (kind:'convention'|'markettrip'), but they get
+    // their own section below — never mixed into the plain Prospects rows/counts here.
+    const prospectEntries = l.entries.filter(e=>!e.kind);
     const addBtn = `<button class="btn sm" data-action="addEntry" data-listid="${l.id}" style="margin-bottom:14px;">+ New Prospect</button>`;
     const renderEntryRow = (e)=>{
       const owner = USERS.find(u=>u.id===e.ownerId);
@@ -6083,23 +6141,107 @@ function renderListMain(listId){
         </div>
       </div>`;
     };
+    const eventsHtml = l.id==='hitlist' ? renderHitlistEventsSection(l) : '';
+    let prospectsHtml;
     if(isAdmin){
-      const mine = l.entries.filter(hasAccess);
-      const others = l.entries.filter(e=>!hasAccess(e));
+      const mine = prospectEntries.filter(hasAccess);
+      const others = prospectEntries.filter(e=>!hasAccess(e));
       const otherOpen = !!(state.otherAccountsOpen && state.otherAccountsOpen[l.id]);
-      if(!l.entries.length) return addBtn + (searchQ ? `<div class="empty-state"><div class="big">No matches for "${escapeHtml(searchQ)}".</div><div class="tiny">Try a different search, or clear it to see everything.</div></div>` : `<div class="empty-state"><div class="big">Nothing here yet.</div><div class="tiny">Add a prospect to start tracking outreach.</div></div>`);
-      return addBtn + mine.map(renderEntryRow).join('') +
+      if(!prospectEntries.length) prospectsHtml = addBtn + (searchQ ? `<div class="empty-state"><div class="big">No matches for "${escapeHtml(searchQ)}".</div><div class="tiny">Try a different search, or clear it to see everything.</div></div>` : `<div class="empty-state"><div class="big">Nothing here yet.</div><div class="tiny">Add a prospect to start tracking outreach.</div></div>`);
+      else prospectsHtml = addBtn + mine.map(renderEntryRow).join('') +
         (others.length ? `
         <div class="nav-section-label" style="cursor:pointer;margin-top:10px;" data-action="toggleOtherAccounts" data-listid="${l.id}">
           <span>${otherOpen?'▾':'▸'} Other ${l.name} Targets <span class="tiny" style="color:var(--ink-soft);">(${others.length} — you're not on ${others.length===1?'this one':'these'})</span></span>
         </div>
         ${otherOpen ? others.map(renderEntryRow).join('') : ''}
         ` : '');
+    } else {
+      const visibleEntries = prospectEntries.filter(hasAccess);
+      prospectsHtml = !visibleEntries.length ? addBtn + (searchQ ? `<div class="empty-state"><div class="big">No matches for "${escapeHtml(searchQ)}".</div><div class="tiny">Try a different search, or clear it to see everything.</div></div>` : `<div class="empty-state"><div class="big">Nothing here yet.</div><div class="tiny">Add a prospect to start tracking outreach.</div></div>`) : addBtn + visibleEntries.map(renderEntryRow).join('');
     }
-    const visibleEntries = l.entries.filter(hasAccess);
-    if(!visibleEntries.length) return addBtn + (searchQ ? `<div class="empty-state"><div class="big">No matches for "${escapeHtml(searchQ)}".</div><div class="tiny">Try a different search, or clear it to see everything.</div></div>` : `<div class="empty-state"><div class="big">Nothing here yet.</div><div class="tiny">Add a prospect to start tracking outreach.</div></div>`);
-    return addBtn + visibleEntries.map(renderEntryRow).join('');
+    return prospectsHtml + eventsHtml;
   }
+}
+// Conventions & Market Trips: their own section on the Hit List page, separate from
+// Prospects. Each is an `entries` row with a kind — a plain checklist you can promote
+// individual lines out of into real, assignable To-Do's (see renderEventModalBody) —
+// shared via the same owner/authorizedUserIds mechanism as a Client or Listing.
+function renderHitlistEventsSection(l){
+  const me = state.currentUser.id;
+  const isAdmin = state.currentUser.role==='Admin';
+  const hasAccess = e => e.ownerId===me || (e.authorizedUserIds||[]).includes(me);
+  const events = l.entries.filter(e=>e.kind==='convention' || e.kind==='markettrip');
+  const visible = isAdmin ? events : events.filter(hasAccess);
+  const renderEventRow = (e)=>{
+    const owner = USERS.find(u=>u.id===e.ownerId);
+    const totalChecklist = (e.checklistItems||[]).length;
+    const doneCount = (e.checklistItems||[]).filter(i=>i.done).length;
+    const dateLabel = e.startDate ? (e.endDate && !isSameDay(e.startDate,e.endDate) ? `${fmtDate(e.startDate)} – ${fmtDate(e.endDate)}` : fmtDate(e.startDate)) : 'No date';
+    const icon = e.kind==='convention' ? '🎪' : '🧳';
+    return `
+    <div class="row-card" data-openentry="${e.id}" data-listid="${l.id}">
+      <div class="nav-icon" style="font-size:20px;">${icon}</div>
+      <div class="row-body">
+        <div class="row-title">${escapeHtml(e.name)}</div>
+        <div class="row-meta">
+          <span>${escapeHtml(dateLabel)}</span>
+          ${e.location ? `<span class="tiny" style="color:var(--ink-soft);">📍 ${escapeHtml(e.location)}</span>` : ''}
+          ${owner ? `<span class="pill gray">${escapeHtml(owner.name)}</span>` : ''}
+          ${totalChecklist ? `<span class="pill gray">${doneCount}/${totalChecklist} checklist</span>` : ''}
+        </div>
+      </div>
+    </div>`;
+  };
+  return `
+  <div class="nav-section-label" style="margin-top:22px;"><span>Conventions &amp; Market Trips</span></div>
+  <div style="display:flex;gap:8px;margin:8px 0 14px;">
+    <button class="btn sm" data-action="addEvent" data-eventkind="convention" data-listid="${l.id}">+ New Convention</button>
+    <button class="btn sm" data-action="addEvent" data-eventkind="markettrip" data-listid="${l.id}">+ New Market Trip</button>
+  </div>
+  ${visible.length ? visible.map(renderEventRow).join('') : `<div class="empty-state" style="padding:16px;"><div class="tiny">Nothing yet — add a Convention or Market Trip to start a checklist for it.</div></div>`}
+  `;
+}
+function renderNewEventModal(){
+  const m = state.newEventModal;
+  const label = m.kind==='convention' ? 'Convention' : 'Market Trip';
+  const overlay = document.createElement('div');
+  overlay.className='modal-overlay'; overlay.style.zIndex=180;
+  overlay.innerHTML = `
+  <div class="modal-card">
+    <div class="modal-head"><div class="modal-title">New ${label}</div><button class="modal-close" data-action="closeNewEvent">✕</button></div>
+    <div class="modal-body">
+      <div class="field"><label>${label} name</label><input id="neName" placeholder="e.g., ${m.kind==='convention'?'ICSC Las Vegas 2027':'Austin Market Trip'}" value="${escapeAttr(m.name)}"></div>
+      <div class="field"><label>Start date</label><input type="date" id="neStart" value="${escapeAttr(m.startInput)}"></div>
+      <div class="field"><label>End date</label><input type="date" id="neEnd" value="${escapeAttr(m.endInput)}"></div>
+      <div class="field"><label>Location</label><input id="neLocation" placeholder="e.g., Las Vegas, NV" value="${escapeAttr(m.location)}"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn secondary" data-action="closeNewEvent">Cancel</button>
+      <button class="btn" data-action="saveNewEvent">Create ${label}</button>
+    </div>
+  </div>`;
+  document.getElementById('app').appendChild(overlay);
+  const neNameEl = document.getElementById('neName'); if(neNameEl) setTimeout(()=>neNameEl.focus(), 0);
+  overlay.querySelectorAll('[data-action="closeNewEvent"]').forEach(b=>b.onclick=()=>{ state.newEventModal=null; render(); });
+  overlay.querySelector('[data-action="saveNewEvent"]').onclick=safeHandler(async ()=>{
+    const name = document.getElementById('neName').value.trim();
+    if(!name){ flashToast(`Give this ${label.toLowerCase()} a name first.`); return; }
+    const startInput = document.getElementById('neStart').value;
+    const endInput = document.getElementById('neEnd').value;
+    const location = document.getElementById('neLocation').value.trim();
+    const l = db.lists.find(x=>x.id===m.listId);
+    const newEntry = {
+      id:crypto.randomUUID(), name, lastCall:null, feedback:'', contactId:null, ownerId:state.currentUser.id,
+      kind:m.kind, startDate: startInput? new Date(startInput+'T00:00:00'):null, endDate: endInput? new Date(endInput+'T00:00:00'):null,
+      location, checklistItems:[], authorizedUserIds:[]
+    };
+    l.entries.push(newEntry);
+    state.newEventModal=null;
+    render();
+    await supaCreateEntry(newEntry, l.id);
+    flashToast(`${name} added.`);
+    render();
+  });
 }
 
 function renderOfflineBanner(){
@@ -6189,6 +6331,7 @@ function attachShellHandlers(){
     else if(el.dataset.nav==='contacts'){ state.mainView={type:'contacts'}; }
     else if(el.dataset.nav==='archived-clients'){ state.mainView={type:'archived-clients'}; }
     else if(el.dataset.nav==='projects'){ state.mainView={type:'projects'}; }
+    else if(el.dataset.nav==='checklists'){ state.mainView={type:'checklists'}; }
     state.expandedTeamUser=null;
     state.todoView='mine';
     state.selectedTodoIds=[];
@@ -6284,6 +6427,14 @@ function attachShellHandlers(){
     openTodoDetail(el.dataset.openproject);
     render();
   });
+  const newProjectBtn = document.querySelector('[data-action="newProject"]'); if(newProjectBtn) newProjectBtn.onclick=()=>{
+    openNewTodoModal({type:'project'});
+    renderNewTodoModal();
+  };
+  const newChecklistBtn = document.querySelector('[data-action="newChecklist"]'); if(newChecklistBtn) newChecklistBtn.onclick=()=>{
+    openNewTodoModal({type:'checklist'});
+    renderNewTodoModal();
+  };
   document.querySelectorAll('[data-opendealdirect]').forEach(el=>el.onclick=(ev)=>{
     ev.stopPropagation();
     const listId = el.dataset.listid || 'clients';
@@ -6524,6 +6675,10 @@ function attachShellHandlers(){
     await supaCreateEntry(newEntry, l.id);
     flashToast(`${name} added to ${l.name}.`);
     render();
+  });
+  document.querySelectorAll('[data-action="addEvent"]').forEach(el=>el.onclick=()=>{
+    state.newEventModal = {kind: el.dataset.eventkind, listId: el.dataset.listid, name:'', startInput:'', endInput:'', location:''};
+    renderNewEventModal();
   });
   ['adminPending','adminFullTeam','adminImportTodos','adminImportTaskFire','adminImportMaps','adminDigest','adminUsers','adminTimes','adminReset','openBrokerReviewLog','openPipelineView','openLoiImport','openGeocodeIssues','goToDashboard','openMsCalendarConnect'].forEach(a=>{
     document.querySelectorAll(`[data-action="${a}"]`).forEach(e=>{ e.onclick=()=>{ state.showAdminMenu=false; handleAdminAction(a); }; });
@@ -9732,7 +9887,7 @@ function renderTopModalCard(){
     const l=db.lists.find(x=>x.id===frame.listId); const e=l.entries.find(x=>x.id===frame.entryId);
     titleText=e.name; brandName=e.name;
     entryCanEdit = state.currentUser.role==='Admin' || e.ownerId===state.currentUser.id || (e.authorizedUserIds||[]).includes(state.currentUser.id);
-    bodyHtml = renderEntryModalBody(l,e);
+    bodyHtml = e.kind ? renderEventModalBody(l,e) : renderEntryModalBody(l,e);
   } else if(frame.kind==='lsrProspect'){
     const l=db.lists.find(x=>x.id==='listings'); const c=l.clients.find(x=>x.id===frame.clientId);
     const p=c.prospects.find(x=>x.id===frame.prospectId);
@@ -11392,6 +11547,67 @@ function renderEntryModalBody(l,e){
   </div>` : ''}
   `;
 }
+// A Convention/Market Trip: dates + location instead of last-call/feedback, a plain
+// checklist (no pre-filled template lines) instead of a Contact section, and each
+// checklist line can be promoted into a real To-Do (kept, not removed, once promoted —
+// see promoteEventItem below) instead of a "Convert to Client" action. Sharing reuses the
+// exact same owner/authorizedUserIds block as renderEntryModalBody above.
+function renderEventModalBody(l,e){
+  if(!e.checklistItems) e.checklistItems=[];
+  const label = e.kind==='convention' ? 'Convention' : 'Market Trip';
+  const owner = USERS.find(u=>u.id===e.ownerId);
+  const canManageAccess = state.currentUser.role==='Admin' || e.ownerId===state.currentUser.id;
+  const authorizedUsers = (e.authorizedUserIds||[]).map(id=>USERS.find(u=>u.id===id)).filter(Boolean);
+  const notYetAuthorized = USERS.filter(u=>u.id!==e.ownerId && !(e.authorizedUserIds||[]).includes(u.id));
+  const accessHtml = `
+  <div class="contact-card" style="background:#EFF6FA;border-color:#CBE0EE;margin-top:14px;">
+    <div class="label" style="color:#2C6E9E;">🔒 Access${owner? ` — owned by ${escapeHtml(owner.name)}`:''}</div>
+    <div style="font-size:12.5px;color:var(--ink-soft);margin:4px 0 8px;">
+      Admins always see everything. ${owner?escapeHtml(owner.name.split(' ')[0]):'The owner'} plus anyone listed below can see this ${label.toLowerCase()} — everyone else can't.
+    </div>
+    ${authorizedUsers.length ? authorizedUsers.map(u=>`
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:5px 0;font-size:13px;">
+        <span>${escapeHtml(u.name)}</span>
+        ${canManageAccess ? `<button class="btn secondary sm" data-removeentryauth="${u.id}" data-entry="${e.id}">Remove</button>`:''}
+      </div>`).join('') : `<div class="tiny" style="color:var(--ink-soft);">No one else has been added yet.</div>`}
+    ${canManageAccess && notYetAuthorized.length ? `
+    <div style="display:flex;gap:8px;margin-top:10px;">
+      <select id="addEntryAuthUserSelect" style="flex:1;">
+        ${notYetAuthorized.map(u=>`<option value="${u.id}">${escapeHtml(u.name)}</option>`).join('')}
+      </select>
+      <button class="btn sm" data-action="addEntryAuthUser" data-entry="${e.id}">+ Add</button>
+    </div>` : ''}
+  </div>`;
+  const checklistHtml = e.checklistItems.map(item=>{
+    const linked = item.linkedTodoId ? db.todos.find(t=>t.id===item.linkedTodoId) : null;
+    return `
+    <div style="display:flex;align-items:center;gap:8px;padding:5px 0;">
+      <input type="checkbox" data-eventcheckitem="${item.id}" data-entry="${e.id}" ${item.done?'checked':''} style="width:auto;">
+      <input data-eventchecklistitemtext="${item.id}" data-entry="${e.id}" value="${escapeAttr(item.text)}" placeholder="Checklist item" style="flex:1;font-size:13.5px;">
+      ${linked
+        ? `<span class="pill gray" style="cursor:pointer;" data-openlinkedtodo="${linked.id}" title="Open the linked To-Do">${linked.completed?'✓ ':''}To-Do${linked.assignedTo && linked.assignedTo!==state.currentUser.id ? ' · '+escapeHtml((USERS.find(u=>u.id===linked.assignedTo)||{}).name||''):''}</span>`
+        : `<button class="btn secondary sm" data-action="promoteEventItem" data-entry="${e.id}" data-item="${item.id}">+ To-Do</button>`}
+      <button class="row-trash" data-eventremoveitem="${item.id}" data-entry="${e.id}" style="opacity:.5;">✕</button>
+    </div>`;
+  }).join('');
+  return `
+  <div class="contact-card">
+    <div class="label">${label} Details${owner?` · Owner: ${escapeHtml(owner.name)}`:''}</div>
+    <div class="field" style="margin-top:8px;"><label>Name</label><input value="${escapeAttr(e.name)}" data-edit="name" data-entry="${e.id}" data-listid="${l.id}"></div>
+    <div class="field"><label>Start date</label><input type="date" value="${e.startDate?toLocalDateStr(e.startDate):''}" data-edit="startDate" data-entry="${e.id}" data-listid="${l.id}"></div>
+    <div class="field"><label>End date</label><input type="date" value="${e.endDate?toLocalDateStr(e.endDate):''}" data-edit="endDate" data-entry="${e.id}" data-listid="${l.id}"></div>
+    <div class="field"><label>Location</label><input value="${escapeAttr(e.location||'')}" data-edit="location" data-entry="${e.id}" data-listid="${l.id}"></div>
+  </div>
+  <div class="section-label" style="margin-top:18px;">Checklist</div>
+  <div class="field">${checklistHtml}</div>
+  <button class="btn secondary sm" data-action="addEventChecklistItem" data-entry="${e.id}" style="margin-top:6px;">+ Add item</button>
+  ${accessHtml}
+  ${state.currentUser.role==='Admin' ? `
+  <div style="margin-top:24px;padding-top:16px;border-top:1px solid var(--line-soft);">
+    <button class="btn danger sm" data-action="deleteEntry" data-listid="${l.id}" data-entry="${e.id}">🗑️ Delete</button>
+  </div>` : ''}
+  `;
+}
 
 function saveDealTermsFromForm(l, c, d){
   const oldStage = Object.prototype.hasOwnProperty.call(d, '_stageBeforeEdit') ? d._stageBeforeEdit : d.stage;
@@ -11778,9 +11994,66 @@ function attachModalHandlers(root){
       if(el.dataset.edit==='name') e.name=el.value;
       if(el.dataset.edit==='feedback') e.feedback=el.value;
       if(el.dataset.edit==='lastCall') e.lastCall=parseNaturalDate(el.value);
+      if(el.dataset.edit==='location') e.location=el.value;
+      if(el.dataset.edit==='startDate') e.startDate = el.value? new Date(el.value+'T00:00:00'):null;
+      if(el.dataset.edit==='endDate') e.endDate = el.value? new Date(el.value+'T00:00:00'):null;
       supaUpdateEntry(e, l.id);
       renderPreservingScroll('.modal-body');
     };
+  });
+  // Convention/Market Trip checklist: same add/edit/toggle/remove pattern as a To-Do's own
+  // checklist section (renderTodoDetailModal), just persisted onto the entry via
+  // supaUpdateEntry instead of supaUpdateTodo.
+  root.querySelectorAll('[data-action="addEventChecklistItem"]').forEach(btn=>btn.onclick=()=>{
+    const frame = state.modalStack[0];
+    const l=db.lists.find(x=>x.id===frame.listId); const e=l && l.entries.find(x=>x.id===btn.dataset.entry);
+    if(!e) return;
+    if(!e.checklistItems) e.checklistItems=[];
+    const newItem = {id:crypto.randomUUID(), text:'', done:false};
+    e.checklistItems.push(newItem);
+    supaUpdateEntry(e, l.id);
+    renderPreservingScroll('.modal-body');
+    const els = document.querySelectorAll(`[data-eventchecklistitemtext="${newItem.id}"]`);
+    const newInput = els[els.length-1];
+    if(newInput) newInput.focus();
+  });
+  root.querySelectorAll('[data-eventchecklistitemtext]').forEach(el=>el.onchange=()=>{
+    const frame = state.modalStack[0];
+    const l=db.lists.find(x=>x.id===frame.listId); const e=l && l.entries.find(x=>x.id===el.dataset.entry);
+    const item = e && (e.checklistItems||[]).find(i=>i.id===el.dataset.eventchecklistitemtext);
+    if(item){ item.text = el.value.trim(); supaUpdateEntry(e, l.id); }
+  });
+  root.querySelectorAll('[data-eventcheckitem]').forEach(el=>el.onchange=()=>{
+    const frame = state.modalStack[0];
+    const l=db.lists.find(x=>x.id===frame.listId); const e=l && l.entries.find(x=>x.id===el.dataset.entry);
+    const item = e && (e.checklistItems||[]).find(i=>i.id===el.dataset.eventcheckitem);
+    if(item){ item.done = el.checked; supaUpdateEntry(e, l.id); renderPreservingScroll('.modal-body'); }
+  });
+  root.querySelectorAll('[data-eventremoveitem]').forEach(el=>el.onclick=()=>{
+    const frame = state.modalStack[0];
+    const l=db.lists.find(x=>x.id===frame.listId); const e=l && l.entries.find(x=>x.id===el.dataset.entry);
+    if(!e) return;
+    e.checklistItems = (e.checklistItems||[]).filter(i=>i.id!==el.dataset.eventremoveitem);
+    supaUpdateEntry(e, l.id);
+    renderPreservingScroll('.modal-body');
+  });
+  // "+ To-Do" on a checklist line opens the normal New To-Do modal, pre-linked to this
+  // entry and pre-filled with the line's text — same pattern as a Project's "+ New To-Do"
+  // (openNewTodoModal + renderNewTodoModal stacked on top, no full re-render). The line
+  // itself is kept, not removed — promoteItemId tells saveTodo's click handler to stamp
+  // the resulting To-Do's id back onto it once saved, which is what turns "+ To-Do" into
+  // the linked-To-Do pill on the next render.
+  root.querySelectorAll('[data-action="promoteEventItem"]').forEach(btn=>btn.onclick=()=>{
+    const frame = state.modalStack[0];
+    const l=db.lists.find(x=>x.id===frame.listId); const e=l && l.entries.find(x=>x.id===btn.dataset.entry);
+    const item = e && (e.checklistItems||[]).find(i=>i.id===btn.dataset.item);
+    if(!e || !item) return;
+    openNewTodoModal({listId:l.id, entryId:e.id, title:item.text||'', promoteItemId:item.id});
+    renderNewTodoModal();
+  });
+  root.querySelectorAll('[data-openlinkedtodo]').forEach(el=>el.onclick=()=>{
+    openTodoDetail(el.dataset.openlinkedtodo);
+    render();
   });
   if(state.contactPickerOpen) attachContactPickerHandlers(root);
   wireLSRInlineHandlers(root);
@@ -12264,7 +12537,10 @@ function renderNewTodoPickerModal(){
   });
 }
 function openNewTodoModal(context){
-  state.newTodoModal={ context, title:'', category: context.category||'', status:'Not Started', dueInput: toLocalDateStr(todayDate()), notes:'', type:'task', assignTo:state.currentUser.id, attachments:[], checklistItems:[] };
+  // context.type lets a caller (the Projects/Checklists pages' own "+ New" buttons) open
+  // this modal pre-set to that type instead of defaulting to a plain task — added 2026-09-06
+  // so Projects/Checklists have a real, direct creation path outside the New To-Do flow.
+  state.newTodoModal={ context, title: context.title||'', category: context.category||'', status:'Not Started', dueInput: toLocalDateStr(todayDate()), notes:'', type: context.type||'task', assignTo:state.currentUser.id, attachments:[], checklistItems:[] };
 }
 // A Project shows up here if the current person created it, is assigned to it directly,
 // or is assigned any child To Do living inside it — matching how "who can see a Project"
@@ -12276,6 +12552,17 @@ function visibleProjectsList(){
     if(t.createdBy===me || t.assignedTo===me) return true;
     if((t.authorizedUserIds||[]).includes(me)) return true;
     return db.todos.some(child=>child.projectId===t.id && child.assignedTo===me);
+  });
+}
+// A Checklist has no child To-Do's of its own (unlike a Project), so visibility is just
+// "did I create it, am I assigned it, or was I explicitly added" — same basic rule, just
+// without the "assigned a child to-do" clause that only makes sense for Projects.
+function visibleChecklistsList(){
+  const me = state.currentUser.id;
+  return db.todos.filter(t=>{
+    if(t.type!=='checklist') return false;
+    if(t.createdBy===me || t.assignedTo===me) return true;
+    return (t.authorizedUserIds||[]).includes(me);
   });
 }
 function allCategories(){
@@ -12468,6 +12755,16 @@ function renderNewTodoModal(){
     };
     db.todos.push(newTd);
     state.newTodoModal=null;
+    // A "+ To-Do" promoted from a Convention/Market Trip checklist line (see
+    // promoteEventItem above) carries ctx.promoteItemId — stamp the new To-Do's id back
+    // onto that line so it shows a linked-To-Do pill instead of "+ To-Do" from here on.
+    // The checklist line itself stays; it's never removed by promoting it.
+    if(ctx.promoteItemId && ctx.entryId){
+      const homeList = db.lists.find(x=>x.id===ctx.listId);
+      const srcEntry = homeList && homeList.entries.find(en=>en.id===ctx.entryId);
+      const srcItem = srcEntry && (srcEntry.checklistItems||[]).find(i=>i.id===ctx.promoteItemId);
+      if(srcItem){ srcItem.linkedTodoId = newTd.id; supaUpdateEntry(srcEntry, homeList.id); }
+    }
     if(assignTo!==state.currentUser.id){
       newTd.isNew = true;
       flashToast(`Assigned to ${USERS.find(x=>x.id===assignTo).name}.`);
@@ -13964,6 +14261,7 @@ document.addEventListener('keydown', (ev)=>{
   if(state.editBrokerModal){ state.editBrokerModal=null; render(); return; }
   if(state.todoDetailModal){ const td = db.todos.find(x=>x.id===state.todoDetailModal.id); if(!td || attemptCloseTodoDetail(td)) render(); return; }
   if(state.newTodoModal){ state.newTodoModal=null; render(); return; }
+  if(state.newEventModal){ state.newEventModal=null; render(); return; }
   if(state.newSmartListModal){ state.newSmartListModal=null; render(); return; }
   if(state.importTodosModal){ state.importTodosModal=null; render(); return; }
   if(state.showEmailClientPicker){ state.showEmailClientPicker=false; state.pendingLoginUser=null; render(); return; }
