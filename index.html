@@ -5082,9 +5082,11 @@ function renderCalendarWidget(){
     cells += `<div class="cal-day ${isToday?'today':''}" style="position:relative;">${d}${hasEvent?'<div style="position:absolute;bottom:2px;left:50%;transform:translateX(-50%);width:4px;height:4px;border-radius:50%;background:var(--edge);"></div>':''}</div>`;
   }
 
-  // Agenda: grouped by day, cast out as far as it takes to gather ~10 events — a size limit
-  // on the widget, not a hard cap on how many events a single busy day can show. Each row
-  // opens the real event in Outlook (webLink), so this stays read-only from the portal's side.
+  // Agenda: hard-capped at the first 10 events (in start-time order), even if that splits a
+  // busy day partway through — Michael was explicit the widget was showing too many (18 with
+  // the old "finish out the whole day" logic, which could overshoot a round target by a lot
+  // on a busy day). Each row opens the real event in Outlook (webLink), so this stays
+  // read-only from the portal's side.
   const TARGET_COUNT = 10;
   let agendaHtml;
   if(!msConnected){
@@ -5097,7 +5099,7 @@ function renderCalendarWidget(){
   } else if(msCalendarCache.error){
     agendaHtml = `<div class="mscal-agenda" style="font-size:11.5px;color:var(--bad,#C0392B);">Couldn't load your Outlook calendar.</div>`;
   } else {
-    const events = msCalendarCache.events || [];
+    const events = (msCalendarCache.events || []).slice(0, TARGET_COUNT);
     if(!events.length){
       agendaHtml = `<div class="mscal-agenda" style="font-size:12px;color:var(--ink-soft);">Nothing on your calendar in the next 60 days.</div>`;
     } else {
@@ -5111,15 +5113,9 @@ function renderCalendarWidget(){
         if(!byKey[key]){ byKey[key] = {date:d, events:[]}; groups.push(byKey[key]); }
         byKey[key].events.push(ev);
       });
-      // Events arrive sorted by start, so groups are already in chronological order —
-      // take whole days until the running total reaches the target.
-      const shown = [];
-      let total = 0;
-      for(const g of groups){
-        shown.push(g);
-        total += g.events.length;
-        if(total >= TARGET_COUNT) break;
-      }
+      // Events arrive sorted by start, so groups (built from the already-capped slice above)
+      // are already in chronological order and already at most TARGET_COUNT events total.
+      const shown = groups;
       const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
       agendaHtml = `<div class="mscal-agenda">
         ${shown.map(g=>{
