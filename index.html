@@ -6125,7 +6125,15 @@ function renderListMain(listId){
     // Conventions/Market Trips are entries too (kind:'convention'|'markettrip'), but they get
     // their own section below — never mixed into the plain Prospects rows/counts here.
     const prospectEntries = l.entries.filter(e=>!e.kind);
-    const addBtn = `<button class="btn sm" data-action="addEntry" data-listid="${l.id}" style="margin-bottom:14px;">+ New Prospect</button>`;
+    // On the Hit List specifically, all three "add" buttons sit together in one row —
+    // Convention/Market Trip aren't tucked under their own section header down the page.
+    const addBtn = l.id==='hitlist'
+      ? `<div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+          <button class="btn sm" data-action="addEntry" data-listid="${l.id}">+ New Prospect</button>
+          <button class="btn sm" data-action="addEvent" data-eventkind="convention" data-listid="${l.id}">+ New Convention</button>
+          <button class="btn sm" data-action="addEvent" data-eventkind="markettrip" data-listid="${l.id}">+ New Market Trip</button>
+        </div>`
+      : `<button class="btn sm" data-action="addEntry" data-listid="${l.id}" style="margin-bottom:14px;">+ New Prospect</button>`;
     const renderEntryRow = (e)=>{
       const owner = USERS.find(u=>u.id===e.ownerId);
       return `
@@ -6194,11 +6202,7 @@ function renderHitlistEventsSection(l){
   };
   return `
   <div class="nav-section-label" style="margin-top:22px;"><span>Conventions &amp; Market Trips</span></div>
-  <div style="display:flex;gap:8px;margin:8px 0 14px;">
-    <button class="btn sm" data-action="addEvent" data-eventkind="convention" data-listid="${l.id}">+ New Convention</button>
-    <button class="btn sm" data-action="addEvent" data-eventkind="markettrip" data-listid="${l.id}">+ New Market Trip</button>
-  </div>
-  ${visible.length ? visible.map(renderEventRow).join('') : `<div class="empty-state" style="padding:16px;"><div class="tiny">Nothing yet — add a Convention or Market Trip to start a checklist for it.</div></div>`}
+  ${visible.length ? visible.map(renderEventRow).join('') : `<div class="empty-state" style="padding:16px;"><div class="tiny">Nothing yet — add a Convention or Market Trip above to start a checklist for it.</div></div>`}
   `;
 }
 function renderNewEventModal(){
