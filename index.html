@@ -3307,15 +3307,37 @@ async function finishLoginAfterOnboarding(u){
   render();
 }
 // "What's your title/area of expertise?" — added 2026-09-08 so a new hire's title is a real,
-// promotable profile field instead of something only Michael knows informally. Broker is the
-// one title that means anything to the commission system: Manage Users only shows a Commission
-// Plan picker for someone titled Broker (see renderManageUsersModal) — Michael still picks the
-// actual plan by hand there, this just decides whether that control is even relevant for them.
-const TITLE_OPTIONS = [
-  {id:'Broker', label:'Broker', hint:'Tracks deals and a commission plan/split'},
-  {id:'Manager', label:'Manager', hint:'Office / team management'},
-  {id:'Marketing', label:'Marketing', hint:'Marketing & support'},
+// promotable profile field instead of something only Michael knows informally. As of 2026-09-08
+// this IS the firm's producer title ladder (Michael: "Title should be Associate, Senior
+// Associate, Vice President, Senior Vice President (or SVP), Principal, Managing Principal") —
+// every one of these six is commission-tracked, so Manage Users shows a Commission Plan picker
+// for all of them (see renderManageUsersModal), and defaults that plan the first time a title is
+// set, per Michael's rule: everyone except SVP/Principal/Managing Principal starts on Standard
+// 50/50; those three start on SVP and Principals. An Admin can always override the picked plan
+// afterward. Anyone whose role isn't on this ladder (office/marketing/admin staff) uses "Other".
+const PRODUCER_TITLES = [
+  'Associate',
+  'Senior Associate',
+  'Vice President',
+  'Senior Vice President (SVP)',
+  'Principal',
+  'Managing Principal',
 ];
+// The three senior titles that default to the "SVP and Principals" plan instead of "Standard
+// 50/50" — see defaultCommissionPlanIdForTitle() below.
+const SENIOR_PRODUCER_TITLES = ['Senior Vice President (SVP)', 'Principal', 'Managing Principal'];
+const TITLE_OPTIONS = PRODUCER_TITLES.map(t=>({id:t, label:t, hint:'Tracks deals and a commission plan/split'}));
+// Looks up the commission plan an Admin should probably default someone to, given their new
+// producer title — matched by the plan's NAME (not a hardcoded id, since ids could change),
+// so this quietly does nothing (returns null) if the expected plan hasn't been created in
+// Supabase yet. Only ever used to fill in a plan that's currently unset, never to overwrite one
+// an Admin already picked by hand.
+function defaultCommissionPlanIdForTitle(title){
+  if(!PRODUCER_TITLES.includes(title)) return null;
+  const wantName = SENIOR_PRODUCER_TITLES.includes(title) ? 'SVP and Principals' : 'Standard 50/50';
+  const plan = commissionPlans.find(p=>p.name===wantName);
+  return plan ? plan.id : null;
+}
 function renderTitlePicker(){
   const overlay = document.createElement('div');
   overlay.className='modal-overlay'; overlay.style.zIndex=400;
@@ -3324,7 +3346,7 @@ function renderTitlePicker(){
   <div class="modal-card" style="width:420px;">
     <div class="modal-head"><div class="modal-title">One more thing</div></div>
     <div class="modal-body">
-      <p style="font-size:13.5px;line-height:1.5;margin-top:0;">What's your title / area of expertise? Brokers get a commission plan tracked here — other roles don't need one. An admin can always change this later if it changes.</p>
+      <p style="font-size:13.5px;line-height:1.5;margin-top:0;">What's your title / area of expertise? Each of these is commission-tracked — pick Other if none fit (e.g. an office or marketing role). An admin can always change this later if it changes.</p>
       ${TITLE_OPTIONS.map(o=>`
         <div class="login-user-row" data-picktitle="${escapeAttr(o.id)}" style="margin-top:8px;">
           <div style="flex:1;">
@@ -6838,8 +6860,7 @@ function renderManageUsersModal(){
         <b>Full Access</b> is meant for people who need visibility into every deal (e.g. invoicing, office admin) without needing to edit anything or manage the team.
       </div>
       ${USERS.map(u=>{
-        const knownTitles = ['Broker','Manager','Marketing'];
-        const isCustomTitle = u.title && !knownTitles.includes(u.title);
+        const isCustomTitle = u.title && !PRODUCER_TITLES.includes(u.title);
         return `
         <div class="row-card" style="cursor:default;">
           <div class="row-body">
@@ -6855,13 +6876,11 @@ function renderManageUsersModal(){
             </select>
             <select data-usertitle="${u.id}" title="Title / area of expertise — editable any time, e.g. after a promotion">
               <option value="" ${!u.title?'selected':''}>— Title —</option>
-              <option value="Broker" ${u.title==='Broker'?'selected':''}>Broker</option>
-              <option value="Manager" ${u.title==='Manager'?'selected':''}>Manager</option>
-              <option value="Marketing" ${u.title==='Marketing'?'selected':''}>Marketing</option>
+              ${PRODUCER_TITLES.map(t=>`<option value="${escapeAttr(t)}" ${u.title===t?'selected':''}>${escapeHtml(t)}</option>`).join('')}
               <option value="__other" ${isCustomTitle?'selected':''}>${isCustomTitle?escapeHtml(u.title):'Other…'}</option>
             </select>
-            ${u.title==='Broker' ? `
-            <select data-usercommplan="${u.id}" title="Commission plan — only Brokers need one">
+            ${PRODUCER_TITLES.includes(u.title) ? `
+            <select data-usercommplan="${u.id}" title="Commission plan — every producer title needs one">
               <option value="">No commission plan set</option>
               ${commissionPlans.map(p=>`<option value="${p.id}" ${u.commissionPlanId===p.id?'selected':''}>${escapeHtml(p.name)}</option>`).join('')}
             </select>
@@ -6890,15 +6909,18 @@ function renderManageUsersModal(){
     renderPreservingScroll('.modal-body');
   }));
   // Title/area of expertise — this is the "change it after a promotion" path (the other is the
-  // one-time picker a person sees at their own first sign-in). Only a Broker's row shows a
-  // Commission Plan select at all, so switching someone's title to/from Broker here is what
-  // makes that control appear/disappear.
+  // one-time picker a person sees at their own first sign-in). Only a producer title's row shows
+  // a Commission Plan select at all (see PRODUCER_TITLES above), so switching someone's title
+  // to/from one of those six here is what makes that control appear/disappear. When a title
+  // changes TO a producer title and no plan is set yet, this also auto-fills the plan Michael
+  // said should apply by default (Standard 50/50, or SVP and Principals for the three senior
+  // titles) — it never overwrites a plan an Admin already picked by hand.
   overlay.querySelectorAll('[data-usertitle]').forEach(sel=>sel.onchange=safeHandler(async ()=>{
     const u = USERS.find(x=>x.id===sel.dataset.usertitle);
     if(!u) return;
     let newTitle = sel.value;
     if(newTitle==='__other'){
-      const custom = prompt(`Enter ${u.name.split(' ')[0]}'s title:`, (u.title && !['Broker','Manager','Marketing'].includes(u.title)) ? u.title : '');
+      const custom = prompt(`Enter ${u.name.split(' ')[0]}'s title:`, (u.title && !PRODUCER_TITLES.includes(u.title)) ? u.title : '');
       if(!custom || !custom.trim()){ renderPreservingScroll('.modal-body'); return; }
       newTitle = custom.trim();
     } else if(newTitle===''){
@@ -6908,10 +6930,27 @@ function renderManageUsersModal(){
     u.title = newTitle;
     renderPreservingScroll('.modal-body');
     const ok = await supaUpdateUserTitle(u, newTitle);
-    if(ok){
-      flashToast(`${u.name}'s title is now ${newTitle||'unset'}.`);
-    } else {
+    if(!ok){
       u.title = oldTitle;
+      renderPreservingScroll('.modal-body');
+      return;
+    }
+    // Auto-default the commission plan the first time this person gets a producer title, per
+    // Michael's stated rule — only ever fills in an UNSET plan, never overrides an existing pick.
+    const defaultPlanId = !u.commissionPlanId ? defaultCommissionPlanIdForTitle(newTitle) : null;
+    if(defaultPlanId){
+      const defaultPlanName = commissionPlans.find(p=>p.id===defaultPlanId)?.name || 'the default plan';
+      u.commissionPlanId = defaultPlanId;
+      renderPreservingScroll('.modal-body');
+      const planOk = await supaUpdateUserCommissionPlan(u, defaultPlanId);
+      if(planOk){
+        flashToast(`${u.name}'s title is now ${newTitle} — defaulted to the ${defaultPlanName} commission plan.`);
+      } else {
+        u.commissionPlanId = null;
+        flashToast(`${u.name}'s title is now ${newTitle}, but defaulting their commission plan failed — set it by hand below.`);
+      }
+    } else {
+      flashToast(`${u.name}'s title is now ${newTitle||'unset'}.`);
     }
     renderPreservingScroll('.modal-body');
   }));
