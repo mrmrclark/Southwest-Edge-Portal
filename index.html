@@ -563,6 +563,8 @@ let state = {
   showSendRequestReminder:null,
   pendingLoginUser:null,
   showEmailClientPicker:false,
+  showTitlePicker:false,        // 2026-09-08: one-time "what's your title/area of expertise" onboarding step
+  titlePickerShowOther:false,   // true once they've clicked "Other" on that step, revealing the free-text field
   currentUser:null,
   isOffline: !navigator.onLine,     // updated live by the online/offline listeners near boot
   offlineLastSyncedAt:null,          // Date — when persistOfflineSnapshot() last ran successfully
@@ -813,6 +815,7 @@ async function fetchAllProfilesIntoUsers(){
     u.mapTypePreference = p.map_type_preference || 'hybrid';
     u.commissionPlanId = p.commission_plan_id || null;
     u.dashboardTier = p.dashboard_tier || 'standard';
+    u.title = p.title || null;
   });
 }
 
@@ -3141,6 +3144,7 @@ function render(){
   if(state.screen==='login'){
     app.innerHTML = renderLogin();
     attachLoginHandlers();
+    if(state.showTitlePicker) renderTitlePicker();
     if(state.showEmailClientPicker) renderEmailClientPicker();
     if(state.toast) showToastNow();
     return;
@@ -3286,13 +3290,92 @@ function renderEmailClientPicker(){
       const { error } = await supabaseClient.from('profiles').update({ email_client: u.emailClient }).eq('id', u.authId);
       if(error) console.error('Saving email_client failed:', error);
     }
-    state.showEmailClientPicker=false;
-    state.pendingLoginUser=null;
-    state.currentUser=u; state.screen='app'; state.mainView={type:'dashboard'}; if(!appStateWasLoaded) seedAll();
-    await fetchAllAppDataFromSupabase();
-    checkTodoDeepLink(); checkBrokerReviewDeepLink(); checkCommissionSummaryDeepLink();
-    render();
+    await finishLoginAfterOnboarding(u);
   });
+}
+// Shared tail of the one-time onboarding steps (title picker, email client picker) — whichever
+// of those two steps finishes last calls this to actually drop the person into the app. Kept as
+// one function so neither step has to know whether the other one already ran.
+async function finishLoginAfterOnboarding(u){
+  state.showEmailClientPicker=false;
+  state.showTitlePicker=false;
+  state.titlePickerShowOther=false;
+  state.pendingLoginUser=null;
+  state.currentUser=u; state.screen='app'; state.mainView={type:'dashboard'}; if(!appStateWasLoaded) seedAll();
+  await fetchAllAppDataFromSupabase();
+  checkTodoDeepLink(); checkBrokerReviewDeepLink(); checkCommissionSummaryDeepLink();
+  render();
+}
+// "What's your title/area of expertise?" — added 2026-09-08 so a new hire's title is a real,
+// promotable profile field instead of something only Michael knows informally. Broker is the
+// one title that means anything to the commission system: Manage Users only shows a Commission
+// Plan picker for someone titled Broker (see renderManageUsersModal) — Michael still picks the
+// actual plan by hand there, this just decides whether that control is even relevant for them.
+const TITLE_OPTIONS = [
+  {id:'Broker', label:'Broker', hint:'Tracks deals and a commission plan/split'},
+  {id:'Manager', label:'Manager', hint:'Office / team management'},
+  {id:'Marketing', label:'Marketing', hint:'Marketing & support'},
+];
+function renderTitlePicker(){
+  const overlay = document.createElement('div');
+  overlay.className='modal-overlay'; overlay.style.zIndex=400;
+  const showingOther = state.titlePickerShowOther;
+  overlay.innerHTML = `
+  <div class="modal-card" style="width:420px;">
+    <div class="modal-head"><div class="modal-title">One more thing</div></div>
+    <div class="modal-body">
+      <p style="font-size:13.5px;line-height:1.5;margin-top:0;">What's your title / area of expertise? Brokers get a commission plan tracked here — other roles don't need one. An admin can always change this later if it changes.</p>
+      ${TITLE_OPTIONS.map(o=>`
+        <div class="login-user-row" data-picktitle="${escapeAttr(o.id)}" style="margin-top:8px;">
+          <div style="flex:1;">
+            <div class="user-name" style="color:var(--ink);">${escapeHtml(o.label)}</div>
+            <div class="user-handle">${escapeHtml(o.hint)}</div>
+          </div>
+        </div>
+      `).join('')}
+      <div class="login-user-row" data-picktitle="__other" style="margin-top:8px;">
+        <div style="flex:1;">
+          <div class="user-name" style="color:var(--ink);">Other</div>
+          <div class="user-handle">Type your own</div>
+        </div>
+      </div>
+      ${showingOther ? `
+      <div class="field" style="margin-top:10px;">
+        <input id="titleOtherInput" placeholder="e.g., Office Admin">
+      </div>
+      <button class="btn sm" id="titleOtherContinueBtn" style="width:100%;margin-top:8px;">Continue</button>
+      ` : ''}
+    </div>
+  </div>`;
+  document.getElementById('app').appendChild(overlay);
+  overlay.querySelectorAll('[data-picktitle]').forEach(el=>el.onclick=async ()=>{
+    const val = el.dataset.picktitle;
+    if(val==='__other'){ state.titlePickerShowOther = true; render(); return; }
+    await completeTitlePicker(val);
+  });
+  const otherInput = document.getElementById('titleOtherInput'); if(otherInput) setTimeout(()=>otherInput.focus(),0);
+  const otherBtn = document.getElementById('titleOtherContinueBtn'); if(otherBtn) otherBtn.onclick=async ()=>{
+    const val = document.getElementById('titleOtherInput').value.trim();
+    if(!val){ flashToast('Type a title, or pick one of the options above.'); return; }
+    await completeTitlePicker(val);
+  };
+}
+async function completeTitlePicker(titleValue){
+  const u = state.pendingLoginUser;
+  if(!u) return;
+  u.title = titleValue;
+  if(u.authId){
+    const { error } = await supabaseClient.from('profiles').update({ title: titleValue }).eq('id', u.authId);
+    if(error) console.error('Saving title failed:', error);
+  }
+  state.showTitlePicker = false;
+  state.titlePickerShowOther = false;
+  if(!u.emailClient){
+    state.showEmailClientPicker = true;
+    render();
+    return;
+  }
+  await finishLoginAfterOnboarding(u);
 }
 const DAYS_OF_WEEK = [
   {id:'sunday',short:'Sun'},{id:'monday',short:'Mon'},{id:'tuesday',short:'Tue'},{id:'wednesday',short:'Wed'},
@@ -3526,13 +3609,11 @@ function renderNotifSettingsModal(){
         <div style="font-size:11.5px;color:var(--ink-soft);margin-bottom:8px;line-height:1.5;">Connect your own Microsoft 365 account so Edgy (the AI assistant) can create real calendar events and send real emails as you.</div>
         ${msSyncHtml}
       </div>
-      ${state.currentUser.email==='mclark@edge-re.com' ? `
       <div class="field">
         <label>Egnyte Auto-Filing (AI Import)</label>
         <div style="font-size:11.5px;color:var(--ink-soft);margin-bottom:8px;line-height:1.5;">Connect your Egnyte-synced <code>Z:\\Shared</code> folder once so the ✨ AI Import feature can save the correctly-named document straight into it, instead of just showing you the filename to save by hand. Chrome or Edge only.</div>
         ${egnyteSyncHtml}
       </div>
-      ` : ''}
       <div class="section-label">My reminder schedule</div>
       <div class="field" style="display:flex;align-items:center;gap:8px;">
         <input type="checkbox" id="useDefaultToggle" style="width:auto;" ${usingDefault?'checked':''}>
@@ -3766,7 +3847,7 @@ function attachLoginHandlers(){
       }
       u.authId = data.user.id;
       state.pendingLoginUser = u;
-      state.showEmailClientPicker = true;
+      if(!u.title) state.showTitlePicker = true; else state.showEmailClientPicker = true;
       render();
       return;
     }
@@ -3803,9 +3884,9 @@ function attachLoginHandlers(){
     if(profile.default_smart_list_order && profile.default_smart_list_order.length) state.defaultSmartListOrder = profile.default_smart_list_order;
     u.notesList = await fetchPersonalNotes(profile.id);
     await fetchAllProfilesIntoUsers();
-    if(!u.emailClient){
+    if(!u.title || !u.emailClient){
       state.pendingLoginUser = u;
-      state.showEmailClientPicker = true;
+      if(!u.title) state.showTitlePicker = true; else state.showEmailClientPicker = true;
       render();
       return;
     }
@@ -4045,7 +4126,7 @@ function renderTopbar(){
         style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px;">
       <div id="globalSearchResultsBox">${renderGlobalSearchResultsHtml()}</div>
     </div>
-    ${(state.currentUser.email==='mclark@edge-re.com' && !state.isMobile) ? `<button class="icon-btn" data-action="openLoiImport" title="Import Deal Document (AI)" style="margin-left:8px;font-size:17px;">✨</button>` : ''}
+    ${!state.isMobile ? `<button class="icon-btn" data-action="openLoiImport" title="Import Deal Document (AI)" style="margin-left:8px;font-size:17px;">✨</button>` : ''}
     <div class="topbar-spacer"></div>
     ${showTodoToggle ? `
     <div class="segmented">
@@ -6287,7 +6368,6 @@ function renderMobileTabbar(){
 function renderAdminMenu(){
   const isAdmin = state.currentUser.role==='Admin';
   const isDBRole = state.currentUser.role==='Admin' || state.currentUser.role==='FullAccess';
-  const isMichael = state.currentUser.email==='mclark@edge-re.com';
   return `
   <div class="admin-menu">
     ${isAdmin ? `<div class="admin-item" data-action="adminPending">🆕 Pending User Requests ${pendingUsers.length? `<span class="nav-count urgent" style="margin-left:auto;">${pendingUsers.length}</span>`:''}</div>` : ''}
@@ -6303,7 +6383,7 @@ function renderAdminMenu(){
     <div class="admin-item" data-action="goToDashboard">🏠 Dashboard</div>
     <div class="admin-item" data-action="openPipelineView">📈 Pipeline View</div>
     <div class="admin-item" data-action="openGeocodeIssues">📍 Geocoding Issues</div>
-    ${isMichael && !state.isMobile ? `<div class="admin-item" data-action="openLoiImport">✨ Import Deal Document (AI)</div>` : ''}
+    ${!state.isMobile ? `<div class="admin-item" data-action="openLoiImport">✨ Import Deal Document (AI)</div>` : ''}
   </div>`;
 }
 
@@ -6757,21 +6837,38 @@ function renderManageUsersModal(){
       <div style="font-size:12.5px;color:var(--ink-soft);margin-bottom:14px;">
         <b>Full Access</b> is meant for people who need visibility into every deal (e.g. invoicing, office admin) without needing to edit anything or manage the team.
       </div>
-      ${USERS.map(u=>`
+      ${USERS.map(u=>{
+        const knownTitles = ['Broker','Manager','Marketing'];
+        const isCustomTitle = u.title && !knownTitles.includes(u.title);
+        return `
         <div class="row-card" style="cursor:default;">
           <div class="row-body">
             <div class="row-title">${escapeHtml(u.name)}</div>
             <div class="row-meta"><span>${escapeHtml(u.email)}</span></div>
             <div class="tiny" style="color:var(--ink-soft);margin-top:2px;">${roleNote[u.role]||''}</div>
           </div>
-          <div class="row-right">
+          <div class="row-right" style="display:flex;flex-direction:column;gap:6px;align-items:flex-end;">
             <select data-userrole="${u.id}" ${u.id===state.currentUser.id?'disabled title="Not able to change your own role"':''}>
               <option value="Admin" ${u.role==='Admin'?'selected':''}>Admin</option>
               <option value="FullAccess" ${u.role==='FullAccess'?'selected':''}>Office Manager / Designated Broker</option>
               <option value="User" ${u.role==='User'?'selected':''}>User</option>
             </select>
+            <select data-usertitle="${u.id}" title="Title / area of expertise — editable any time, e.g. after a promotion">
+              <option value="" ${!u.title?'selected':''}>— Title —</option>
+              <option value="Broker" ${u.title==='Broker'?'selected':''}>Broker</option>
+              <option value="Manager" ${u.title==='Manager'?'selected':''}>Manager</option>
+              <option value="Marketing" ${u.title==='Marketing'?'selected':''}>Marketing</option>
+              <option value="__other" ${isCustomTitle?'selected':''}>${isCustomTitle?escapeHtml(u.title):'Other…'}</option>
+            </select>
+            ${u.title==='Broker' ? `
+            <select data-usercommplan="${u.id}" title="Commission plan — only Brokers need one">
+              <option value="">No commission plan set</option>
+              ${commissionPlans.map(p=>`<option value="${p.id}" ${u.commissionPlanId===p.id?'selected':''}>${escapeHtml(p.name)}</option>`).join('')}
+            </select>
+            ` : ''}
           </div>
-        </div>`).join('')}
+        </div>`;
+      }).join('')}
     </div>
     <div class="modal-foot"><button class="btn secondary" data-action="closeManageUsers">Close</button></div>
   </div>`;
@@ -6792,11 +6889,64 @@ function renderManageUsersModal(){
     }
     renderPreservingScroll('.modal-body');
   }));
+  // Title/area of expertise — this is the "change it after a promotion" path (the other is the
+  // one-time picker a person sees at their own first sign-in). Only a Broker's row shows a
+  // Commission Plan select at all, so switching someone's title to/from Broker here is what
+  // makes that control appear/disappear.
+  overlay.querySelectorAll('[data-usertitle]').forEach(sel=>sel.onchange=safeHandler(async ()=>{
+    const u = USERS.find(x=>x.id===sel.dataset.usertitle);
+    if(!u) return;
+    let newTitle = sel.value;
+    if(newTitle==='__other'){
+      const custom = prompt(`Enter ${u.name.split(' ')[0]}'s title:`, (u.title && !['Broker','Manager','Marketing'].includes(u.title)) ? u.title : '');
+      if(!custom || !custom.trim()){ renderPreservingScroll('.modal-body'); return; }
+      newTitle = custom.trim();
+    } else if(newTitle===''){
+      newTitle = null;
+    }
+    const oldTitle = u.title;
+    u.title = newTitle;
+    renderPreservingScroll('.modal-body');
+    const ok = await supaUpdateUserTitle(u, newTitle);
+    if(ok){
+      flashToast(`${u.name}'s title is now ${newTitle||'unset'}.`);
+    } else {
+      u.title = oldTitle;
+    }
+    renderPreservingScroll('.modal-body');
+  }));
+  overlay.querySelectorAll('[data-usercommplan]').forEach(sel=>sel.onchange=safeHandler(async ()=>{
+    const u = USERS.find(x=>x.id===sel.dataset.usercommplan);
+    if(!u) return;
+    const newPlanId = sel.value || null;
+    const oldPlanId = u.commissionPlanId;
+    u.commissionPlanId = newPlanId;
+    renderPreservingScroll('.modal-body');
+    const ok = await supaUpdateUserCommissionPlan(u, newPlanId);
+    if(ok){
+      flashToast(`${u.name}'s commission plan updated.`);
+    } else {
+      u.commissionPlanId = oldPlanId;
+    }
+    renderPreservingScroll('.modal-body');
+  }));
 }
 async function supaUpdateUserRole(u, newRole){
   if(!u.authId){ flashToast(`${u.name} needs to sign in to the Portal at least once before their role can be changed.`); return false; }
   const { error } = await supabaseClient.from('profiles').update({role:newRole}).eq('id', u.authId);
   if(error){ console.error('supaUpdateUserRole error:', error); flashToast(`Saved here, but syncing ${u.name}'s role failed. (${error.message})`); return false; }
+  return true;
+}
+async function supaUpdateUserTitle(u, newTitle){
+  if(!u.authId){ flashToast(`${u.name} needs to sign in to the Portal at least once before their title can be changed.`); return false; }
+  const { error } = await supabaseClient.from('profiles').update({title:newTitle}).eq('id', u.authId);
+  if(error){ console.error('supaUpdateUserTitle error:', error); flashToast(`Saved here, but syncing ${u.name}'s title failed. (${error.message})`); return false; }
+  return true;
+}
+async function supaUpdateUserCommissionPlan(u, newPlanId){
+  if(!u.authId){ flashToast(`${u.name} needs to sign in to the Portal at least once before their commission plan can be changed.`); return false; }
+  const { error } = await supabaseClient.from('profiles').update({commission_plan_id:newPlanId}).eq('id', u.authId);
+  if(error){ console.error('supaUpdateUserCommissionPlan error:', error); flashToast(`Saved here, but syncing ${u.name}'s commission plan failed. (${error.message})`); return false; }
   return true;
 }
 function renderTestCalendarModal(){
@@ -14265,6 +14415,7 @@ document.addEventListener('keydown', (ev)=>{
   if(state.newSmartListModal){ state.newSmartListModal=null; render(); return; }
   if(state.importTodosModal){ state.importTodosModal=null; render(); return; }
   if(state.showEmailClientPicker){ state.showEmailClientPicker=false; state.pendingLoginUser=null; render(); return; }
+  if(state.showTitlePicker){ state.showTitlePicker=false; state.titlePickerShowOther=false; state.pendingLoginUser=null; render(); return; }
   if(state.notifSettingsOpen){ state.notifSettingsOpen=false; render(); return; }
   if(state.marketingListWizard){ state.marketingListWizard=null; render(); return; }
   if(state.calendarViewOpen){ state.calendarViewOpen=false; render(); return; }
