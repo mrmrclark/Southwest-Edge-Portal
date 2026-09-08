@@ -267,6 +267,8 @@
     font-size:11.5px;padding:5px 0;border-radius:6px;position:relative;color:var(--ink);
   }
   .cal-day.today{background:var(--edge);color:#fff;font-weight:700;}
+  .cal-day.selected:not(.today){background:var(--line-soft);color:var(--ink);font-weight:700;box-shadow:inset 0 0 0 1.5px var(--edge);}
+  .cal-day:not(.today):not(.blank):hover{background:var(--line-soft);}
   .cal-day.has-todos:not(.today)::after{
     content:'';position:absolute;bottom:2px;left:50%;transform:translateX(-50%);width:4px;height:4px;
     border-radius:50%;background:var(--edge);
@@ -630,6 +632,7 @@ let state = {
   egnyteFolderStatus:null,      // {supported, connected, folderName, needsReconnect} — local File System Access permission state, from refreshEgnyteFolderStatus()
   msOauthFlow:null,             // {user_code, verification_uri, interval, expiresAt, error} — in-progress device-code sign-in
   calWidgetCursor:null,         // {year, month} — which month the small Calendar widget's mini-grid is browsing; null = current month
+  calWidgetSelectedDate:null,   // {year, month, day} — anchors the agenda below the mini-grid to a clicked date (like Outlook's date navigator); null = today
   pendingUsersModalOpen:false,
   sidePanelWidgets:{calendar:true, weather:true, news:true, quicklinks:true},
   showWidgetPicker:false,
@@ -3486,16 +3489,30 @@ async function pollMsGraphOnce(){
   setTimeout(pollMsGraphOnce, (state.msOauthFlow.interval || 5) * 1000);
 }
 let msCalendarCache = null; // {events:[...], fetchedAt} | {error:true, fetchedAt} | {loading:true, fetchedAt} | null
-function fetchMsCalendarIfNeeded(){
+let msCalendarCacheAnchorKey = null; // the anchorYmd the current msCalendarCache was fetched for — 'today' when no specific date is picked
+// anchorYmd: an optional "YYYY-M-D" string from a clicked date in the mini-grid (see renderCalendarWidget/
+// state.calWidgetSelectedDate). Omitted (or 'today') keeps the original, already-tested "start from right
+// now" behavior; a real date re-anchors the query to start at that date's Arizona midnight instead — that's
+// what lets clicking a past OR future date show its next 10 events, the same way Outlook's date navigator
+// re-anchors its agenda pane. A changed anchor always forces a fresh fetch, bypassing the 5-min cache.
+function fetchMsCalendarIfNeeded(anchorYmd){
   if(!state.msGraphStatus || !state.msGraphStatus.connected) return;
-  if(msCalendarCache && msCalendarCache.loading) return;
-  if(msCalendarCache && !msCalendarCache.loading && (Date.now()-msCalendarCache.fetchedAt) < 5*60*1000) return;
+  const anchorKey = anchorYmd || 'today';
+  const anchorChanged = anchorKey !== msCalendarCacheAnchorKey;
+  if(msCalendarCache && msCalendarCache.loading && !anchorChanged) return;
+  if(msCalendarCache && !msCalendarCache.loading && !anchorChanged && (Date.now()-msCalendarCache.fetchedAt) < 5*60*1000) return;
+  msCalendarCacheAnchorKey = anchorKey;
   msCalendarCache = {loading:true, fetchedAt:Date.now()};
-  supabaseClient.functions.invoke('ms-oauth', {body:{action:'events'}}).then(({data,error})=>{
+  const body = anchorKey==='today' ? {action:'events'} : {action:'events', anchor:anchorYmd};
+  supabaseClient.functions.invoke('ms-oauth', {body}).then(({data,error})=>{
+    if(anchorKey !== msCalendarCacheAnchorKey) return; // a newer click superseded this request while it was in flight
     if(error || !data || data.error){ msCalendarCache = {error:true, fetchedAt:Date.now()}; render(); return; }
     msCalendarCache = {events: data.events||[], fetchedAt:Date.now()};
     render();
-  }).catch(()=>{ msCalendarCache = {error:true, fetchedAt:Date.now()}; render(); });
+  }).catch(()=>{
+    if(anchorKey !== msCalendarCacheAnchorKey) return;
+    msCalendarCache = {error:true, fetchedAt:Date.now()}; render();
+  });
 }
 async function disconnectMsGraph(){
   if(!confirm('Disconnect Microsoft 365? Edgy will no longer be able to create calendar events or send email for you until you reconnect.')) return;
@@ -3503,6 +3520,7 @@ async function disconnectMsGraph(){
   if(error){ flashToast(`Could not disconnect: ${error.message}`); return; }
   state.msGraphStatus = { loading:false, connected:false };
   msCalendarCache = null;
+  msCalendarCacheAnchorKey = null;
   flashToast('Disconnected from Microsoft 365.');
   renderPreservingScroll('.modal-body');
 }
@@ -5155,8 +5173,10 @@ function renderNewsWidget(){
 /* ==================== CALENDAR VIEW (desktop only) ==================== */
 function renderCalendarWidget(){
   const now = new Date();
-  // The mini-grid can be browsed independently of "today" via the nav arrows; the agenda
-  // below it always stays anchored on the real today, regardless of what the grid shows.
+  // The mini-grid can be BROWSED (nav arrows, month to month) independently of what the agenda
+  // shows — that alone doesn't move the agenda. Only actually clicking a date does, via
+  // state.calWidgetSelectedDate: the agenda then re-anchors to that date and shows its next 10
+  // events forward, same as clicking a date in Outlook's date navigator. null = today.
   const cursor = state.calWidgetCursor || {year: now.getFullYear(), month: now.getMonth()};
   const year = cursor.year, month = cursor.month;
   const firstDay = new Date(year, month, 1).getDay();
@@ -5164,10 +5184,16 @@ function renderCalendarWidget(){
   const monthName = new Date(year, month, 1).toLocaleDateString('en-US', {month:'long', year:'numeric'});
   const isCurrentMonth = year===now.getFullYear() && month===now.getMonth();
 
-  // Real Outlook events, once Microsoft 365 is connected — kicks off a fetch (cached 5 min)
-  // the same way renderWeatherWidget does, and re-renders itself when data lands.
+  const selected = state.calWidgetSelectedDate; // {year,month,day} | null
+  const isTodaySelected = !selected;
+  const anchorDate = selected ? new Date(selected.year, selected.month, selected.day) : now;
+  const anchorYmd = selected ? `${selected.year}-${selected.month+1}-${selected.day}` : null;
+  const anchorLabel = selected ? anchorDate.toLocaleDateString('en-US', {weekday:'short', month:'short', day:'numeric'}) : null;
+
+  // Real Outlook events, once Microsoft 365 is connected — kicks off a fetch (cached 5 min per
+  // anchor) the same way renderWeatherWidget does, and re-renders itself when data lands.
   const msConnected = !!(state.msGraphStatus && state.msGraphStatus.connected);
-  if(msConnected) fetchMsCalendarIfNeeded();
+  if(msConnected) fetchMsCalendarIfNeeded(anchorYmd);
   const eventDayNums = new Set(); // days in the GRID's month that have at least one event, for the dot markers
   if(msConnected && msCalendarCache && msCalendarCache.events){
     msCalendarCache.events.forEach(ev=>{
@@ -5181,8 +5207,9 @@ function renderCalendarWidget(){
   for(let i=0;i<firstDay;i++) cells += `<div class="cal-day blank"></div>`;
   for(let d=1; d<=daysInMonth; d++){
     const isToday = isCurrentMonth && d===now.getDate();
+    const isSelected = selected ? (selected.year===year && selected.month===month && selected.day===d) : isToday;
     const hasEvent = eventDayNums.has(d);
-    cells += `<div class="cal-day ${isToday?'today':''}" style="position:relative;">${d}${hasEvent?'<div style="position:absolute;bottom:2px;left:50%;transform:translateX(-50%);width:4px;height:4px;border-radius:50%;background:var(--edge);"></div>':''}</div>`;
+    cells += `<div class="cal-day ${isToday?'today':''} ${isSelected?'selected':''}" data-calday="${year}-${month}-${d}" style="position:relative;cursor:pointer;">${d}${hasEvent?'<div style="position:absolute;bottom:2px;left:50%;transform:translateX(-50%);width:4px;height:4px;border-radius:50%;background:var(--edge);"></div>':''}</div>`;
   }
 
   // Agenda: hard-capped at the first 10 events (in start-time order), even if that splits a
@@ -5191,20 +5218,20 @@ function renderCalendarWidget(){
   // on a busy day). Each row opens the real event in Outlook (webLink), so this stays
   // read-only from the portal's side.
   const TARGET_COUNT = 10;
-  let agendaHtml;
+  let agendaBodyHtml;
   if(!msConnected){
-    agendaHtml = `<div class="mscal-agenda" style="font-size:11.5px;color:var(--ink-soft);">
+    agendaBodyHtml = `<div style="font-size:11.5px;color:var(--ink-soft);">
       <div style="margin-bottom:6px;">Connect Microsoft 365 to see your real Outlook events here.</div>
       <button class="btn secondary sm" data-action="openMsCalendarConnect">Connect Microsoft 365</button>
     </div>`;
   } else if(!msCalendarCache || msCalendarCache.loading){
-    agendaHtml = `<div class="mscal-agenda" style="font-size:11.5px;color:var(--ink-soft);">Loading your calendar…</div>`;
+    agendaBodyHtml = `<div style="font-size:11.5px;color:var(--ink-soft);">Loading your calendar…</div>`;
   } else if(msCalendarCache.error){
-    agendaHtml = `<div class="mscal-agenda" style="font-size:11.5px;color:var(--bad,#C0392B);">Couldn't load your Outlook calendar.</div>`;
+    agendaBodyHtml = `<div style="font-size:11.5px;color:var(--bad,#C0392B);">Couldn't load your Outlook calendar.</div>`;
   } else {
     const events = (msCalendarCache.events || []).slice(0, TARGET_COUNT);
     if(!events.length){
-      agendaHtml = `<div class="mscal-agenda" style="font-size:12px;color:var(--ink-soft);">Nothing on your calendar in the next 60 days.</div>`;
+      agendaBodyHtml = `<div style="font-size:12px;color:var(--ink-soft);">${isTodaySelected ? 'Nothing on your calendar in the next 60 days.' : `Nothing on your calendar in the 60 days starting ${anchorLabel}.`}</div>`;
     } else {
       const dayKeyOf = d => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
       const groups = [];
@@ -5219,9 +5246,11 @@ function renderCalendarWidget(){
       // Events arrive sorted by start, so groups (built from the already-capped slice above)
       // are already in chronological order and already at most TARGET_COUNT events total.
       const shown = groups;
+      // Day labels ("Today"/"Tomorrow"/weekday) are always relative to the REAL today, not the
+      // clicked anchor — so if you've clicked a past or future date, the groups just read as
+      // plain weekday/date labels (diffDays won't land on 0 or 1 unless that day IS today).
       const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      agendaHtml = `<div class="mscal-agenda">
-        ${shown.map(g=>{
+      agendaBodyHtml = shown.map(g=>{
           const dayStart = new Date(g.date.getFullYear(), g.date.getMonth(), g.date.getDate());
           const diffDays = Math.round((dayStart-todayStart)/86400000);
           let label;
@@ -5244,10 +5273,18 @@ function renderCalendarWidget(){
               </div>`;
             }).join('')}
           </div>`;
-        }).join('')}
-      </div>`;
+        }).join('');
     }
   }
+  // Shown whenever the agenda is anchored off a clicked date instead of today — lets the person
+  // jump straight back without having to find and re-click today's cell (which might not even
+  // be in the month currently browsed via the nav arrows).
+  const anchorBarHtml = (msConnected && !isTodaySelected) ? `
+    <div class="mscal-anchor-bar" style="display:flex;align-items:center;justify-content:space-between;font-size:11px;color:var(--ink-soft);margin-bottom:8px;">
+      <span>Showing from <b style="color:var(--ink);">${anchorLabel}</b></span>
+      <span data-calday-today style="color:var(--edge);cursor:pointer;font-weight:600;">Today</span>
+    </div>` : '';
+  const agendaHtml = `<div class="mscal-agenda">${anchorBarHtml}${agendaBodyHtml}</div>`;
 
   return `
   <div class="widget-card">
@@ -6800,6 +6837,29 @@ function attachShellHandlers(){
   document.querySelectorAll('[data-mscal-open]').forEach(el=>el.onclick=()=>{
     const url = el.dataset.mscalOpen;
     if(url) window.open(url, '_blank', 'noopener');
+  });
+  // Calendar widget: clicking a date in the mini-grid re-anchors the agenda below it to that
+  // date's next 10 events — past or future, same as clicking a date in Outlook's date
+  // navigator. Clicking the already-selected date again jumps back to today (and back to the
+  // current month, in case the click came from a month reached via the nav arrows).
+  document.querySelectorAll('[data-calday]').forEach(el=>el.onclick=()=>{
+    const [y,m,d] = el.dataset.calday.split('-').map(Number);
+    const sel = state.calWidgetSelectedDate;
+    const alreadySelected = sel ? (sel.year===y && sel.month===m && sel.day===d) : false;
+    const now = new Date();
+    const isTodayCell = y===now.getFullYear() && m===now.getMonth() && d===now.getDate();
+    if(alreadySelected || (!sel && isTodayCell)){
+      state.calWidgetSelectedDate = null;
+      state.calWidgetCursor = null;
+    } else {
+      state.calWidgetSelectedDate = {year:y, month:m, day:d};
+    }
+    render();
+  });
+  document.querySelectorAll('[data-calday-today]').forEach(el=>el.onclick=()=>{
+    state.calWidgetSelectedDate = null;
+    state.calWidgetCursor = null;
+    render();
   });
 }
 
