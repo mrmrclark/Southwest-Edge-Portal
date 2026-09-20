@@ -384,7 +384,7 @@
     color:#fff;font-size:24px;border:none;box-shadow:0 8px 22px rgba(225,83,26,0.45);display:flex;
     align-items:center;justify-content:center;z-index:130;
   }
-  /* Only Michael has the separate Voice Note fab in the same corner — when it's present,
+  /* Mobile only has the separate voice-shortcut fab in the same corner — when it's present,
      stack the chat button above it instead of sitting on top of it. */
   .portal-chat-fab.stacked{bottom:92px;}
   @media (max-width:820px){ .portal-chat-fab{bottom:88px;} .portal-chat-fab.stacked{bottom:154px;} }
@@ -1006,7 +1006,8 @@ function dealRowToLocal(r){
           commission1Paid:r.commission1_paid, commission2Paid:r.commission2_paid, notes:r.notes||'', egnyteLink:r.egnyte_link||'',
           latitude: r.latitude||null, longitude: r.longitude||null, geocodeFailed: !!r.geocode_failed,
           commission1DueDate: r.commission1_due_date||null, commission2DueDate: r.commission2_due_date||null,
-          coeDueDate: r.coe_due_date||null, caExpirationDate: r.ca_expiration_date||null};
+          coeDueDate: r.coe_due_date||null, caExpirationDate: r.ca_expiration_date||null,
+          trackerUserId: authIdToLocalUserId(r.tracker_user_id) || r.tracker_user_id || null};
 }
 function dealLocalToRow(d, clientId){
   return {id:d.id, client_id:clientId, name:d.name, complete:!!d.complete, active_deal:!!d.activeDeal,
@@ -1019,7 +1020,8 @@ function dealLocalToRow(d, clientId){
           commission1_paid:!!d.commission1Paid, commission2_paid:!!d.commission2Paid, notes:d.notes||null, egnyte_link:d.egnyteLink||null,
           latitude: d.latitude||null, longitude: d.longitude||null, geocode_failed: !!d.geocodeFailed,
           commission1_due_date: d.commission1DueDate||null, commission2_due_date: d.commission2DueDate||null,
-          coe_due_date: d.coeDueDate||null, ca_expiration_date: d.caExpirationDate||null};
+          coe_due_date: d.coeDueDate||null, ca_expiration_date: d.caExpirationDate||null,
+          tracker_user_id: localUserIdToAuthId(d.trackerUserId)};
 }
 async function fetchListsClientsDealsFromSupabase(){
   const { data:lists, error:e1 } = await supabaseClient.from('lists').select('*');
@@ -3196,7 +3198,6 @@ function render(){
   if(state.loiImport) renderLoiImportModal();
   if(state.clientMapModal) renderClientMapModal();
   if(state.geocodeIssuesOpen) renderGeocodeIssuesModal();
-  if(state.voiceNoteAmbiguous) renderVoiceNoteAmbiguousModal();
   if(state.signCallModal) renderSignCallModal();
   if(state.notifSettingsOpen) renderNotifSettingsModal();
   if(state.pendingUsersModalOpen) renderPendingUsersModal();
@@ -4300,244 +4301,6 @@ function fuzzyTextMatch(a, b){
     });
   });
 }
-// --- Voice Note feature (Michael only) ---
-function startVoiceNoteRecording(){
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if(!SpeechRecognition){
-    flashToast("Voice recognition isn't supported in this browser — try Chrome or Safari.");
-    return;
-  }
-  const recognition = new SpeechRecognition();
-  recognition.lang = 'en-US';
-  recognition.interimResults = false;
-  recognition.maxAlternatives = 1;
-  state.voiceNoteRecording = true;
-  render();
-  const clearSafety = ()=>{ if(state._voiceNoteSafetyTimer){ clearTimeout(state._voiceNoteSafetyTimer); state._voiceNoteSafetyTimer=null; } };
-  recognition.onresult = (event)=>{
-    clearSafety();
-    const transcript = event.results[0][0].transcript;
-    state.voiceNoteRecording = false;
-    render();
-    processVoiceNoteTranscript(transcript);
-  };
-  recognition.onerror = (event)=>{
-    clearSafety();
-    console.error('Speech recognition error:', event.error);
-    state.voiceNoteRecording = false;
-    flashToast("Didn't catch that — please try again.");
-    render();
-  };
-  recognition.onend = ()=>{ clearSafety(); if(state.voiceNoteRecording){ state.voiceNoteRecording=false; render(); } };
-  state._activeSpeechRecognition = recognition;
-  // Safety net: some mobile browsers can leave a recording session hanging (e.g. an
-  // accidental bump that doesn't register a second tap to stop). This guarantees it
-  // can never stay stuck listening for more than 20 seconds, no matter what.
-  state._voiceNoteSafetyTimer = setTimeout(()=>{
-    if(state.voiceNoteRecording){
-      try{ recognition.abort(); }catch(e){}
-      state.voiceNoteRecording = false;
-      flashToast("Voice recording timed out — please try again.");
-      render();
-    }
-  }, 20000);
-  recognition.start();
-}
-function toggleVoiceNoteRecording(){
-  if(state.voiceNoteRecording){
-    if(state._voiceNoteSafetyTimer){ clearTimeout(state._voiceNoteSafetyTimer); state._voiceNoteSafetyTimer=null; }
-    if(state._activeSpeechRecognition){ try{ state._activeSpeechRecognition.abort(); }catch(e){} }
-    state.voiceNoteRecording = false;
-    render();
-  } else {
-    startVoiceNoteRecording();
-  }
-}
-async function processVoiceNoteTranscript(transcript){
-  flashToast('Processing voice note…');
-  try{
-    const { data: sessionData } = await supabaseClient.auth.getSession();
-    const jwt = sessionData?.session?.access_token;
-    const teamNames = USERS.map(u=>u.name.split(' ')[0]);
-    const res = await fetch(`https://ugtlyzwvnhmcphtqkbke.supabase.co/functions/v1/parse-voice-note`, {
-      method:'POST',
-      headers:{ 'Content-Type':'application/json', 'Authorization': `Bearer ${jwt}` },
-      body: JSON.stringify({ transcript, teamNames, today: toLocalDateStr(todayDate()) })
-    });
-    const body = await res.json();
-    if(!res.ok || body.error){ flashToast(body.error || "Couldn't process that voice note."); render(); return; }
-    const parsed = body.parsed;
-    if(parsed.intent==='createProspect') await resolveAndCreateProspect(parsed);
-    else if(parsed.intent==='signCall') await resolveAndCreateSignCall(parsed);
-    else await resolveAndSaveVoiceNote(parsed);
-  }catch(e){
-    console.error('processVoiceNoteTranscript error:', e);
-    flashToast("Something went wrong processing that voice note.");
-    render();
-  }
-}
-async function resolveAndSaveVoiceNote(parsed){
-  if(!parsed.accountName){
-    flashToast("Couldn't tell which account that was for — please try again and name it clearly.");
-    render();
-    return;
-  }
-  const clientsList = db.lists.find(x=>x.id==='clients');
-  const matchedClientRec = clientsList.clients.find(c=>fuzzyTextMatch(c.name, parsed.accountName));
-  let clientDealCandidate = null, clientDealIsNew = false;
-  if(matchedClientRec){
-    const deals = matchedClientRec.deals||[];
-    clientDealCandidate = parsed.propertyDescription
-      ? deals.find(d=>fuzzyTextMatch(d.building||d.name, parsed.propertyDescription))
-      : (deals.length===1 ? deals[0] : null);
-    // Client account exists, but this specific site/deal doesn't yet — create it rather
-    // than failing, same as the LOI import does for a brand-new site under a known Client.
-    if(!clientDealCandidate && parsed.propertyDescription){
-      clientDealCandidate = {id:crypto.randomUUID(), name: parsed.propertyDescription, complete:false, activeDeal:false,
-        dueDate:null, caExecuted:false, dealType:null, building: parsed.propertyDescription, stage:'prospect',
-        splits:[], commission1Paid:false, commission2Paid:false, notes:''};
-      clientDealIsNew = true;
-    }
-  }
-  const listingsList = db.lists.find(x=>x.id==='listings');
-  let listingMatch=null, prospectMatch=null, prospectIsNew=false;
-  if(parsed.propertyDescription){
-    const listing = listingsList.clients.find(l=>fuzzyTextMatch(l.name, parsed.propertyDescription));
-    if(listing){
-      const prospects = listing.prospects||[];
-      const prospect = prospects.find(p=>fuzzyTextMatch(p.tenantName, parsed.accountName)) || (prospects.length===1?prospects[0]:null);
-      if(prospect){ listingMatch=listing; prospectMatch=prospect; }
-      else {
-        // Listing exists, but this tenant isn't tracked there yet — create a new
-        // prospect rather than failing, so a brand-new lead can still get a note.
-        listingMatch = listing;
-        prospectMatch = {id:crypto.randomUUID(), tenantName: parsed.accountName, stage:'contacted', dealType:null,
-          dateOfContact: todayDate(), notes:'', edgeTracker:null, attachments:[], commission1Paid:false, commission2Paid:false};
-        prospectIsNew = true;
-      }
-    }
-  }
-  if(!listingMatch){
-    const matches = [];
-    listingsList.clients.forEach(l=>{ (l.prospects||[]).forEach(p=>{ if(fuzzyTextMatch(p.tenantName, parsed.accountName)) matches.push({listing:l, prospect:p}); }); });
-    if(matches.length===1){ listingMatch=matches[0].listing; prospectMatch=matches[0].prospect; }
-    else if(matches.length>1){ state.voiceNoteAmbiguous = {type:'listingPick', candidates:matches, parsed}; render(); return; }
-  }
-  const haveClientResult = !!(matchedClientRec && clientDealCandidate);
-  const haveListingResult = !!(listingMatch && prospectMatch);
-  if(haveClientResult && haveListingResult){
-    state.voiceNoteAmbiguous = {type:'sidePick',
-      clientResult:{client:matchedClientRec, deal:clientDealCandidate, isNew:clientDealIsNew},
-      listingResult:{listing:listingMatch, prospect:prospectMatch, isNew:prospectIsNew}, parsed};
-    render();
-    return;
-  }
-  if(haveListingResult){ await saveVoiceNoteToTarget('listings', listingMatch, prospectMatch, parsed, prospectIsNew); return; }
-  if(haveClientResult){ await saveVoiceNoteToTarget('clients', matchedClientRec, clientDealCandidate, parsed, clientDealIsNew); return; }
-  flashToast(`Couldn't find a matching deal for "${parsed.accountName}"${parsed.propertyDescription?` at ${parsed.propertyDescription}`:''} — nothing was saved.`);
-  render();
-}
-async function saveVoiceNoteToTarget(side, accountRec, rec, parsed, isNew){
-  const dateStr = fmtDate(todayDate());
-  const existingNotes = rec.notes || '';
-  rec.notes = existingNotes ? `${existingNotes}\n\n[${dateStr}] ${parsed.noteText}` : `[${dateStr}] ${parsed.noteText}`;
-  if(side==='clients'){
-    if(isNew){ accountRec.deals = accountRec.deals || []; accountRec.deals.push(rec); await supaCreateDeal(rec, accountRec.id); }
-    else await supaUpdateDeal(rec, accountRec.id);
-  } else {
-    if(isNew){ accountRec.prospects = accountRec.prospects || []; accountRec.prospects.push(rec); await supaCreateProspect(rec, accountRec.id); }
-    else await supaUpdateProspect(rec, accountRec.id);
-  }
-  let todoMsg = '';
-  if(parsed.followUpDate){
-    let assignee = state.currentUser;
-    if(parsed.assigneeName){
-      const found = USERS.find(u=>u.name.toLowerCase().startsWith(parsed.assigneeName.toLowerCase()));
-      if(found) assignee = found;
-    }
-    const targetName = side==='clients' ? rec.name : rec.tenantName;
-    const todo = {id:crypto.randomUUID(), title:`Follow up: ${targetName}`,
-      dueDate:new Date(parsed.followUpDate+'T00:00:00'), assignedTo:assignee.id, createdBy:state.currentUser.id,
-      type:'task', private:false, completed:false, isNew:true, notes: parsed.noteText,
-      listId:null, clientId:accountRec.id, dealId: side==='clients'?rec.id:null, entryId:null, attachments:[]};
-    db.todos.push(todo);
-    await supaCreateTodo(todo);
-    todoMsg = ` To-do created for ${assignee.name.split(' ')[0]}, due ${fmtDate(new Date(parsed.followUpDate+'T00:00:00'))}.`;
-  }
-  state.voiceNoteAmbiguous = null;
-  flashToast(`Note added to ${side==='clients'?rec.name:rec.tenantName}.${todoMsg}`);
-  render();
-}
-// "Create a new prospect called XYZ Tenant at Main & Main" — voice intent, always creates
-// under a matched Listing (only Listings track Prospects). Requires a property to be named.
-async function resolveAndCreateProspect(parsed){
-  if(!parsed.accountName || !parsed.propertyDescription){
-    flashToast("Didn't catch both the tenant name and the property — please try again and name both clearly.");
-    render();
-    return;
-  }
-  const listingsList = db.lists.find(x=>x.id==='listings');
-  const listing = listingsList.clients.find(l=>fuzzyTextMatch(l.name, parsed.propertyDescription));
-  if(!listing){
-    flashToast(`Couldn't find a Listing matching "${parsed.propertyDescription}" — nothing was created.`);
-    render();
-    return;
-  }
-  const prospect = {id:crypto.randomUUID(), tenantName: parsed.accountName, stage:'contacted', dealType:null,
-    dateOfContact: todayDate(), notes:'', edgeTracker:null, attachments:[], commission1Paid:false, commission2Paid:false};
-  listing.prospects = listing.prospects || [];
-  listing.prospects.push(prospect);
-  await supaCreateProspect(prospect, listing.id);
-  flashToast(`New prospect created: ${parsed.accountName} at ${listing.name}.`);
-  render();
-}
-// "Add a new sign call from Jim Martinez, phone 555-1212, a Pizza Shop, at Main & Main"
-async function resolveAndCreateSignCall(parsed){
-  if(!parsed.propertyDescription){
-    flashToast("Didn't catch which property that sign call was for — please try again and name it clearly.");
-    render();
-    return;
-  }
-  const listingsList = db.lists.find(x=>x.id==='listings');
-  const listing = listingsList.clients.find(l=>fuzzyTextMatch(l.name, parsed.propertyDescription));
-  if(!listing){
-    flashToast(`Couldn't find a Listing matching "${parsed.propertyDescription}" — nothing was created.`);
-    render();
-    return;
-  }
-  const sc = {id:null, listingId:listing.id, name: parsed.callerName||'', phone: parsed.callerPhone||'', notes: parsed.callerNotes||'', contactId:null};
-  const created = await supaCreateSignCall(sc);
-  if(created) flashToast(`Sign call logged: ${sc.name||'Unnamed caller'} at ${listing.name}.`);
-  render();
-}
-function renderVoiceNoteAmbiguousModal(){
-  const m = state.voiceNoteAmbiguous;
-  const overlay = document.createElement('div');
-  overlay.className='modal-overlay'; overlay.style.zIndex=208;
-  let body = '';
-  if(m.type==='sidePick'){
-    body = `
-      <p class="tiny" style="margin-bottom:14px;">Found "${escapeHtml(m.parsed.accountName)}" on both sides — which one?</p>
-      <button class="btn" data-action="voicePickListing" style="width:100%;margin-bottom:8px;">Listing Side — ${escapeHtml(m.listingResult.listing.name)}${m.listingResult.isNew?' (new prospect)':''}</button>
-      <button class="btn secondary" data-action="voicePickClient" style="width:100%;">Client Side — ${escapeHtml(m.clientResult.client.name)}${m.clientResult.isNew?' (new deal)':''}</button>
-    `;
-  } else {
-    body = `
-      <p class="tiny" style="margin-bottom:14px;">Found "${escapeHtml(m.parsed.accountName)}" under more than one Listing — which one?</p>
-      ${m.candidates.map((c,i)=>`<button class="btn secondary" data-pickambig="${i}" style="width:100%;margin-bottom:8px;">${escapeHtml(c.listing.name)}</button>`).join('')}
-    `;
-  }
-  overlay.innerHTML = `<div class="modal-card" style="max-width:420px;"><div class="modal-head"><div class="modal-title">Which account?</div></div><div class="modal-body">${body}</div></div>`;
-  document.getElementById('app').appendChild(overlay);
-  const listingBtn = overlay.querySelector('[data-action="voicePickListing"]');
-  if(listingBtn) listingBtn.onclick=safeHandler(()=>saveVoiceNoteToTarget('listings', m.listingResult.listing, m.listingResult.prospect, m.parsed, m.listingResult.isNew));
-  const clientBtn = overlay.querySelector('[data-action="voicePickClient"]');
-  if(clientBtn) clientBtn.onclick=safeHandler(()=>saveVoiceNoteToTarget('clients', m.clientResult.client, m.clientResult.deal, m.parsed, m.clientResult.isNew));
-  overlay.querySelectorAll('[data-pickambig]').forEach(b=>b.onclick=safeHandler(()=>{
-    const c = m.candidates[parseInt(b.dataset.pickambig)];
-    saveVoiceNoteToTarget('listings', c.listing, c.prospect, m.parsed, false);
-  }));
-}
 const LOI_COUNTER_CODES = {
   'clients-lease': {code:'LLC', label:'Landlord Counter (LLC)'},
   'clients-sale': {code:'SC', label:'Seller Counter (SC)'},
@@ -4668,6 +4431,111 @@ async function egnyteSaveFile(dropSide, accountName, dealFolderName, filename, b
   await writable.write(blob);
   await writable.close();
   return segments.join('\\') + '\\' + filename;
+}
+// Finds a filename that doesn't collide in `dir`, inserting " (1)", " (2)", etc. before the
+// extension as needed. Used by the "Other Document" flow (below) — unlike the LOI/PSA/etc.
+// flow, which computes a fresh, near-certainly-unique name every time, "Other Document" keeps
+// the broker's original filename, so collisions are the normal case, and silently overwriting
+// (what getFileHandle+createWritable does by default) would be a real way to lose a file.
+async function egnyteUniqueFilename(dir, filename){
+  const dot = filename.lastIndexOf('.');
+  const base = dot>0 ? filename.slice(0,dot) : filename;
+  const ext = dot>0 ? filename.slice(dot) : '';
+  let candidate = filename, n = 1;
+  while(true){
+    try{ await dir.getFileHandle(candidate, {create:false}); }
+    catch(e){ return candidate; } // doesn't exist yet (NotFoundError) — safe to use
+    candidate = `${base} (${n})${ext}`;
+    n++;
+  }
+}
+// "Other Document" filing: same mechanism as egnyteSaveFile (same folder-resolution, same
+// permission check), but keeps the original filename — auto-suffixed on collision, never
+// renamed to the LOI/PSA/etc. naming convention, since these aren't deal-term documents (a
+// civil plan set, a survey, site photos) and shouldn't be mistaken for one in the folder.
+async function egnyteSaveOtherFile(dropSide, accountName, dealFolderName, filename, blob){
+  if(!egnyteSupported()) throw new Error("This browser can't save straight to Egnyte — use Chrome or Edge.");
+  const rootHandle = await egnyteGetStoredRootHandle();
+  if(!rootHandle) throw new Error("Egnyte folder isn't connected yet — connect it once in Settings.");
+  let granted = false;
+  try{ granted = (await rootHandle.queryPermission({mode:'readwrite'}))==='granted'; }catch(e){ granted=false; }
+  if(!granted) throw new Error('NEEDS_PERMISSION');
+  const segments = egnyteFolderSegments(dropSide, accountName, dealFolderName);
+  const dir = await egnyteGetOrCreateDir(rootHandle, segments);
+  const uniqueName = await egnyteUniqueFilename(dir, filename);
+  const fileHandle = await dir.getFileHandle(uniqueName, {create:true});
+  const writable = await fileHandle.createWritable();
+  await writable.write(blob);
+  await writable.close();
+  return { path: segments.join('\\') + '\\' + uniqueName, name: uniqueName };
+}
+// Opens a native multi-file picker — no type restriction, unlike the AI-extraction drop zone,
+// since civil plans/surveys/photos aren't limited to PDF/Word — and files each selection
+// straight into the deal folder already resolved by the import that was just completed
+// (m.dropSide/m.egnyteAccountName/m.egnyteDealFolderName, set in confirmLoiImport).
+function openAddOtherDocuments(){
+  const input = document.createElement('input');
+  input.type = 'file'; input.multiple = true;
+  input.onchange = ()=>processOtherDocumentFiles(Array.from(input.files||[]));
+  input.click();
+}
+async function processOtherDocumentFiles(files){
+  const m = state.loiImport;
+  if(!m || !files.length) return;
+  m.otherDocs = m.otherDocs || [];
+  if(!egnyteSupported()){ flashToast("This browser can't save straight to Egnyte — use Chrome or Edge."); return; }
+  const rootHandle = await egnyteGetStoredRootHandle();
+  if(!rootHandle){ flashToast("Egnyte folder isn't connected yet — connect it once in Settings → Notification Settings."); return; }
+  let granted = false;
+  try{ granted = (await rootHandle.queryPermission({mode:'readwrite'}))==='granted'; }catch(e){ granted=false; }
+  if(!granted){
+    // requestPermission needs a real click — stash the files and show a button rather than
+    // prompting mid-flow, same pattern as retryEgnyteSaveWithPermission above.
+    m.otherDocsNeedsPermission = true;
+    m.otherDocsQueuedFiles = files;
+    renderPreservingScroll('.modal-body');
+    return;
+  }
+  await fileOtherDocuments(files);
+}
+async function fileOtherDocuments(files){
+  const m = state.loiImport;
+  if(!m) return;
+  const startIdx = m.otherDocs.length;
+  files.forEach(f=> m.otherDocs.push({name:f.name, state:'saving'}));
+  renderPreservingScroll('.modal-body');
+  for(let i=0;i<files.length;i++){
+    const row = m.otherDocs[startIdx+i];
+    try{
+      const result = await egnyteSaveOtherFile(m.dropSide, m.egnyteAccountName, m.egnyteDealFolderName, files[i].name, files[i]);
+      row.state = 'success'; row.savedPath = result.path; row.renamedTo = result.name; row.file = files[i];
+    }catch(e){
+      row.state = 'error'; row.error = (e && e.message) || String(e); row.file = files[i];
+    }
+    renderPreservingScroll('.modal-body');
+  }
+}
+async function retryOtherDocumentsPermission(){
+  const rootHandle = await egnyteGetStoredRootHandle();
+  if(!rootHandle) return;
+  let granted = false;
+  try{ granted = (await rootHandle.requestPermission({mode:'readwrite'}))==='granted'; }catch(e){ granted=false; }
+  if(!granted){ flashToast('Egnyte folder access was not granted.'); return; }
+  const m = state.loiImport;
+  m.otherDocsNeedsPermission = false;
+  const queued = m.otherDocsQueuedFiles || [];
+  m.otherDocsQueuedFiles = null;
+  await fileOtherDocuments(queued);
+}
+function downloadOtherDocument(idx){
+  const m = state.loiImport;
+  const row = m && m.otherDocs && m.otherDocs[idx];
+  if(!row || !row.file) return;
+  const url = URL.createObjectURL(row.file);
+  const a = document.createElement('a');
+  a.href = url; a.download = row.name;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 // Populates state.egnyteFolderStatus for the Settings UI — a pure local/permission check,
 // no network call, so it's cheap enough to run every time Notification Settings opens.
@@ -4823,7 +4691,7 @@ async function confirmLoiImport(){
     if(m.isNewDeal || !d){
       d = {id:crypto.randomUUID(), name: ex.propertyDescription||'New Deal', complete:false, activeDeal:false, dueDate:null,
         caExecuted:false, dealType: isSale?'sale':'lease', building: ex.propertyDescription||'', stage:'loi',
-        splits:[], commission1Paid:false, commission2Paid:false};
+        splits:[], commission1Paid:false, commission2Paid:false, trackerUserId: state.currentUser.id};
       c.deals.push(d);
     }
     d.building = ex.propertyDescription || d.building;
@@ -4928,6 +4796,30 @@ function renderEgnyteSaveStatusHtml(m){
       return `<div class="tiny" style="color:var(--ink-soft);">Checking Egnyte connection…</div>`;
   }
 }
+// Renders the "Other Documents" section on the Done screen: a per-file status list (one row
+// per file added so far, oldest first) plus whichever action button applies right now — the
+// "+ Add" button in the normal case, or a "grant access" button if permission needs reconfirming.
+function renderOtherDocsStatusHtml(m){
+  const docs = m.otherDocs || [];
+  const rows = docs.map((row,idx)=>{
+    if(row.state==='saving'){
+      return `<div class="tiny" style="color:var(--ink-soft);">⏳ Filing ${escapeHtml(row.name)}…</div>`;
+    }
+    if(row.state==='success'){
+      const renameNote = (row.renamedTo && row.renamedTo!==row.name) ? ` <span style="color:var(--ink-soft);">(saved as ${escapeHtml(row.renamedTo)} — a file with that name was already there)</span>` : '';
+      return `<div class="tiny" style="color:var(--good,#1E8E5A);">✅ Filed ${escapeHtml(row.name)}${renameNote}</div>`;
+    }
+    // error
+    return `<div class="tiny" style="color:var(--bad,#C0392B);">⚠️ Couldn't file ${escapeHtml(row.name)}: ${escapeHtml(row.error||'unknown error')} <button class="btn secondary sm" data-downloadotherdoc="${idx}" style="margin-left:4px;">⬇️ Download instead</button></div>`;
+  }).join('');
+  let actionHtml;
+  if(m.otherDocsNeedsPermission){
+    actionHtml = `<button class="btn secondary sm" data-action="otherDocsRetryPermission" style="margin-top:6px;">🔓 Grant Access &amp; File These</button>`;
+  } else {
+    actionHtml = `<button class="btn secondary sm" data-action="addOtherDocuments" style="margin-top:6px;">+ Add Other Document(s)</button>`;
+  }
+  return `${rows}${actionHtml}`;
+}
 function findClientById(clientId){
   for(const l of db.lists){
     if(!l.clients) continue;
@@ -4967,7 +4859,7 @@ function computeBrokerGrossForUser(userId, year){
   db.lists.filter(l=>l.type==='deep').forEach(l=>{
     l.clients.forEach(c=>{
       (c.deals||[]).forEach(d=>{
-        const totalFee = parseFloat(d.totalFee) || 0;
+        const totalFee = parseFloat(sanitizeMoneyInput(d.totalFee)) || 0;
         if(totalFee<=0) return;
         const mySplit = findSplitForUser(d, userId);
         if(!mySplit) return;
@@ -5013,7 +4905,7 @@ function pipelineRows(){
       items.forEach(({rec:d, sourceTable})=>{
         const wa = PIPELINE_STAGE_WA[d.stage];
         if(!wa) return; // not in the map = Prospect/Dead/no stage — excluded
-        const totalFee = parseFloat(d.totalFee) || 0;
+        const totalFee = parseFloat(sanitizeMoneyInput(d.totalFee)) || 0;
         if(totalFee<=0) return;
         let remaining = totalFee;
         if(d.commission1Paid) remaining -= totalFee/2;
@@ -6409,7 +6301,7 @@ function renderShell(){
     </div>
   </div>
   <button class="fab" data-action="newTodo" title="New To-Do">+</button>
-  ${state.currentUser.email==='mclark@edge-re.com' ? `<button class="voice-fab ${state.voiceNoteRecording?'recording':''}" data-action="voiceNoteToggle" title="Voice Note">${state.voiceNoteRecording?'⏹':'🎙️'}</button>` : ''}
+  ${(state.isMobile && !state.portalChatOpen) ? `<button class="voice-fab ${state.portalChatRecording?'recording':''}" data-action="openEdgyVoice" title="Ask Edgy by voice">${state.portalChatRecording?'⏹':'🎙️'}</button>` : ''}
   ${state.isMobile ? renderMobileTabbar() : ''}
   ${state.showAdminMenu ? renderAdminMenu() : ''}
   `;
@@ -6610,7 +6502,7 @@ function attachShellHandlers(){
   const mine=document.querySelector('[data-action="todoViewMine"]'); if(mine) mine.onclick=()=>{state.todoView='mine'; render();};
   const team=document.querySelector('[data-action="todoViewTeam"]'); if(team) team.onclick=()=>{state.todoView='team'; render();};
   const fab=document.querySelector('[data-action="newTodo"]'); if(fab) fab.onclick=()=>{ state.newTodoPicker={step:'chooseType'}; render(); };
-  const voiceFab=document.querySelector('[data-action="voiceNoteToggle"]'); if(voiceFab) voiceFab.onclick=()=>toggleVoiceNoteRecording();
+  const voiceFab=document.querySelector('[data-action="openEdgyVoice"]'); if(voiceFab) voiceFab.onclick=()=>openEdgyVoice();
   const admin=document.querySelector('[data-action="toggleAdmin"]'); if(admin) admin.onclick=(ev)=>{ ev.stopPropagation(); state.showUserMenu=false; state.showAdminMenu=!state.showAdminMenu; render(); };
   const userMenuBtn=document.querySelector('[data-action="toggleUserMenu"]'); if(userMenuBtn) userMenuBtn.onclick=(ev)=>{ ev.stopPropagation(); state.showAdminMenu=false; state.showUserMenu=!state.showUserMenu; render(); };
   const logout=document.querySelector('[data-action="logout"]'); if(logout) logout.onclick=async ()=>{
@@ -7622,6 +7514,11 @@ function renderLoiImportModal(){
         <div style="font-family:monospace;background:var(--canvas);padding:10px;border-radius:6px;font-size:13px;margin-bottom:8px;">${escapeHtml(m.computedFilename)}.${ext}</div>
         <div id="egnyteSaveStatus">${renderEgnyteSaveStatusHtml(m)}</div>
       </div>
+      <div class="field">
+        <label>Other Documents</label>
+        <div class="tiny" style="color:var(--ink-soft);margin-bottom:6px;">Not part of the deal terms — civil plans, surveys, photos, etc. Filed as-is (original filename) in the same folder as above.</div>
+        <div id="otherDocsStatus">${renderOtherDocsStatusHtml(m)}</div>
+      </div>
       <button class="btn" data-action="loiStartOver" style="width:100%;margin-top:10px;">Import Another</button>
       <button class="btn secondary" data-action="closeLoiImport" style="width:100%;margin-top:8px;">Close</button>
     `;
@@ -7688,6 +7585,11 @@ function renderLoiImportModal(){
     if(egnyteRetryBtn) egnyteRetryBtn.onclick=safeHandler(retryEgnyteSaveWithPermission);
     const egnyteDownloadBtn = overlay.querySelector('[data-action="egnyteManualDownload"]');
     if(egnyteDownloadBtn) egnyteDownloadBtn.onclick=egnyteManualDownload;
+    const addOtherDocsBtn = overlay.querySelector('[data-action="addOtherDocuments"]');
+    if(addOtherDocsBtn) addOtherDocsBtn.onclick=safeHandler(openAddOtherDocuments);
+    const otherDocsRetryBtn = overlay.querySelector('[data-action="otherDocsRetryPermission"]');
+    if(otherDocsRetryBtn) otherDocsRetryBtn.onclick=safeHandler(retryOtherDocumentsPermission);
+    overlay.querySelectorAll('[data-downloadotherdoc]').forEach(b=>b.onclick=()=>downloadOtherDocument(parseInt(b.dataset.downloadotherdoc)));
   }
 
   if(m.step==='review' && !m.matchedClient){
@@ -8273,12 +8175,13 @@ function renderPortalChatWidget(){
   if(!state.portalChatMessages) state.portalChatMessages = [];
   const el = document.createElement('div');
   el.id = 'portalChatWidget';
-  // Michael also has the separate Voice Note fab in this same corner — stack our
-  // button above it instead of covering it, for everyone else there's nothing there.
-  const hasVoiceNoteFab = state.currentUser.email==='mclark@edge-re.com';
+  // Mobile also has the separate mic-shortcut fab in this same corner (opens Edgy already
+  // listening) — stack our button above it instead of covering it. Desktop/iPad-width has
+  // nothing there; Edgy's own in-panel mic (below) covers voice input on those screens.
+  const hasVoiceMicFab = state.isMobile;
   if(!state.portalChatOpen){
     el.innerHTML = `
-    <button id="portalChatToggle" class="portal-chat-fab${hasVoiceNoteFab?' stacked':''}" title="Ask Edgy, Your AI Assistant">🤖</button>`;
+    <button id="portalChatToggle" class="portal-chat-fab${hasVoiceMicFab?' stacked':''}" title="Ask Edgy, Your AI Assistant">🤖</button>`;
     document.getElementById('app').appendChild(el);
     document.getElementById('portalChatToggle').onclick=()=>{
       if(state.isOffline){ flashToast("Edgy needs a connection — try again once you're back online."); render(); return; }
@@ -8336,6 +8239,18 @@ function renderPortalChatWidget(){
   if(!recording) input.focus();
   const msgBox = document.getElementById('portalChatMessages');
   msgBox.scrollTop = msgBox.scrollHeight;
+}
+// Mobile-only mic fab (see renderShell) — one tap opens Edgy already listening, instead of
+// making the person open the chat panel first and then find the small mic inside it. This
+// replaces the old standalone Voice Note feature entirely: Edgy's own tools (add_note,
+// create_prospect, create_todo, etc.) now cover what that separate pipeline used to do.
+// Tapping it again while already listening cancels, same as the in-panel mic button.
+function openEdgyVoice(){
+  if(state.isOffline){ flashToast("Edgy needs a connection — try again once you're back online."); render(); return; }
+  if(state.portalChatRecording){ toggleChatVoiceInput(); return; }
+  state.portalChatOpen = true;
+  render();
+  toggleChatVoiceInput();
 }
 function toggleChatVoiceInput(){
   if(state.portalChatRecording){
@@ -8600,7 +8515,7 @@ function renderDealStageChart(userId, yearFilter){
     // this now matches WIP's weighted total instead of showing the full deal value.
     const wa = PIPELINE_STAGE_WA[d.stage];
     if(!wa) return; // no modeled likelihood for this stage — not part of the pipeline
-    const totalFee = parseFloat(d.totalFee) || 0;
+    const totalFee = parseFloat(sanitizeMoneyInput(d.totalFee)) || 0;
 
     // A lease's commission is really two separate halves, each landing on its own due
     // date — a $10,000 lease with 1st Half due in 2026 and 2nd Half due in 2027 puts
@@ -8828,7 +8743,7 @@ function wipRowsForUser(viewUserId){
     const d = r.deal, c = r.client;
     const wa = PIPELINE_STAGE_WA[d.stage];
     if(!wa) return; // defensive — allDealsForUser already excludes dead/prospect
-    const totalFee = parseFloat(d.totalFee) || 0;
+    const totalFee = parseFloat(sanitizeMoneyInput(d.totalFee)) || 0;
     const mySplit = !isOffice ? findSplitForUser(d, viewUserId) : null;
     const pct = mySplit ? (parseFloat(mySplit.pct)||0) : null;
     const shareFactor = pct!=null ? pct/100 : 1;
@@ -10807,7 +10722,7 @@ function renderCommissionModal(){
   const commStructureEl = document.getElementById('commStructure');
   if(commStructureEl) commStructureEl.oninput=()=>{ obj.commissionStructure = commStructureEl.value; };
   const commTotalFeeEl = document.getElementById('commTotalFee');
-  if(commTotalFeeEl) commTotalFeeEl.oninput=()=>{ obj.totalFee = commTotalFeeEl.value; };
+  if(commTotalFeeEl) commTotalFeeEl.oninput=()=>{ obj.totalFee = sanitizeMoneyInput(commTotalFeeEl.value); };
   overlay.querySelector('[data-action="addSplitRow"]').onclick=()=>{
     draft.push({userId: USERS[0].id, pct: ''});
     renderPreservingScroll('.modal-body');
@@ -10846,7 +10761,7 @@ function renderCommissionModal(){
       return;
     }
     obj.commissionStructure = document.getElementById('commStructure').value.trim();
-    obj.totalFee = document.getElementById('commTotalFee').value.trim();
+    obj.totalFee = sanitizeMoneyInput(document.getElementById('commTotalFee').value);
     obj.splits = draft.map(row=>({userId:row.userId, pct:parseFloat(row.pct)||0}));
     // A sale pays out in one lump sum at close — one checkbox, one date (COE). Everything
     // downstream (WIP report, Pipeline, "fully paid" checks across the app) still reads
@@ -10924,6 +10839,26 @@ function renderDealModalBody(l,c,d){
     </div>
   </div>
   <div style="display:flex;gap:14px;margin-bottom:14px;flex-wrap:wrap;">
+    ${(()=>{
+      // Tracker: who's responsible for this specific deal — a simple dropdown scoped to
+      // whoever has access to the account (creator + authorized users), same convention the
+      // Commission modal's split rows already use for "people on this account." Saves
+      // immediately on change, same as the contact/broker picks in this row, rather than
+      // waiting for the "Save Deal Terms" button below (which only covers the Deal Terms
+      // section further down). Defensively includes the currently-set tracker even if their
+      // account access has since changed, so picking a value never silently disappears.
+      const accountUserIds = Array.from(new Set([c.createdBy, ...(c.authorizedUserIds||[]), d.trackerUserId].filter(Boolean)));
+      const trackerUsers = accountUserIds.map(uid=>USERS.find(u=>u.id===uid)).filter(Boolean);
+      return `
+    <div class="contact-card" style="flex:1;min-width:220px;">
+      <div class="label">Tracker</div>
+      <select id="dealTrackerSelect" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}" ${ro}>
+        <option value="">— Unassigned —</option>
+        ${trackerUsers.map(u=>`<option value="${u.id}" ${d.trackerUserId===u.id?'selected':''}>${escapeHtml(u.name)}</option>`).join('')}
+      </select>
+      <div class="tiny" style="color:var(--ink-soft);margin-top:8px;">Who's responsible for this deal. Defaults to whoever created it.</div>
+    </div>`;
+    })()}
     <div class="contact-card" style="flex:1;min-width:220px;">
       <div class="label">Primary Site Contact</div>
       ${contactRow(d.contactId)}
@@ -11995,6 +11930,14 @@ function attachModalHandlers(root){
     flashToast(d.caExecuted ? `CA marked executed for ${d.name}.` : `CA marked outstanding for ${d.name}.`);
     render();
   }));
+  const dealTrackerEl = root.querySelector('#dealTrackerSelect'); if(dealTrackerEl) dealTrackerEl.onchange=()=>{
+    const l=db.lists.find(x=>x.id===dealTrackerEl.dataset.listid); const c=l && l.clients.find(x=>x.id===dealTrackerEl.dataset.client);
+    const d=c && c.deals.find(x=>x.id===dealTrackerEl.dataset.deal);
+    if(!d){ flashToast("Couldn't find this deal."); render(); return; }
+    d.trackerUserId = dealTrackerEl.value || null;
+    supaUpdateDeal(d, c.id);
+    flashToast(d.trackerUserId ? `${USERS.find(u=>u.id===d.trackerUserId).name} is now tracking ${d.name}.` : `${d.name} is now unassigned.`);
+  };
   root.querySelectorAll('[data-action="pickContact"]').forEach(pick=>pick.onclick=()=>{
     openContactPicker({clientId: pick.dataset.client, slot: pick.dataset.slot}); render();
   });
@@ -12065,7 +12008,7 @@ function attachModalHandlers(root){
     const frame = state.modalStack[state.modalStack.length-1];
     const list=db.lists.find(x=>x.id===frame.listId); const c=list && list.clients.find(x=>x.id===addDeal.dataset.client);
     if(!c){ flashToast("Couldn't find this client."); render(); return; }
-    const newDeal = {id:crypto.randomUUID(), name, complete:false, activeDeal:false, dueDate:null, caExecuted: list.id==='listings'};
+    const newDeal = {id:crypto.randomUUID(), name, complete:false, activeDeal:false, dueDate:null, caExecuted: list.id==='listings', trackerUserId: state.currentUser.id};
     c.deals.push(newDeal);
     await supaCreateDeal(newDeal, c.id);
     openDealModal(frame.listId, c.id, newDeal.id);
@@ -14319,6 +14262,19 @@ function showToastNow(){
 }
 
 /* ---------------- UTIL ---------------- */
+// Strips currency formatting ($, commas, stray whitespace) from a free-typed money field.
+// Real bug this fixes: the Commission modal's "Total Commission to Edge" field is a plain
+// text box, so typing "80,000" (natural, but not what parseFloat expects) used to save that
+// exact string. Every downstream calculation (WIP, Dashboard, Pipeline) reads it via
+// parseFloat(), which stops at the first invalid character — parseFloat("80,000") is 80,
+// not 80000 — so a broker who typed a comma silently lost three zeros everywhere except the
+// Commission modal itself (which just echoes the raw stored string back, so it still looked
+// right there). Used both when the field is saved and defensively wherever totalFee is
+// parsed, so a stray $/comma anywhere in the pipeline can't do this again.
+function sanitizeMoneyInput(str){
+  if(str===undefined||str===null) return '';
+  return String(str).replace(/[$,\s]/g,'').trim();
+}
 function escapeHtml(str){
   if(str===undefined||str===null) return '';
   return String(str).replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
@@ -14524,7 +14480,6 @@ document.addEventListener('keydown', (ev)=>{
   if(state.pipelineView){ state.pipelineView=null; render(); return; }
   if(state.allTiersModalUserId){ state.allTiersModalUserId=null; render(); return; }
   if(state.loiImport){ state.loiImport=null; render(); return; }
-  if(state.voiceNoteAmbiguous){ state.voiceNoteAmbiguous=null; flashToast('Cancelled — nothing was saved.'); render(); return; }
   if(state.signCallModal){ state.signCallModal=null; render(); return; }
   if(state.clientMapModal){ state.clientMapModal=null; render(); return; }
   if(state.geocodeIssuesOpen){ state.geocodeIssuesOpen=false; render(); return; }
