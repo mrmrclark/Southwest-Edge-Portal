@@ -11349,6 +11349,10 @@ function renderLSRNewProspectModal(){
         <div class="field"><label>TI Allowance</label><input id="npTI" value="${escapeAttr(m.tiAllowance)}"></div>
       </div>
       `}
+      <div class="field" style="display:flex;align-items:flex-start;gap:8px;">
+        <input type="checkbox" id="npAddToRoster" style="width:auto;margin-top:3px;">
+        <label for="npAddToRoster" style="margin:0;font-weight:400;cursor:pointer;">Also add to the master Tenant Roster — so it's available as a pick when building a marketing list for any other listing going forward.</label>
+      </div>
       <div class="field"><label>Notes</label><textarea id="npNotes" rows="2">${escapeHtml(m.notes)}</textarea></div>
       <div class="field">
         <label>Edge Tracker</label>
@@ -11411,11 +11415,33 @@ function renderLSRNewProspectModal(){
       ol.prospects.push(stub);
       supaCreateProspect(stub, ol.id);
     });
+    // Per Michael: adding a tenant to one listing should have the OPTION to also land in the
+    // shared, cross-listing Tenant Roster (same table the Marketing List Wizard's "add new
+    // tenant" path already writes to) — so it shows up as a pick when building a marketing
+    // list for any OTHER listing later, not just this one. Deliberately opt-in (checkbox
+    // starts unchecked) since the roster is shared company-wide, not something every one-off
+    // prospect should silently join. Name-matched against the existing roster (same
+    // case-insensitive/trimmed comparison used elsewhere) so checking it twice for the same
+    // tenant doesn't create a duplicate roster entry.
+    let addedToRoster = false, rosterAlready = false;
+    const npAddToRosterEl = document.getElementById('npAddToRoster');
+    if(npAddToRosterEl && npAddToRosterEl.checked){
+      const nameKey = name.toLowerCase().trim();
+      if(TENANT_ROSTER.some(r=>r.name.toLowerCase().trim()===nameKey)){
+        rosterAlready = true;
+      } else {
+        const newRoster = {id:crypto.randomUUID(), name, categoryId, tenantType:'', notes:''};
+        TENANT_ROSTER.push(newRoster); // added to the permanent, cross-listing roster
+        supaCreateRosterEntry(newRoster);
+        addedToRoster = true;
+      }
+    }
     state.lsrNewProspectModal=null;
     if(edgeTracker !== state.currentUser.id){
       notifyNewLSRTracker(edgeTracker, newProspect, listing);
     } else {
-      flashToast(`${name} added${otherChecks.length? ` and stubbed into ${otherChecks.length} other listing(s)`:''}.`);
+      const rosterNote = addedToRoster ? ' — also added to the master Tenant Roster' : (rosterAlready ? ' (already on the master Tenant Roster)' : '');
+      flashToast(`${name} added${otherChecks.length? ` and stubbed into ${otherChecks.length} other listing(s)`:''}${rosterNote}.`);
     }
     render();
   };
