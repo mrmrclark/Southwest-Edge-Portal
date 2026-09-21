@@ -9281,6 +9281,30 @@ function openTodoDetail(id){
     state.brokerReviewModal = {todoId:td.id, reviewId:td.brokerReviewId};
     return;
   }
+  // Per Michael: a to-do's title alone ("Check in on this") often gives zero clue what it's
+  // actually about — you had to close it, hunt down the client/deal separately, then remember
+  // why you cared. So when a to-do is linked to a Client/Deal, pop that up in the background
+  // FIRST, then the To-Do Details on top of it — closing the to-do then lands you right on the
+  // deal (or client) page with full context, instead of back on a flat to-do list. Only does
+  // this when opening fresh (no modal already open) — if the to-do was reached from inside a
+  // modal that's already showing this exact context (e.g. a linked to-do inside an Event's own
+  // checklist), there's nothing to add and pushing another copy would just be a confusing
+  // duplicate breadcrumb.
+  if(td && !state.modalStack.length && (td.dealId || td.clientId)){
+    const l = db.lists.find(x=>x.id===td.listId);
+    const c = l && l.clients.find(x=>x.id===td.clientId);
+    if(c && canViewClientLocally(l.id, c.id)){
+      if(td.dealId){
+        const d = c.deals.find(x=>x.id===td.dealId);
+        if(d) state.modalStack = withPageScroll([
+          {kind:'client', listId:l.id, clientId:c.id, viewMode:'all'},
+          {kind:'deal', listId:l.id, clientId:c.id, dealId:d.id}
+        ]);
+      } else {
+        state.modalStack = withPageScroll([{kind:'client', listId:l.id, clientId:c.id, viewMode:'all'}]);
+      }
+    }
+  }
   state.todoDetailModal = {id, originalAssignedTo: td ? td.assignedTo : null};
   if(td && td.isNew && td.assignedTo===state.currentUser.id) td.isNew=false;
 }
