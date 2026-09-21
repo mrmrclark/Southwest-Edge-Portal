@@ -819,6 +819,7 @@ async function fetchAllProfilesIntoUsers(){
     u.commissionPlanId = p.commission_plan_id || null;
     u.dashboardTier = p.dashboard_tier || 'standard';
     u.title = p.title || null;
+    u.mcpConnectedAt = p.mcp_connected_at || null;
   });
 }
 
@@ -4226,9 +4227,9 @@ function goToGlobalSearchResult(action){
   } else if(action.type==='client'){
     openClientModal(action.listId, action.clientId);
   } else if(action.type==='deal'){
-    state.modalStack=[{kind:'client', listId:action.listId, clientId:action.clientId, viewMode:'all'}, {kind:'deal', listId:action.listId, clientId:action.clientId, dealId:action.dealId}];
+    state.modalStack=withPageScroll([{kind:'client', listId:action.listId, clientId:action.clientId, viewMode:'all'}, {kind:'deal', listId:action.listId, clientId:action.clientId, dealId:action.dealId}]);
   } else if(action.type==='prospect'){
-    state.modalStack=[{kind:'client', listId:'listings', clientId:action.clientId, viewMode:'prospecting'}];
+    state.modalStack=withPageScroll([{kind:'client', listId:'listings', clientId:action.clientId, viewMode:'prospecting'}]);
     openLSRProspect(action.clientId, action.prospectId);
   } else if(action.type==='todo'){
     openTodoDetail(action.id);
@@ -6469,10 +6470,10 @@ function attachShellHandlers(){
   document.querySelectorAll('[data-opendealdirect]').forEach(el=>el.onclick=(ev)=>{
     ev.stopPropagation();
     const listId = el.dataset.listid || 'clients';
-    state.modalStack = [
+    state.modalStack = withPageScroll([
       {kind:'client', listId, clientId:el.dataset.client, viewMode:'all'},
       {kind:'deal', listId, clientId:el.dataset.client, dealId:el.dataset.opendealdirect}
-    ];
+    ]);
     render();
   });
   document.querySelectorAll('[data-action="toggleAllDealsAccount"]').forEach(el=>el.onclick=(ev)=>{
@@ -8032,6 +8033,13 @@ function renderClientMapModal(){
 }
 // --- Dashboard (landing page) ---
 function renderConnectAssistantCard(){
+  // Hides for good once this person has actually connected the Claude MCP connector —
+  // profiles.mcp_connected_at gets stamped by the mcp-oauth edge function's /do-login step,
+  // the moment a real successful login+authorization happens (see that function's comments).
+  // That's separate from, and in addition to, the manual ✕ dismiss below: mcp_connected_at
+  // works across every browser/device without needing a click, while the ✕ still covers
+  // someone who dismisses without ever actually connecting.
+  if(state.currentUser && state.currentUser.mcpConnectedAt) return '';
   let dismissed = false;
   try{ dismissed = localStorage.getItem('sweConnectAssistantDismissed')==='1'; }catch(e){}
   if(dismissed) return '';
@@ -9910,12 +9918,27 @@ function canViewClientLocally(listId, clientId){
   if(!c) return false; // not even present in this browser's data — definitely no access
   return c.createdBy===state.currentUser.id || (c.authorizedUserIds||[]).includes(state.currentUser.id);
 }
+// Captures the underlying PAGE's own scroll position (the `.content` scroller — WIP, All
+// Deals, a smart list, etc.) at the moment a FRESH modal stack is opened directly from that
+// page. Every render() call rebuilds `.content` from scratch, so by the time the modal is
+// actually on screen the page's old scroll position is already gone; it has to be grabbed
+// here, before that first render, and carried on the bottom frame so closeModalStack() can
+// put it back once the whole stack closes and the page reappears underneath. Real bug this
+// fixes: opening a deal straight from WIP (or a client straight from a list) and then closing
+// it back out used to always snap the page back to the top, because nothing preserved that
+// scroll position — this is the same trick openDealModal() already uses for parentScrollTop
+// between nested modal frames, just extended one level further out to the real page.
+function withPageScroll(frames){
+  const el = document.querySelector('.content');
+  if(el && frames[0]) frames[0].pageScrollTop = el.scrollTop;
+  return frames;
+}
 function openClientModal(listId, clientId, viewMode){
   if(!canViewClientLocally(listId, clientId)){
     alert('You are not listed as a user on the account.');
     return;
   }
-  state.modalStack=[{kind:'client', listId, clientId, viewMode: viewMode||'all'}];
+  state.modalStack=withPageScroll([{kind:'client', listId, clientId, viewMode: viewMode||'all'}]);
 }
 function openDealModal(listId, clientId, dealId){
   if(!canViewClientLocally(listId, clientId)){
@@ -9926,7 +9949,7 @@ function openDealModal(listId, clientId, dealId){
   state.modalStack.push({kind:'deal', listId, clientId, dealId, parentScrollTop: parentScroller ? parentScroller.scrollTop : null});
 }
 function openEntryModal(listId, entryId){
-  state.modalStack=[{kind:'entry', listId, entryId}];
+  state.modalStack=withPageScroll([{kind:'entry', listId, entryId}]);
 }
 function openArchivedClientModal(listId, clientId){
   const idx = (db.archivedClients||[]).findIndex(x=>x.id===clientId);
@@ -9946,7 +9969,17 @@ function closeModalStack(){
       db.archivedClients.push(c);
     }
   }
+  // See withPageScroll() — the bottom frame may be carrying the page's pre-open scroll
+  // position (WIP, All Deals, a smart list, ...). Grab it before the stack is cleared, then
+  // put it back once the page is showing again, so closing out fully doesn't snap back to top.
+  const pageScrollTop = bottom && typeof bottom.pageScrollTop==='number' ? bottom.pageScrollTop : null;
   state.modalStack=[]; state.reopenMapAfterDealClose=null; render();
+  if(pageScrollTop!==null){
+    requestAnimationFrame(()=>{
+      const el = document.querySelector('.content');
+      if(el) el.scrollTop = pageScrollTop;
+    });
+  }
 }
 function popModalTo(index){ state.modalStack = state.modalStack.slice(0, index+1); state.reopenMapAfterDealClose=null; render(); }
 // Shared by the ✕ button and the Escape key — always steps back exactly ONE level of
