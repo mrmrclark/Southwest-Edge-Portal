@@ -4043,7 +4043,7 @@ function renderSidebar(){
     <div class="nav-section-label">Smart Lists <button class="nav-add" data-action="addSmartList">+</button></div>
     <div class="nav-list">
       ${visibleSmarts.map(sl=>{
-        let items = sl.id==='allDeals' ? allDealsList().filter(r=>r.client.createdBy===state.currentUser.id || (r.client.authorizedUserIds||[]).includes(state.currentUser.id)) : (sl.id==='archivedDeals' ? archivedDealsList().filter(r=>r.client.createdBy===state.currentUser.id || (r.client.authorizedUserIds||[]).includes(state.currentUser.id)) : (sl.id==='caStatus' ? caOutstandingCount() : (smartListTodos(sl.id) ? smartListTodos(sl.id).filter(visibleTodo) : [])));
+        let items = sl.id==='allDeals' ? allDealsList().filter(r=>userHasDealRowAccess(r.client, r.deal, state.currentUser.id)) : (sl.id==='archivedDeals' ? archivedDealsList().filter(r=>userHasDealRowAccess(r.client, r.deal, state.currentUser.id)) : (sl.id==='caStatus' ? caOutstandingCount() : (smartListTodos(sl.id) ? smartListTodos(sl.id).filter(visibleTodo) : [])));
         if((sl.id==='week' || sl.id==='month') && state.todoView!=='team'){
           // Match exactly what clicking into this list actually shows: by default that's
           // narrowed to "assigned to me" only, not everything in my broader sphere — the
@@ -5612,7 +5612,7 @@ function allDealsList(){
 function allDealsForUser(userId){
   const rows = allDealsList();
   if(!userId) return rows; // null/'office' = everyone
-  return rows.filter(r=>r.client.createdBy===userId || (r.client.authorizedUserIds||[]).includes(userId));
+  return rows.filter(r=>userHasDealRowAccess(r.client, r.deal, userId));
 }
 function archivedDealsList(){
   const out = [];
@@ -5630,10 +5630,11 @@ function archivedDealsList(){
 function renderAllDealsMain(){
   let rows = allDealsList();
   const me = state.currentUser.id;
-  const isMine = c => c.createdBy===me || (c.authorizedUserIds||[]).includes(me);
   // Only your own deals — Admin/Full Access no longer see everyone else's here at all.
   // Anything else is already visible elsewhere (the Clients/Listings "Other" sections).
-  rows = rows.filter(r=>isMine(r.client));
+  // "Your own" also includes deal-scoped access (tracker/split holder without full account
+  // access) — same rule as allDealsForUser(), which this list is meant to match.
+  rows = rows.filter(r=>userHasDealRowAccess(r.client, r.deal, me));
 
   const searchQ = (state.listSearchQuery||'').trim();
   if(searchQ) rows = rows.filter(r=>matchesSearchTokens(`${r.deal.name} ${r.client.name}`, searchQ));
@@ -5696,8 +5697,7 @@ function renderAllDealsMain(){
 function renderArchivedDealsMain(){
   let rows = archivedDealsList();
   const me = state.currentUser.id;
-  const isMine = c => c.createdBy===me || (c.authorizedUserIds||[]).includes(me);
-  rows = rows.filter(r=>isMine(r.client));
+  rows = rows.filter(r=>userHasDealRowAccess(r.client, r.deal, me));
 
   const searchQ = (state.listSearchQuery||'').trim();
   if(searchQ) rows = rows.filter(r=>matchesSearchTokens(`${r.deal.name} ${r.client.name}`, searchQ));
@@ -9935,12 +9935,36 @@ function wireTodoRowHandlers(root){
 // Central access gate for opening a client/deal — every navigation path (search results,
 // nav links, "move to" pickers, anything now or added later) routes through these two
 // functions, so checking access here covers all of them in one place.
+// Deal-scoped access (added 2026-09-22, Sofia/Dutch Bros): someone who isn't on the account
+// itself (not the creator, not in authorizedUserIds) can still legitimately need to see ONE OR
+// MORE of its deals — as that deal's tracker, or as a commission-split holder on it. Supabase
+// RLS enforces the exact same rule server-side (see the add_deal_scoped_access migration), so
+// by the time c.deals reaches the browser for someone in this situation, it has already been
+// filtered down to just the deals they're allowed to see. These two helpers just answer "does
+// that apply here" for UI purposes — which client rows appear, what's editable, what banner to
+// show — the actual enforcement lives in Postgres either way.
+function isDealScopedForUser(d, userId){
+  if(!d || !userId) return false;
+  return isSameUser(d.trackerUserId, userId) || !!findSplitForUser(d, userId);
+}
+function dealScopedAccessDeals(c, userId){
+  if(!c) return [];
+  return (c.deals||[]).filter(d=>isDealScopedForUser(d, userId));
+}
+// Same idea, one level down — for "list of individual deal rows" views (All Deals, Archived
+// Deals, WIP, Dashboard, all of which key off allDealsForUser()) rather than "list of clients."
+// Account-level access still grants every deal on the account, same as always; this only adds
+// deal-scoped access as an ADDITIONAL way in for someone who isn't on the account at all.
+function userHasDealRowAccess(client, deal, userId){
+  return client.createdBy===userId || (client.authorizedUserIds||[]).includes(userId) || isDealScopedForUser(deal, userId);
+}
 function canViewClientLocally(listId, clientId){
   if(state.currentUser.role==='Admin' || state.currentUser.role==='FullAccess') return true;
   const l = db.lists.find(x=>x.id===listId);
   const c = l && l.clients.find(x=>x.id===clientId);
   if(!c) return false; // not even present in this browser's data — definitely no access
-  return c.createdBy===state.currentUser.id || (c.authorizedUserIds||[]).includes(state.currentUser.id);
+  if(c.createdBy===state.currentUser.id || (c.authorizedUserIds||[]).includes(state.currentUser.id)) return true;
+  return dealScopedAccessDeals(c, state.currentUser.id).length>0;
 }
 // Captures the underlying PAGE's own scroll position (the `.content` scroller — WIP, All
 // Deals, a smart list, etc.) at the moment a FRESH modal stack is opened directly from that
@@ -10103,7 +10127,7 @@ function renderTopModalCard(){
     const d=c.deals.find(x=>x.id===frame.dealId);
     titleText=d.name; brandName=c.name;
     bodyHtml = renderDealModalBody(l,c,d);
-    dealCanEdit = state.currentUser.role==='Admin' || c.createdBy===state.currentUser.id || (c.authorizedUserIds||[]).includes(state.currentUser.id);
+    dealCanEdit = state.currentUser.role==='Admin' || c.createdBy===state.currentUser.id || (c.authorizedUserIds||[]).includes(state.currentUser.id) || isDealScopedForUser(d, state.currentUser.id);
   } else if(frame.kind==='entry'){
     const l=db.lists.find(x=>x.id===frame.listId); const e=l.entries.find(x=>x.id===frame.entryId);
     titleText=e.name; brandName=e.name;
@@ -10178,7 +10202,10 @@ function renderClientModalBody(l,c,viewMode,pendingDel){
   viewMode = viewMode || 'all';
   const showDeals = viewMode!=='prospecting';
   const showProspecting = l.id==='listings' && !state.isMobile;
-  const canEdit = state.currentUser.role==='Admin' || c.createdBy===state.currentUser.id || (c.authorizedUserIds||[]).includes(state.currentUser.id);
+  const isAccountMember = state.currentUser.role==='Admin' || c.createdBy===state.currentUser.id || (c.authorizedUserIds||[]).includes(state.currentUser.id);
+  const scopedDeals = isAccountMember ? [] : dealScopedAccessDeals(c, state.currentUser.id);
+  const isDealScopedOnly = !isAccountMember && scopedDeals.length>0;
+  const canEdit = isAccountMember;
   const canManageAccess = state.currentUser.role==='Admin' || c.createdBy===state.currentUser.id;
   const creator = USERS.find(u=>u.id===c.createdBy);
   const authorizedUsers = (c.authorizedUserIds||[]).map(id=>USERS.find(u=>u.id===id)).filter(Boolean);
@@ -10219,6 +10246,17 @@ function renderClientModalBody(l,c,viewMode,pendingDel){
       <button class="btn secondary sm" data-action="openCommissionSummary" data-client="${c.id}">${cs.locked ? 'View Commission Summary' : 'View / Approve'}</button>
     `}
   </div>`;
+  if(isDealScopedOnly){
+    // Not on the account at all — the tracker or a commission-split holder on some of its
+    // deals, and nothing else. Everything account-level (contacts, general to-do's, access,
+    // commission summary, ELA, notes, tags, archive/delete) stays hidden; only the deals they're
+    // actually scoped into are shown, already filtered down by Supabase RLS in c.deals.
+    return `
+    <div style="background:#EFF6FA;border:1px solid #CBE0EE;border-radius:8px;padding:8px 14px;font-size:12.5px;color:#2C6E9E;margin-bottom:14px;">🔎 Scoped view — you're the tracker or a commission-split holder on ${scopedDeals.length} deal${scopedDeals.length===1?'':'s'} here, so that's all you can see. The rest of this ${l.id==='listings'?'listing':'client'} is hidden.</div>
+    <div class="section-label">Sites / Deals</div>
+    ${renderDealGroupsInClient(l,c)}
+    `;
+  }
   return `
   ${!canEdit ? `<div style="background:#F3F1EC;border:1px solid var(--line);border-radius:8px;padding:8px 14px;font-size:12.5px;color:var(--ink-soft);margin-bottom:14px;">👁️ View-only — you have Full Access visibility but aren't personally added to this ${l.id==='listings'?'listing':'client'}, so editing is turned off.</div>` : ''}
   ${showDeals ? `
@@ -10883,10 +10921,13 @@ function renderBrokerReviewSection(sourceTable, sourceId){
 function renderDealModalBody(l,c,d){
   const todos = db.todos.filter(t=>t.dealId===d.id).filter(visibleTodo);
   const caExecuted = d.caExecuted!==undefined ? d.caExecuted : (l.id==='listings');
-  const canEdit = state.currentUser.role==='Admin' || c.createdBy===state.currentUser.id || (c.authorizedUserIds||[]).includes(state.currentUser.id);
+  const isAccountMember = state.currentUser.role==='Admin' || c.createdBy===state.currentUser.id || (c.authorizedUserIds||[]).includes(state.currentUser.id);
+  const isDealScoped = !isAccountMember && isDealScopedForUser(d, state.currentUser.id);
+  const canEdit = isAccountMember || isDealScoped;
   const ro = canEdit ? '' : 'disabled';
   return `
-  ${!canEdit ? `<div style="background:#F3F1EC;border:1px solid var(--line);border-radius:8px;padding:8px 14px;font-size:12.5px;color:var(--ink-soft);margin-bottom:14px;">👁️ View-only — you have Full Access visibility but aren't personally added to this ${l.id==='listings'?'listing':'client'}, so editing is turned off.</div>` : ''}
+  ${(!canEdit && state.currentUser.role==='FullAccess') ? `<div style="background:#F3F1EC;border:1px solid var(--line);border-radius:8px;padding:8px 14px;font-size:12.5px;color:var(--ink-soft);margin-bottom:14px;">👁️ View-only — you have Full Access visibility but aren't personally added to this ${l.id==='listings'?'listing':'client'}, so editing is turned off.</div>` : ''}
+  ${isDealScoped ? `<div style="background:#EFF6FA;border:1px solid #CBE0EE;border-radius:8px;padding:8px 14px;font-size:12.5px;color:#2C6E9E;margin-bottom:14px;">🔎 You can see and edit this deal as its tracker or a commission-split holder — the rest of this ${l.id==='listings'?'listing':'client'} is hidden from you.</div>` : ''}
   <div style="display:flex;align-items:center;justify-content:flex-end;margin-bottom:14px;flex-wrap:wrap;gap:10px;">
     <div style="display:flex;gap:14px;">
       <label style="display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--ink-soft);font-weight:600;">
