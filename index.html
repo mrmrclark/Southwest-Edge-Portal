@@ -1479,6 +1479,10 @@ function entryRowToLocal(r){
           // Hit List event — same entries/entry_authorized_users sharing model either way.
           kind: r.kind || null, startDate: r.start_date? new Date(r.start_date+'T00:00:00'):null,
           endDate: r.end_date? new Date(r.end_date+'T00:00:00'):null, location: r.location||'',
+          // Like a To-Do's attachments, these live only in memory (see the PERSISTENCE note
+          // near saveAppState) — not a column on the entries table, so always starts empty
+          // on load/sync rather than coming from the row.
+          attachments:[],
           checklistItems: (r.checklist_items || []).map(item=>({...item}))};
 }
 function entryLocalToRow(e, listId){
@@ -6247,6 +6251,14 @@ function renderNewEventModal(){
       <div class="field"><label>Start date</label><input type="date" id="neStart" value="${escapeAttr(m.startInput)}"></div>
       <div class="field"><label>End date</label><input type="date" id="neEnd" value="${escapeAttr(m.endInput)}"></div>
       <div class="field"><label>Location</label><input id="neLocation" placeholder="e.g., Las Vegas, NV" value="${escapeAttr(m.location)}"></div>
+      <div class="field">
+        <label>Attachments</label>
+        <div id="neDropZone" style="border:1.5px dashed var(--line);border-radius:10px;padding:14px;text-align:center;font-size:12.5px;color:var(--ink-soft);cursor:pointer;" onclick="document.getElementById('neFileInput').click()">
+          📎 Drag files here, or click to browse
+        </div>
+        <input type="file" id="neFileInput" multiple style="display:none;">
+        ${attachmentListHtml(m.attachments, 'new-event')}
+      </div>
     </div>
     <div class="modal-foot">
       <button class="btn secondary" data-action="closeNewEvent">Cancel</button>
@@ -6256,6 +6268,7 @@ function renderNewEventModal(){
   document.getElementById('app').appendChild(overlay);
   const neNameEl = document.getElementById('neName'); if(neNameEl) setTimeout(()=>neNameEl.focus(), 0);
   overlay.querySelectorAll('[data-action="closeNewEvent"]').forEach(b=>b.onclick=()=>{ state.newEventModal=null; render(); });
+  wireAttachmentZone(overlay, 'neDropZone', 'neFileInput', ()=>m.attachments, 'new-event');
   overlay.querySelector('[data-action="saveNewEvent"]').onclick=safeHandler(async ()=>{
     const name = document.getElementById('neName').value.trim();
     if(!name){ flashToast(`Give this ${label.toLowerCase()} a name first.`); return; }
@@ -6266,7 +6279,7 @@ function renderNewEventModal(){
     const newEntry = {
       id:crypto.randomUUID(), name, lastCall:null, feedback:'', contactId:null, ownerId:state.currentUser.id,
       kind:m.kind, startDate: startInput? new Date(startInput+'T00:00:00'):null, endDate: endInput? new Date(endInput+'T00:00:00'):null,
-      location, checklistItems:[], authorizedUserIds:[]
+      location, checklistItems:[], authorizedUserIds:[], attachments: m.attachments
     };
     l.entries.push(newEntry);
     state.newEventModal=null;
@@ -6709,7 +6722,7 @@ function attachShellHandlers(){
     render();
   });
   document.querySelectorAll('[data-action="addEvent"]').forEach(el=>el.onclick=()=>{
-    state.newEventModal = {kind: el.dataset.eventkind, listId: el.dataset.listid, name:'', startInput:'', endInput:'', location:''};
+    state.newEventModal = {kind: el.dataset.eventkind, listId: el.dataset.listid, name:'', startInput:'', endInput:'', location:'', attachments:[]};
     renderNewEventModal();
   });
   ['adminPending','adminFullTeam','adminImportTodos','adminImportTaskFire','adminImportMaps','adminDigest','adminUsers','adminTimes','adminReset','openBrokerReviewLog','openPipelineView','openLoiImport','openGeocodeIssues','goToDashboard','openMsCalendarConnect'].forEach(a=>{
@@ -10818,6 +10831,16 @@ function renderCommissionModal(){
   if(commStructureEl) commStructureEl.oninput=()=>{ obj.commissionStructure = commStructureEl.value; };
   const commTotalFeeEl = document.getElementById('commTotalFee');
   if(commTotalFeeEl) commTotalFeeEl.oninput=()=>{ obj.totalFee = sanitizeMoneyInput(commTotalFeeEl.value); };
+  // 2nd Half Due starts blank, so its own date picker has nothing to anchor to and opens
+  // on today by default — not useful, since the 2nd half is almost always some time after
+  // the 1st half, never before today specifically. Once the 1st Half Due is picked, carry
+  // it over as the 2nd Half's starting point (only if the person hasn't already set their
+  // own 2nd Half date) so its picker opens there instead — still freely editable after.
+  const comm1DueEl = document.getElementById('comm1Due');
+  const comm2DueEl = document.getElementById('comm2Due');
+  if(comm1DueEl && comm2DueEl) comm1DueEl.onchange=()=>{
+    if(!comm2DueEl.value) comm2DueEl.value = comm1DueEl.value;
+  };
   overlay.querySelector('[data-action="addSplitRow"]').onclick=()=>{
     draft.push({userId: USERS[0].id, pct: ''});
     renderPreservingScroll('.modal-body');
@@ -11862,6 +11885,7 @@ function renderEntryModalBody(l,e){
 // exact same owner/authorizedUserIds block as renderEntryModalBody above.
 function renderEventModalBody(l,e){
   if(!e.checklistItems) e.checklistItems=[];
+  if(!e.attachments) e.attachments=[];
   const label = e.kind==='convention' ? 'Convention' : 'Market Trip';
   const owner = USERS.find(u=>u.id===e.ownerId);
   const canManageAccess = state.currentUser.role==='Admin' || e.ownerId===state.currentUser.id;
@@ -11909,6 +11933,14 @@ function renderEventModalBody(l,e){
   <div class="section-label" style="margin-top:18px;">Checklist</div>
   <div class="field">${checklistHtml}</div>
   <button class="btn secondary sm" data-action="addEventChecklistItem" data-entry="${e.id}" style="margin-top:6px;">+ Add item</button>
+  <div class="section-label" style="margin-top:18px;">Attachments</div>
+  <div class="field">
+    <div id="evDropZone" style="border:1.5px dashed var(--line);border-radius:10px;padding:14px;text-align:center;font-size:12.5px;color:var(--ink-soft);cursor:pointer;" onclick="document.getElementById('evFileInput').click()">
+      📎 Drag files here, or click to browse
+    </div>
+    <input type="file" id="evFileInput" multiple style="display:none;">
+    ${attachmentListHtml(e.attachments, 'ev')}
+  </div>
   ${accessHtml}
   ${state.currentUser.role==='Admin' ? `
   <div style="margin-top:24px;padding-top:16px;border-top:1px solid var(--line-soft);">
@@ -12353,6 +12385,14 @@ function attachModalHandlers(root){
     supaUpdateEntry(e, l.id);
     renderPreservingScroll('.modal-body');
   });
+  // Convention/Market Trip attachments — same in-memory-only drop zone as a To-Do's
+  // (see the PERSISTENCE note near saveAppState: attachments never go to Supabase),
+  // just read/written on the entry instead of a to-do.
+  if(root.querySelector('#evDropZone')){
+    const evFrame = state.modalStack[0];
+    const evL = db.lists.find(x=>x.id===evFrame.listId); const evE = evL && evL.entries.find(x=>x.id===evFrame.entryId);
+    if(evE) wireAttachmentZone(root, 'evDropZone', 'evFileInput', ()=>evE.attachments, 'ev');
+  }
   // "+ To-Do" on a checklist line opens the normal New To-Do modal, pre-linked to this
   // entry and pre-filled with the line's text — same pattern as a Project's "+ New To-Do"
   // (openNewTodoModal + renderNewTodoModal stacked on top, no full re-render). The line
