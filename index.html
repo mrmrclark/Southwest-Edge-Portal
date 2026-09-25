@@ -420,6 +420,19 @@
   .modal-close{background:rgba(255,255,255,.18);border:none;color:#fff;min-width:28px;height:28px;padding:0 10px;border-radius:8px;font-size:14px;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center;}
   .modal-close:hover{background:rgba(255,255,255,.32);}
   .modal-body{padding:18px 20px;overflow-y:auto;flex:1;overscroll-behavior-y:contain;}
+  /* movable / resizable windows (desktop) */
+  .mw-draggable{cursor:move;user-select:none;}
+  .mw-draggable input, .mw-draggable textarea, .mw-draggable select{user-select:text;cursor:auto;}
+  .mw-h{position:absolute;z-index:5;}
+  .mw-n,.mw-s{left:10px;right:10px;height:6px;cursor:ns-resize;}
+  .mw-n{top:0;} .mw-s{bottom:0;}
+  .mw-e,.mw-w{top:10px;bottom:10px;width:6px;cursor:ew-resize;}
+  .mw-e{right:0;} .mw-w{left:0;}
+  .mw-ne,.mw-nw,.mw-se,.mw-sw{width:12px;height:12px;}
+  .mw-ne{top:0;right:0;cursor:nesw-resize;} .mw-sw{bottom:0;left:0;cursor:nesw-resize;}
+  .mw-nw{top:0;left:0;cursor:nwse-resize;} .mw-se{bottom:0;right:0;cursor:nwse-resize;}
+  body.mw-busy, body.mw-busy *{user-select:none !important;}
+  @media (max-width:820px){ .mw-h{display:none;} .mw-draggable{cursor:auto;} }
   .modal-foot{padding:12px 20px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end;}
 
   .contact-card{
@@ -3163,6 +3176,7 @@ function render(){
     </div>`;
     return;
   }
+  const __scrollSnap = captureScrollPositions();
   app.innerHTML = renderShell();
   attachShellHandlers();
   if(state.modalStack.length){
@@ -3214,7 +3228,167 @@ function render(){
   renderPortalChatWidget();
   if(state.undoToast) renderUndoToast();
   if(state.toast) showToastNow();
+  restoreScrollPositions(__scrollSnap);
 }
+
+/* ---------------- SCROLL PRESERVATION ----------------
+   render() rebuilds the whole DOM, which used to snap every scrollbar (sidebar,
+   main page, open windows) back to the top on any click. Capture them first and
+   put them back after. The main page only keeps its spot if you're still on the
+   same page; a window only keeps its spot if it's the same window (same title). */
+function mainViewKey(){
+  try { return JSON.stringify(state.mainView||{}).slice(0,400); } catch(e){ return String(state.mainView && state.mainView.type); }
+}
+function captureScrollPositions(){
+  const snap = {sidebar:null, content:null, viewKey:mainViewKey(), modals:[]};
+  const sb = document.querySelector('.sidebar'); if(sb) snap.sidebar = sb.scrollTop;
+  const ct = document.querySelector('.content'); if(ct) snap.content = ct.scrollTop;
+  document.querySelectorAll('.modal-card').forEach(card=>{
+    const body = card.querySelector('.modal-body');
+    if(body) snap.modals.push({key: modalWindowKey(card), top: body.scrollTop});
+  });
+  return snap;
+}
+function restoreScrollPositions(snap){
+  if(!snap) return;
+  const sb = document.querySelector('.sidebar'); if(sb && snap.sidebar) sb.scrollTop = snap.sidebar;
+  if(snap.viewKey===mainViewKey()){ const ct = document.querySelector('.content'); if(ct && snap.content) ct.scrollTop = snap.content; }
+  if(snap.modals.length){
+    const used = new Set();
+    document.querySelectorAll('.modal-card').forEach(card=>{
+      const body = card.querySelector('.modal-body'); if(!body) return;
+      const key = modalWindowKey(card);
+      const idx = snap.modals.findIndex((m,i)=>!used.has(i) && m.key===key);
+      if(idx>-1){ used.add(idx); if(snap.modals[idx].top) body.scrollTop = snap.modals[idx].top; }
+    });
+  }
+}
+
+/* ---------------- MOVABLE / RESIZABLE WINDOWS ----------------
+   Every pop-up (.modal-card) can be dragged by its orange header, resized from any
+   edge or corner, and double-clicked on the header to maximize / restore — like a
+   standard Windows window. Position/size is remembered per window (by title, or by
+   kind for the Client/Deal/Entry stack) and survives re-renders and reloads.
+   Desktop only — phones keep full-screen windows. */
+const MW_STORE_KEY = 'edgeWindowGeom_v1';
+const MW_MIN_W = 320, MW_MIN_H = 200;
+let mwGeom = {};
+try { mwGeom = JSON.parse(localStorage.getItem(MW_STORE_KEY)||'{}') || {}; } catch(e){ mwGeom = {}; }
+function mwSave(){
+  try {
+    const keys = Object.keys(mwGeom);
+    if(keys.length>60) keys.slice(0, keys.length-60).forEach(k=>delete mwGeom[k]);
+    localStorage.setItem(MW_STORE_KEY, JSON.stringify(mwGeom));
+  } catch(e){}
+}
+function mwIsDesktop(){ return !state.isMobile && window.innerWidth > 820; }
+function modalWindowKey(card){
+  if(card.dataset.mwKey) return card.dataset.mwKey;
+  const t = card.querySelector('.modal-title');
+  return 'title:' + ((t && t.textContent) || 'window').trim().slice(0,80);
+}
+function mwClamp(g){
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const w = Math.max(MW_MIN_W, Math.min(g.width, vw));
+  const h = Math.max(MW_MIN_H, Math.min(g.height, vh));
+  const left = Math.min(Math.max(g.left, -w+120), vw-120);   // always leave some of it on screen
+  const top = Math.min(Math.max(g.top, 0), vh-48);            // header never goes off the top
+  return {left, top, width:w, height:h};
+}
+function mwApply(card, g){
+  const c = mwClamp(g);
+  Object.assign(card.style, {position:'fixed', left:c.left+'px', top:c.top+'px', width:c.width+'px', height:c.height+'px',
+    maxWidth:'none', maxHeight:'none', margin:'0'});
+}
+function mwCurrentGeom(card){
+  const r = card.getBoundingClientRect();
+  return {left:r.left, top:r.top, width:r.width, height:r.height};
+}
+function mwEnhance(card){
+  if(card.dataset.mwReady || !mwIsDesktop()) return;
+  if(card.closest('#mapPrintOverlay')) return;
+  card.dataset.mwReady = '1';
+  card.dataset.mwOrigStyle = card.getAttribute('style') || '';
+  const key = modalWindowKey(card);
+  const saved = mwGeom[key];
+  if(saved && saved.geom) mwApply(card, saved.max ? mwMaxGeom() : saved.geom);
+  if(getComputedStyle(card).position==='static') card.style.position='relative';
+  // resize handles on every edge + corner
+  ['n','s','e','w','ne','nw','se','sw'].forEach(dir=>{
+    const h = document.createElement('div');
+    h.className = 'mw-h mw-'+dir; h.dataset.dir = dir;
+    h.addEventListener('pointerdown', ev=>mwStartResize(ev, card, dir));
+    card.appendChild(h);
+  });
+  const head = card.querySelector('.modal-head');
+  if(head){
+    head.classList.add('mw-draggable');
+    head.title = head.title || 'Drag to move · double-click to maximize';
+    head.addEventListener('pointerdown', ev=>mwStartDrag(ev, card));
+    head.addEventListener('dblclick', ev=>{
+      if(mwIsInteractive(ev.target)) return;
+      const k = modalWindowKey(card);
+      const cur = mwGeom[k] || {};
+      if(cur.max){ cur.max = false; if(cur.geom) mwApply(card, cur.geom); else { card.setAttribute('style', card.dataset.mwOrigStyle||''); if(getComputedStyle(card).position==='static') card.style.position='relative'; delete mwGeom[k]; mwSave(); return; } }
+      else { if(!cur.geom) cur.geom = mwCurrentGeom(card); cur.max = true; mwApply(card, mwMaxGeom()); }
+      mwGeom[k] = cur; mwSave();
+    });
+  }
+}
+function mwMaxGeom(){ return {left:12, top:12, width:window.innerWidth-24, height:window.innerHeight-24}; }
+function mwIsInteractive(el){
+  return !!(el && el.closest && el.closest('button, a, input, select, textarea, label, [data-crumb], [data-action], .modal-breadcrumb span'));
+}
+function mwStartDrag(ev, card){
+  if(ev.button!==0 || mwIsInteractive(ev.target) || !mwIsDesktop()) return;
+  ev.preventDefault();
+  const key = modalWindowKey(card);
+  const start = mwCurrentGeom(card);
+  const sx = ev.clientX, sy = ev.clientY;
+  let moved = false;
+  const onMove = e=>{
+    const dx = e.clientX-sx, dy = e.clientY-sy;
+    if(!moved && Math.abs(dx)+Math.abs(dy)<3) return;
+    moved = true;
+    mwApply(card, {left:start.left+dx, top:start.top+dy, width:start.width, height:start.height});
+  };
+  const onUp = ()=>{
+    window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp);
+    document.body.classList.remove('mw-busy');
+    if(moved){ mwGeom[key] = {geom: mwCurrentGeom(card), max:false}; mwSave(); }
+  };
+  document.body.classList.add('mw-busy');
+  window.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp);
+}
+function mwStartResize(ev, card, dir){
+  if(ev.button!==0 || !mwIsDesktop()) return;
+  ev.preventDefault(); ev.stopPropagation();
+  const key = modalWindowKey(card);
+  const s = mwCurrentGeom(card);
+  const sx = ev.clientX, sy = ev.clientY;
+  const onMove = e=>{
+    const dx = e.clientX-sx, dy = e.clientY-sy;
+    let {left, top, width, height} = s;
+    if(dir.includes('e')) width = Math.max(MW_MIN_W, s.width+dx);
+    if(dir.includes('s')) height = Math.max(MW_MIN_H, s.height+dy);
+    if(dir.includes('w')){ width = Math.max(MW_MIN_W, s.width-dx); left = s.left + (s.width-width); }
+    if(dir.includes('n')){ height = Math.max(MW_MIN_H, s.height-dy); top = s.top + (s.height-height); }
+    mwApply(card, {left, top, width, height});
+  };
+  const onUp = ()=>{
+    window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp);
+    document.body.classList.remove('mw-busy');
+    mwGeom[key] = {geom: mwCurrentGeom(card), max:false}; mwSave();
+  };
+  document.body.classList.add('mw-busy');
+  window.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp);
+}
+(function mwObserve(){
+  const scan = root=>{ if(root.querySelectorAll) root.querySelectorAll('.modal-card').forEach(mwEnhance); if(root.classList && root.classList.contains('modal-card')) mwEnhance(root); };
+  const obs = new MutationObserver(muts=>{ muts.forEach(m=>m.addedNodes.forEach(n=>{ if(n.nodeType===1) scan(n); })); });
+  const start = ()=>{ obs.observe(document.body, {childList:true, subtree:true}); scan(document.body); };
+  if(document.body) start(); else document.addEventListener('DOMContentLoaded', start);
+})();
 
 /* ---------------- LOGIN SCREEN ---------------- */
 function handleForUser(u){ return '@'+u.name.split(' ')[0].toLowerCase(); }
@@ -9614,6 +9788,17 @@ function renderMoveTodoPicker(){
 // to-do — not independently assignable. Items are directly editable in place; a fresh
 // Checklist (or a Project's embedded one) starts with 5 blank rows to fill in, and
 // "+ Add item" grows it one at a time after that.
+// Column labels over a checklist's two date boxes. "Start / Due" is the working
+// assumption (2026-09-25) pending Michael's confirmation — change the labels here.
+function checklistDateHeaderHtml(){
+  return `<div style="display:flex;gap:8px;padding:0 0 2px;font-size:11px;font-weight:600;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.04em;">
+    <span style="width:13px;flex:none;"></span>
+    <span style="flex:1 1 160px;min-width:120px;">Item</span>
+    <span style="flex:1 1 130px;min-width:110px;">Start</span>
+    <span style="flex:1 1 130px;min-width:110px;">Due</span>
+    <span style="width:22px;flex:none;"></span>
+  </div>`;
+}
 function renderChecklistSection(td){
   const doneCount = td.checklistItems.filter(i=>i.done).length;
   const sortedChecklistItems = td.checklistItems.map((item,idx)=>({item,idx})).sort((a,b)=>{
@@ -9623,13 +9808,15 @@ function renderChecklistSection(td){
   return `
   <div class="field">
     <label>Checklist${td.checklistItems.length? ` <span style="font-weight:400;color:var(--ink-soft);">(${doneCount}/${td.checklistItems.length} done)</span>`:''}</label>
+    ${checklistDateHeaderHtml()}
     <div id="checklistItemsList">
       ${sortedChecklistItems.map(({item,idx})=>`
         <div style="display:flex;align-items:center;gap:8px;padding:6px 0;flex-wrap:wrap;">
           <input type="checkbox" data-checkitem="${item.id}" ${item.done?'checked':''} style="width:auto;flex:none;">
           <input data-checklistitemtext="${item.id}" value="${escapeAttr(item.text)}" placeholder="Item ${idx+1}" style="flex:1 1 160px;min-width:120px;font-size:13.5px;${item.done?'text-decoration:line-through;color:var(--ink-soft);':''}">
-          <input type="date" data-checklistitemdue="${item.id}" value="${item.dueDate?toLocalDateStr(item.dueDate):''}" title="Date 1 (optional)" style="flex:1 1 130px;min-width:110px;font-size:12.5px;color:var(--ink-soft);">
-          <input type="date" data-checklistitemdue2="${item.id}" value="${item.dueDate2?toLocalDateStr(item.dueDate2):''}" title="Date 2 (optional)" style="flex:1 1 130px;min-width:110px;font-size:12.5px;color:var(--ink-soft);">
+          ${item.done && item.completedAt ? `<span class="tiny" title="Completed On" style="flex:none;color:var(--good,#2E7D4F);white-space:nowrap;">✓ ${escapeHtml(new Date(item.completedAt+'T00:00:00').toLocaleDateString(undefined,{month:'short',day:'numeric'}))}</span>` : ''}
+          <input type="date" data-checklistitemdue="${item.id}" value="${item.dueDate?toLocalDateStr(item.dueDate):''}" title="Start date" style="flex:1 1 130px;min-width:110px;font-size:12.5px;color:var(--ink-soft);">
+          <input type="date" data-checklistitemdue2="${item.id}" value="${item.dueDate2?toLocalDateStr(item.dueDate2):''}" title="Due date" style="flex:1 1 130px;min-width:110px;font-size:12.5px;color:var(--ink-soft);">
           <button class="row-trash" data-removeitem="${item.id}" style="opacity:.5;flex:none;">✕</button>
         </div>`).join('')}
     </div>
@@ -9811,7 +9998,7 @@ function renderTodoDetailModal(){
   });
   overlay.querySelectorAll('[data-checkitem]').forEach(el=>el.onchange=()=>{
     const item = td.checklistItems.find(i=>i.id===el.dataset.checkitem);
-    if(item){ item.done = el.checked; supaUpdateTodo(td); renderPreservingScroll('.modal-body'); }
+    if(item){ item.done = el.checked; item.completedAt = el.checked ? toLocalDateStr(todayDate()) : null; supaUpdateTodo(td); renderPreservingScroll('.modal-body'); }
   });
   overlay.querySelectorAll('[data-removeitem]').forEach(el=>el.onclick=()=>{
     td.checklistItems = td.checklistItems.filter(i=>i.id!==el.dataset.removeitem);
@@ -10108,6 +10295,8 @@ function renderModalStack(){
   const overlay = document.createElement('div');
   overlay.className='modal-overlay';
   overlay.innerHTML = renderTopModalCard();
+  const stackCard = overlay.querySelector('.modal-card');
+  if(stackCard){ const topFrame = state.modalStack[state.modalStack.length-1]; stackCard.dataset.mwKey = 'stack:' + (topFrame && topFrame.kind || 'window'); }
   document.getElementById('app').appendChild(overlay);
   overlay.addEventListener('mousedown', (ev)=>{ if(ev.target===overlay) closeModalStack(); });
   attachModalHandlers(overlay);
@@ -12948,12 +13137,15 @@ function wireAttachmentZone(overlay, zoneId, inputId, getAttachments, target){
 function renderNewTodoModal(){
   const m = state.newTodoModal;
   const overlay = document.createElement('div');
-  overlay.className='modal-overlay'; overlay.style.zIndex=180;
+  // Sits above an open Project window (z 190) when adding a To-Do inside it — at 180 it
+  // used to open underneath the Project and look like nothing happened.
+  overlay.className='modal-overlay'; overlay.style.zIndex = state.todoDetailModal ? 200 : 180;
   const cats = allCategories();
   const isForMe = m.assignTo===state.currentUser.id;
+  const ntHeading = m.type==='project' ? 'New Project' : m.type==='checklist' ? 'New Checklist' : 'New To-Do';
   overlay.innerHTML = `
   <div class="modal-card">
-    <div class="modal-head"><div class="modal-title">New To-Do</div><button class="modal-close" data-action="closeNewTodo">✕</button></div>
+    <div class="modal-head"><div class="modal-title">${ntHeading}</div><button class="modal-close" data-action="closeNewTodo">✕</button></div>
     <div class="modal-body">
       <div class="type-toggle">
         <button class="${m.type==='task'?'active':''}" data-settype="task">Task</button>
@@ -12992,19 +13184,25 @@ function renderNewTodoModal(){
       <div class="field" style="display:flex;align-items:center;gap:8px;">
         <input type="checkbox" id="ntPrivate" style="width:auto;"> <label style="margin:0;" for="ntPrivate">Private (only I can see the details)</label>
       </div>
+      ${m.type==='project' ? `
+      <div class="section-label" style="margin-top:10px;">To-Do's</div>
+      <button class="btn sm" data-action="ntSaveThenNewChildTodo" style="margin-bottom:6px;">+ New To-Do</button>
+      <div class="tiny" style="color:var(--ink-soft);margin-bottom:14px;">Clicking this saves the Project first, then opens a new To-Do inside it.</div>` : ''}
       ${(m.type==='checklist' || m.type==='project') ? `
       <div class="field">
         <label>Checklist</label>
+        ${checklistDateHeaderHtml()}
         <div id="ntChecklistItemsList">
           ${(m.checklistItems||[]).map((item,idx)=>`
-            <div style="display:flex;align-items:center;gap:8px;padding:4px 0;">
-              <input type="checkbox" data-ntcheckitem="${item.id}" ${item.done?'checked':''} style="width:auto;">
-              <input data-ntchecklistitemtext="${item.id}" value="${escapeAttr(item.text)}" placeholder="Item ${idx+1}" style="flex:1;font-size:13.5px;">
-              <button class="row-trash" data-ntremoveitem="${item.id}" style="opacity:.5;">✕</button>
+            <div style="display:flex;align-items:center;gap:8px;padding:6px 0;flex-wrap:wrap;">
+              <input type="checkbox" data-ntcheckitem="${item.id}" ${item.done?'checked':''} style="width:auto;flex:none;">
+              <input data-ntchecklistitemtext="${item.id}" value="${escapeAttr(item.text)}" placeholder="Item ${idx+1}" style="flex:1 1 160px;min-width:120px;font-size:13.5px;">
+              <input type="date" data-ntchecklistitemdue="${item.id}" value="${item.dueDate?toLocalDateStr(item.dueDate):''}" title="Start date" style="flex:1 1 130px;min-width:110px;font-size:12.5px;color:var(--ink-soft);">
+              <input type="date" data-ntchecklistitemdue2="${item.id}" value="${item.dueDate2?toLocalDateStr(item.dueDate2):''}" title="Due date" style="flex:1 1 130px;min-width:110px;font-size:12.5px;color:var(--ink-soft);">
+              <button class="row-trash" data-ntremoveitem="${item.id}" style="opacity:.5;flex:none;">✕</button>
             </div>`).join('')}
         </div>
         <button class="btn secondary sm" data-action="addNtChecklistItem" style="margin-top:6px;">+ Add item</button>
-        ${m.type==='project' ? `<div class="tiny" style="color:var(--ink-soft);margin-top:8px;">You can add independently-assignable To-Do's to this Project once it's created.</div>` : ''}
       </div>` : ''}
       <div class="field">
         <label>Notes</label>
@@ -13060,8 +13258,18 @@ function renderNewTodoModal(){
   });
   overlay.querySelectorAll('[data-ntcheckitem]').forEach(el=>el.onchange=()=>{
     const item = (m.checklistItems||[]).find(i=>i.id===el.dataset.ntcheckitem);
-    if(item) item.done = el.checked;
+    if(item){ item.done = el.checked; item.completedAt = el.checked ? toLocalDateStr(todayDate()) : null; }
   });
+  overlay.querySelectorAll('[data-ntchecklistitemdue]').forEach(el=>el.onchange=()=>{
+    const item = (m.checklistItems||[]).find(i=>i.id===el.dataset.ntchecklistitemdue);
+    if(item) item.dueDate = el.value ? new Date(el.value+'T00:00:00') : null;
+  });
+  overlay.querySelectorAll('[data-ntchecklistitemdue2]').forEach(el=>el.onchange=()=>{
+    const item = (m.checklistItems||[]).find(i=>i.id===el.dataset.ntchecklistitemdue2);
+    if(item) item.dueDate2 = el.value ? new Date(el.value+'T00:00:00') : null;
+  });
+  const ntChildBtn = overlay.querySelector('[data-action="ntSaveThenNewChildTodo"]');
+  if(ntChildBtn) ntChildBtn.onclick=()=>{ m.openChildTodoAfterSave = true; overlay.querySelector('[data-action="saveTodo"]').click(); };
   overlay.querySelectorAll('[data-ntremoveitem]').forEach(el=>el.onclick=()=>{
     m.checklistItems = (m.checklistItems||[]).filter(i=>i.id!==el.dataset.ntremoveitem);
     renderPreservingScroll('.modal-body');
@@ -13119,6 +13327,16 @@ function renderNewTodoModal(){
       flashToast('To-do saved.');
     }
     supaCreateTodo(newTd);
+    if(m.openChildTodoAfterSave && newTd.type==='project'){
+      // "+ New To-Do" pressed on a brand-new Project: it's saved now, so open it and put a
+      // New To-Do (already linked to it) on top.
+      state.todoDetailModal = {id:newTd.id, originalAssignedTo:newTd.assignedTo};
+      render();
+      openNewTodoModal({listId:newTd.listId, clientId:newTd.clientId, dealId:newTd.dealId, entryId:newTd.entryId, projectId:newTd.id});
+      renderNewTodoModal();
+      return;
+    }
+    if(m.openChildTodoAfterSave) m.openChildTodoAfterSave = false;
     if(m.navigateAfterSave){
       const nav = m.navigateAfterSave;
       if(nav.kind==='deal') openDealModal(nav.listId, nav.clientId, nav.dealId);
