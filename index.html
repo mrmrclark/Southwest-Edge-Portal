@@ -495,7 +495,8 @@
   .bd-linkcell{display:flex;align-items:center;}
   .bd-linkcell a{padding:0 6px;text-decoration:none;}
   .bd-addrow td{border-bottom:1px solid var(--line-soft);background:#fff;}
-  .bd-addrow .bd-in{color:var(--ink-soft);}
+  .bd-addrow .bd-in{color:var(--ink-soft);position:sticky;left:30px;width:300px;}
+  .bd-scroll > [data-bd="addGroup"]{position:sticky;left:0;}
   .bd-sum{padding:4px 6px;vertical-align:top;}
   .bd-sumbar{display:flex;height:22px;border-radius:3px;overflow:hidden;}
   .bd-sumnum{text-align:center;font-weight:600;font-size:12.5px;}
@@ -527,6 +528,19 @@
   .bd-comment-meta .row-trash{margin-left:auto;}
   .bd-comment-body{margin-top:4px;font-size:13.5px;}
   .bd-archive .bd-table td{padding:6px 10px;}
+  .bd-filecell{height:36px;display:flex;align-items:center;justify-content:center;gap:4px;cursor:pointer;font-size:13px;}
+  .bd-filecell:hover{background:var(--edge-lighter);}
+  .bd-filecell.bd-filehover{outline:2px dashed var(--edge);outline-offset:-3px;background:var(--edge-lighter);}
+  .bd-fileadd{opacity:0;color:var(--ink-soft);}
+  .bd-row:hover .bd-fileadd,.bd-form-cell .bd-fileadd{opacity:1;}
+  .bd-subcaret{cursor:pointer;color:var(--ink-soft);width:12px;flex:none;font-size:11px;}
+  .bd-subcount{font-size:10.5px;background:#E6E9EF;color:var(--ink-soft);border-radius:8px;padding:1px 6px;cursor:pointer;flex:none;}
+  .bd-subwrap > td{background:#FAFBFD;border-bottom:1px solid var(--line-soft);}
+  .bd-subcell{padding:6px 10px 10px 36px !important;}
+  .bd-subtable{border-collapse:separate;border-spacing:0;font-size:12.5px;table-layout:fixed;border-left:3px solid #C4C4C4;}
+  .bd-subtable .bd-row td{height:32px;}
+  .bd-subtable .bd-status,.bd-subtable .bd-filecell,.bd-subtable .bd-person,.bd-subtable .bd-in{height:32px;}
+  .bd-sub-name-th,.bd-sub-name-td{width:240px;min-width:240px;text-align:left;}
   .modal-foot{padding:12px 20px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end;}
 
   .contact-card{
@@ -1587,14 +1601,14 @@ function entryRowToLocal(r){
           // Hit List event — same entries/entry_authorized_users sharing model either way.
           kind: r.kind || null, startDate: r.start_date? new Date(r.start_date+'T00:00:00'):null,
           endDate: r.end_date? new Date(r.end_date+'T00:00:00'):null, location: r.location||'',
-          checklistItems: (r.checklist_items || []).map(item=>({...item})), attachments: []};
+          checklistItems: (r.checklist_items || []).map(item=>({...item})), attachments: (r.files||[]).map(f=>({...f}))};
 }
 function entryLocalToRow(e, listId){
   return {id:e.id, list_id:listId, name:e.name, last_call:e.lastCall? toLocalDateStr(e.lastCall):null,
           feedback:e.feedback||null, contact_id:e.contactId||null, owner_id: localUserIdToAuthId(e.ownerId),
           kind: e.kind||null, start_date: e.startDate? toLocalDateStr(e.startDate):null,
           end_date: e.endDate? toLocalDateStr(e.endDate):null, location: e.location||null,
-          checklist_items: e.checklistItems || []};
+          checklist_items: e.checklistItems || [], files: persistedFiles(e.attachments)};
 }
 async function fetchEntriesFromSupabase(){
   const { data, error } = await supabaseClient.from('entries').select('*');
@@ -1628,7 +1642,7 @@ function todoRowToLocal(r){
   return {id:r.id, title:r.title, category:r.category||'', dueDate:r.due_date? new Date(r.due_date+'T00:00:00'):null,
     assignedTo: authIdToLocalUserId(r.assigned_to) || r.assigned_to, createdBy: authIdToLocalUserId(r.created_by) || r.created_by,
     type:r.type, private:r.is_private, completed:r.is_completed, isNew:r.is_new, notes:r.notes||'',
-    listId:r.list_id, clientId:r.client_id, dealId:r.deal_id, entryId:r.entry_id, projectId:r.project_id, attachments:[],
+    listId:r.list_id, clientId:r.client_id, dealId:r.deal_id, entryId:r.entry_id, projectId:r.project_id, attachments:(r.files||[]).map(f=>({...f})),
     checklistItems: (r.checklist_items || []).map(item => ({...item, dueDate: item.dueDate ? new Date(item.dueDate) : null, dueDate2: item.dueDate2 ? new Date(item.dueDate2) : null})),
     status: r.status || '',
     reminderPending: !!r.reminder_pending,
@@ -1654,6 +1668,7 @@ function todoLocalToRow(t){
     start_date: t.startDate ? toLocalDateStr(t.startDate) : null, office: t.office || null,
     requester_id: t.requesterId ? localUserIdToAuthId(t.requesterId) : null,
     sort_order: (t.sortOrder==null ? null : t.sortOrder), outcome: t.outcome || null, is_standard: !!t.isStandard,
+    files: persistedFiles(t.attachments),
     archived_at: t.archivedAt ? t.archivedAt.toISOString() : null};
 }
 async function fetchTodosFromSupabase(){
@@ -3525,6 +3540,7 @@ const BD_TYPES = [
   {type:'email', label:'Email', icon:'✉️'},
   {type:'phone', label:'Phone', icon:'📞'},
   {type:'checkbox', label:'Checkbox', icon:'☑️'},
+  {type:'file', label:'File', icon:'📎'},
 ];
 const BD_OFFICES = ['Phoenix','Austin','Dallas','Houston'];
 function bdUid(p){ return (p||'c_') + Math.random().toString(36).slice(2,9); }
@@ -3551,28 +3567,52 @@ function bdDefaultColumns(){
     {id:'website', name:'Website', type:'link', width:160},
   ];
 }
+function bdDefaultSubColumns(){
+  return [
+    {id:'s_owner', name:'Owner', type:'person', width:130},
+    {id:'s_status', name:'Status', type:'status', width:140, labels:[{id:'sl_work', label:'Working on it', color:'#FDAB3D'},{id:'sl_done', label:'Done', color:'#00C875'},{id:'sl_stuck', label:'Stuck', color:'#E2445C'}]},
+    {id:'s_date', name:'Date', type:'date', width:130},
+    {id:'s_text', name:'Text', type:'text', width:200},
+  ];
+}
+function bdSubCols(b){ if(!b.subColumns || !b.subColumns.length) b.subColumns = bdDefaultSubColumns(); return b.subColumns; }
 function bdDefaultGroups(){
   return [{id:'g_todo', name:'To Dos', color:'#579BFC'}, {id:'g_large', name:'Large Projects', color:'#FDAB3D'}];
 }
 
 /* ---------- data ---------- */
-function bdEnsure(){ if(!db.boards) db.boards = []; if(!db.projectComments) db.projectComments = []; if(!state.boardPrefs) state.boardPrefs = {}; }
+function bdEnsure(){ if(!db.boards) db.boards = []; if(!db.projectComments) db.projectComments = []; if(!db.subitems) db.subitems = []; if(!state.boardPrefs) state.boardPrefs = {}; if(!state.bdExpanded) state.bdExpanded = {}; }
+function subitemRowToLocal(r){ return {id:r.id, projectId:r.project_id, name:r.name||'', fieldValues:r.field_values||{}, sortOrder:r.sort_order||0, createdBy: authIdToLocalUserId(r.created_by)||r.created_by, createdAt:new Date(r.created_at)}; }
+async function supaCreateSubitem(x){
+  const { error } = await supabaseClient.from('project_subitems').insert({id:x.id, project_id:x.projectId, name:x.name, field_values:x.fieldValues, sort_order:x.sortOrder, created_by: localUserIdToAuthId(state.currentUser.id)});
+  if(error){ console.error('supaCreateSubitem', error); flashToast('Subitem didn\'t sync. ('+error.message+')'); }
+}
+async function supaUpdateSubitem(x){
+  const { error } = await supabaseClient.from('project_subitems').update({name:x.name, field_values:x.fieldValues, sort_order:x.sortOrder}).eq('id', x.id);
+  if(error){ console.error('supaUpdateSubitem', error); flashToast('Subitem change didn\'t sync. ('+error.message+')'); }
+}
+async function supaDeleteSubitem(id){
+  const { error } = await supabaseClient.from('project_subitems').delete().eq('id', id);
+  if(error) console.error('supaDeleteSubitem', error);
+}
+function subitemsOf(projectId){ bdEnsure(); return db.subitems.filter(x=>x.projectId===projectId).sort((a,b)=>(a.sortOrder-b.sortOrder)||(a.createdAt-b.createdAt)); }
 function boardRowToLocal(r){
   return {id:r.id, name:r.name, kind:r.kind, clientId:r.client_id, columns:r.columns||[], groups:r.groups||[],
     visibility:r.visibility, defaultDueDays:r.default_due_days, createdBy: authIdToLocalUserId(r.created_by)||r.created_by,
-    sortOrder:r.sort_order||0, userIds:[]};
+    sortOrder:r.sort_order||0, userIds:[], subColumns: r.sub_columns || []};
 }
 function boardLocalToRow(b){
   return {id:b.id, name:b.name, kind:b.kind||'open', client_id:b.clientId||null, columns:b.columns, groups:b.groups,
-    visibility:b.visibility||'private', default_due_days:b.defaultDueDays||5, sort_order:b.sortOrder||0};
+    visibility:b.visibility||'private', default_due_days:b.defaultDueDays||0, sort_order:b.sortOrder||0, sub_columns: b.subColumns || []};
 }
 async function fetchBoardsFromSupabase(){
   try {
-    const [{data:boards, error:e1}, {data:bu, error:e2}, {data:prefs, error:e3}, {data:comments, error:e4}] = await Promise.all([
+    const [{data:boards, error:e1}, {data:bu, error:e2}, {data:prefs, error:e3}, {data:comments, error:e4}, {data:subs, error:e5}] = await Promise.all([
       supabaseClient.from('project_boards').select('*'),
       supabaseClient.from('project_board_users').select('*'),
       supabaseClient.from('project_view_prefs').select('*'),
       supabaseClient.from('project_comments').select('*').order('created_at', {ascending:true}),
+      supabaseClient.from('project_subitems').select('*'),
     ]);
     if(e1){ console.error('fetchBoards error:', e1); return; }
     db.boards = (boards||[]).map(boardRowToLocal);
@@ -3580,7 +3620,8 @@ async function fetchBoardsFromSupabase(){
     state.boardPrefs = {};
     (prefs||[]).forEach(p=>{ state.boardPrefs[p.board_id] = p.prefs||{}; });
     db.projectComments = (comments||[]).map(c=>({id:c.id, projectId:c.project_id, userId: authIdToLocalUserId(c.user_id)||c.user_id, body:c.body, createdAt:new Date(c.created_at)}));
-    if(e2) console.error(e2); if(e3) console.error(e3); if(e4) console.error(e4);
+    db.subitems = (subs||[]).map(subitemRowToLocal);
+    if(e2) console.error(e2); if(e3) console.error(e3); if(e4) console.error(e4); if(e5) console.error(e5);
   } catch(err){ console.error('fetchBoardsFromSupabase failed:', err); }
 }
 async function supaCreateBoard(b){
@@ -3612,7 +3653,7 @@ function visibleBoards(){
   bdEnsure();
   const me = state.currentUser.id;
   const isAdmin = state.currentUser.role==='Admin';
-  return db.boards.filter(b=>b.kind==='open' && (isAdmin || b.createdBy===me || b.visibility==='company' || (b.userIds||[]).includes(me)))
+  return db.boards.filter(b=>b.kind==='open' && (isAdmin || b.createdBy===me || (b.userIds||[]).includes(me)))
     .sort((a,b)=>(a.sortOrder-b.sortOrder) || a.name.localeCompare(b.name));
 }
 function activeBoard(){
@@ -3686,10 +3727,14 @@ function bdPersonBadge(uid){
   if(!u) return `<span class="bd-avatar empty">👤</span>`;
   return `<span class="bd-avatar" title="${escapeAttr(u.name)}">${escapeHtml(u.initials || u.name.split(' ').map(s=>s[0]).join('').slice(0,2))}</span>`;
 }
-function bdCellHtml(b, t, col, mode){
+function bdCellHtml(b, t, col, mode, isSub){
   const v = bdGetValue(t, col);
-  const k = `data-bdt="${t.id}" data-bdc="${col.id}"`;
+  const k = isSub ? `data-bds="${t.id}" data-bdc="${col.id}"` : `data-bdt="${t.id}" data-bdc="${col.id}"`;
   switch(col.type){
+    case 'file': {
+      const files = Array.isArray(v) ? v : [];
+      return `<div class="bd-filecell" data-bd="files" ${k} title="${files.length?escapeAttr(files.map(f=>f.name).join('\n')):'Click or drop files here'}">${files.length?`📎 <b>${files.length}</b>`:'<span class="bd-fileadd">+ 📎</span>'}</div>`;
+    }
     case 'status': {
       const lab = bdStatusLabelFor(col, v);
       return `<div class="bd-status" ${k} data-bd="status" style="background:${lab?lab.color:'#C4C4C4'};">${lab?escapeHtml(lab.label):''}</div>`;
@@ -3718,7 +3763,7 @@ function bdFilterRows(b, rows){
   const p = bdPrefs(b.id);
   const q = (p.search||'').trim().toLowerCase();
   if(q) rows = rows.filter(t=>{
-    const hay = [t.title, t.notes, ...Object.values(t.fieldValues||{})].join(' ').toLowerCase();
+    const hay = [t.title, t.notes, ...Object.values(t.fieldValues||{}).map(v=>Array.isArray(v)?v.map(f=>f.name).join(' '):v)].join(' ').toLowerCase();
     return q.split(/\s+/).every(w=>hay.includes(w));
   });
   if(p.person) rows = rows.filter(t=>t.assignedTo===p.person || t.requesterId===p.person);
@@ -3736,6 +3781,7 @@ function bdSortRows(b, rows){
     if(col.id==='__title') return (t.title||'').toLowerCase();
     const v = bdGetValue(t, col);
     if(col.type==='number') return parseFloat(String(v).replace(/[$,\s]/g,'')) || 0;
+    if(col.type==='file') return Array.isArray(v) ? v.length : 0;
     if(col.type==='person'){ const u = USERS.find(x=>x.id===v); return u ? u.name.toLowerCase() : '~'; }
     if(col.type==='status'){ const i = (col.labels||[]).findIndex(l=>l.id===v||l.label===v); return i<0 ? 999 : i; }
     return String(v||'~').toLowerCase();
@@ -3750,7 +3796,7 @@ function renderProjectsBoardsMain(){
   const legacy = visibleProjectsList().filter(p=>!p.boardId && !p.completed);
   const tabs = `
   <div class="bd-tabs">
-    ${boards.map(x=>`<button class="bd-tab ${b&&x.id===b.id?'active':''}" data-bd="tab" data-board="${x.id}">${x.visibility==='company'?'🌐':'🔒'} ${escapeHtml(x.name)}</button>`).join('')}
+    ${boards.map(x=>`<button class="bd-tab ${b&&x.id===b.id?'active':''}" data-bd="tab" data-board="${x.id}">${escapeHtml(x.name)}</button>`).join('')}
     <button class="bd-tab add" data-bd="newBoard">+ New Board</button>
   </div>`;
   if(!b){
@@ -3780,8 +3826,7 @@ function bdToolbarHtml(b){
   return `
   <div class="bd-head">
     <div class="bd-title" data-bd="renameBoard" title="Click to rename">${escapeHtml(b.name)}</div>
-    <span class="pill gray" ${canManage?`data-bd="toggleVis" style="cursor:pointer;" title="Click to switch"`:''}>${b.visibility==='company'?'🌐 Company-wide':'🔒 Private'}</span>
-    <button class="btn secondary sm" data-bd="share">👥 Share${b.userIds && b.userIds.length ? ` (${b.userIds.length})` : ''}</button>
+    <button class="btn secondary sm" data-bd="share">👥 Users${b.userIds && b.userIds.length ? ` (${b.userIds.length+1})` : ''}</button>
     <button class="btn secondary sm" data-bd="settings">⚙️ Settings</button>
     <span style="flex:1;"></span>
     <button class="btn secondary sm" data-bd="archive">🗄️ Archive (${archivedCount})</button>
@@ -3834,13 +3879,15 @@ function bdBoardHtml(b){
         <tbody data-bd="tbody" data-bdg="${g.id}">
           ${rows.map(t=>{
             const cc = (db.projectComments||[]).filter(c=>c.projectId===t.id).length;
+            const subs = subitemsOf(t.id);
+            const open = !!state.bdExpanded[t.id];
             return `<tr class="bd-row" data-bdrow="${t.id}" data-bdg="${g.id}">
               <td class="bd-grip" draggable="${sorted?'false':'true'}" data-bd="rowgrip" data-bdt="${t.id}" title="${sorted?'Clear the sort to drag':'Drag to move'}">⋮⋮</td>
-              <td class="bd-title-td"><div class="bd-title-inner"><span class="bd-name" data-bd="open" data-bdt="${t.id}">${escapeHtml(t.title)}</span>
+              <td class="bd-title-td"><div class="bd-title-inner"><span class="bd-subcaret" data-bd="toggleSubs" data-bdt="${t.id}" title="${open?'Hide':'Show'} subitems">${open?'▾':'▸'}</span><span class="bd-name" data-bd="open" data-bdt="${t.id}">${escapeHtml(t.title)}</span>${subs.length?`<span class="bd-subcount" data-bd="toggleSubs" data-bdt="${t.id}" title="Subitems">${subs.length}</span>`:''}
                 <span class="bd-bubble" data-bd="open" data-bdt="${t.id}" data-focus="comments" title="Comments">💬${cc?`<b>${cc}</b>`:''}</span></div></td>
               ${cols.map(c=>`<td class="bd-td bd-td-${c.type}">${bdCellHtml(b,t,c)}</td>`).join('')}
               <td></td>
-            </tr>`;
+            </tr>${open ? bdSubitemsHtml(b, t, cols.length) : ''}`;
           }).join('')}
           <tr class="bd-addrow"><td></td><td colspan="${cols.length+2}"><input class="bd-in" data-bd="addItem" data-bdg="${g.id}" placeholder="+ Add project"></td></tr>
         </tbody>
@@ -3850,6 +3897,21 @@ function bdBoardHtml(b){
   };
   return bdToolbarHtml(b) + `<div class="bd-scroll" data-keep-scroll="board-${b.id}">${groups.map(groupHtml).join('')}
     <button class="btn secondary sm" data-bd="addGroup" style="margin:6px 0 20px;">+ Add new group</button></div>`;
+}
+function bdSubitemsHtml(b, t, colCount){
+  const scols = bdSubCols(b);
+  const subs = subitemsOf(t.id);
+  return `<tr class="bd-subwrap"><td class="bd-grip"></td><td colspan="${colCount+2}" class="bd-subcell">
+    <table class="bd-subtable"><thead><tr>
+      <th class="bd-th bd-sub-name-th">Subitem</th>
+      ${scols.map(c=>`<th class="bd-th" style="width:${c.width||130}px;min-width:${c.width||130}px;" data-bd="subColhead" data-bdc="${c.id}" data-bdt="${t.id}"><span class="bd-th-name">${escapeHtml(c.name)}</span></th>`).join('')}
+      <th class="bd-th bd-add-th"><button data-bd="addSubCol" data-bdt="${t.id}" title="Add a subitem column">+</button></th>
+    </tr></thead><tbody>
+      ${subs.map(x=>`<tr class="bd-row"><td class="bd-sub-name-td"><input class="bd-in" data-bd="subName" data-bds="${x.id}" value="${escapeAttr(x.name)}"></td>
+        ${scols.map(c=>`<td class="bd-td bd-td-${c.type}">${bdCellHtml(b,x,c,'cell',true)}</td>`).join('')}
+        <td style="text-align:center;"><button class="row-trash" data-bd="subDelete" data-bds="${x.id}" title="Delete subitem">✕</button></td></tr>`).join('')}
+      <tr class="bd-addrow"><td colspan="${scols.length+2}"><input class="bd-in" data-bd="addSub" data-bdt="${t.id}" placeholder="+ Add subitem"></td></tr>
+    </tbody></table></td></tr>`;
 }
 function bdSummaryHtml(col, rows){
   if(!rows.length) return '';
@@ -3884,6 +3946,10 @@ function bdArchiveHtml(b){
 }
 
 /* ---------- popovers (status palette, column menus, etc.) ---------- */
+function bdPopCol(b, p){ return (p.sub ? bdSubCols(b) : b.columns).find(c=>c.id===p.colId); }
+function bdPopTarget(p){ bdEnsure(); return p.subId ? db.subitems.find(x=>x.id===p.subId) : db.todos.find(x=>x.id===p.todoId); }
+function bdSaveTarget(x){ if(x && x.projectId && !('type' in x)) supaUpdateSubitem(x); else if(x) supaUpdateTodo(x); }
+function bdFileOwnerId(x){ return (x && x.projectId && !('type' in x)) ? x.projectId : x.id; }
 function bdOpenPop(kind, anchorEl, extra){
   const r = anchorEl.getBoundingClientRect();
   state.bdPop = Object.assign({kind, x:r.left, y:r.bottom+4, w:r.width}, extra||{});
@@ -3894,7 +3960,7 @@ function renderBoardPopover(){
   const b = db.boards.find(x=>x.id===p.boardId); if(!b){ state.bdPop=null; return; }
   let html = '';
   if(p.kind==='status'){
-    const col = bdCol(b, p.colId); const t = db.todos.find(x=>x.id===p.todoId); if(!col || (!t && !p.editing)){ state.bdPop=null; return; }
+    const col = bdPopCol(b, p); const t = bdPopTarget(p); if(!col || (!t && !p.editing)){ state.bdPop=null; return; }
     if(p.editing){
       html = `<div class="bd-pop-title">Edit labels — ${escapeHtml(col.name)}</div>
       ${(col.labels||[]).map(l=>`<div class="bd-lab-edit">
@@ -3918,6 +3984,19 @@ function renderBoardPopover(){
     }
   } else if(p.kind==='addCol'){
     html = `<div class="bd-pop-title">Add a column</div>` + BD_TYPES.map(x=>`<div class="bd-menu-item" data-bd="addColType" data-type="${x.type}">${x.icon} ${x.label}</div>`).join('');
+  } else if(p.kind==='files'){
+    const col = bdPopCol(b, p); const t = bdPopTarget(p); if(!col||!t){ state.bdPop=null; return; }
+    const files = Array.isArray(bdGetValue(t,col)) ? bdGetValue(t,col) : [];
+    html = `<div class="bd-pop-title">${escapeHtml(col.name)}</div>
+      ${files.map(f=>`<div class="bd-menu-item" style="cursor:default;"><a href="#" data-attpath="${escapeAttr(f.path)}" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">📎 ${escapeHtml(f.name)}</a><span class="tiny">${Math.max(1,Math.round((f.size||0)/1024))}KB</span><button class="row-trash" data-bd="fileRemove" data-fid="${f.id}" title="Remove">✕</button></div>`).join('') || '<div class="tiny" style="color:var(--ink-soft);margin:0 4px 8px;">No files yet.</div>'}
+      ${state.bdUploading ? '<div class="tiny" style="margin:6px 4px;">Uploading…</div>' : `<label class="btn secondary sm" style="margin-top:6px;display:inline-block;cursor:pointer;">+ Add files<input type="file" multiple data-bd="fileInput" style="display:none;"></label>`}
+      <div class="tiny" style="color:var(--ink-soft);margin:8px 4px 0;">Tip: you can also drag files onto the cell.</div>`;
+  } else if(p.kind==='colMenu' && p.sub){
+    const col = bdPopCol(b, p); if(!col){ state.bdPop=null; return; }
+    html = `<div class="bd-pop-title">${escapeHtml(col.name)} (subitems)</div>
+      <div class="bd-menu-item" data-bd="renameCol">✏️ Rename</div>
+      ${col.type==='status' ? `<div class="bd-menu-item" data-bd="editLabelsFromMenu">🎨 Edit labels</div>` : ''}
+      <div class="bd-menu-item" data-bd="deleteCol" style="color:var(--bad);">🗑️ Delete column</div>`;
   } else if(p.kind==='colMenu'){
     const isTitle = p.colId==='__title';
     const col = isTitle ? null : bdCol(b, p.colId);
@@ -3961,23 +4040,24 @@ function renderBoardModal(){
   if(m.kind==='new' || m.kind==='settings'){
     title = m.kind==='new' ? 'New Board' : 'Board Settings';
     const canManage = !b || state.currentUser.role==='Admin' || b.createdBy===state.currentUser.id;
+    const copyable = visibleBoards();
     body = `
       <div class="field"><label>Board name</label><input id="bmName" value="${escapeAttr(b?b.name:'')}" placeholder="e.g., Edge Texas Requests"></div>
-      <div class="field"><label>Who can see it?</label>
-        <label style="display:flex;gap:8px;align-items:center;margin:4px 0;font-weight:400;"><input type="radio" name="bmVis" value="private" style="width:auto;" ${(!b||b.visibility==='private')?'checked':''} ${canManage?'':'disabled'}> 🔒 Private — me + people I add</label>
-        <label style="display:flex;gap:8px;align-items:center;margin:4px 0;font-weight:400;"><input type="radio" name="bmVis" value="company" style="width:auto;" ${(b&&b.visibility==='company')?'checked':''} ${canManage?'':'disabled'}> 🌐 Company-wide — everyone at Edge</label>
-      </div>
-      <div class="field"><label>New Projects are due how many days out?</label><input id="bmDays" type="number" min="0" max="365" value="${b?b.defaultDueDays:5}" style="max-width:120px;">
-        <div class="tiny" style="color:var(--ink-soft);margin-top:4px;">Start = today; Due = today + this many days. Either can be changed on each Project.</div></div>
+      ${m.kind==='new' ? `<div class="field"><label>Start from</label>
+        <select id="bmFrom"><option value="">Standard Project columns</option>
+          ${copyable.map(x=>`<option value="${x.id}">Copy the setup of "${escapeHtml(x.name)}"</option>`).join('')}</select>
+        <div class="tiny" style="color:var(--ink-soft);margin-top:4px;">Copying brings over that board's columns, labels and groups — not its Projects.</div></div>
+      <div class="tiny" style="color:var(--ink-soft);">Only you (and Admins) can see a new board until you add Users to it — same as a Client or Listing.</div>` : ''}
       ${m.kind==='settings' && canManage ? `<div style="margin-top:20px;padding-top:14px;border-top:1px solid var(--line-soft);"><button class="btn danger sm" data-bm="delete">🗑️ Delete this board</button>
         <div class="tiny" style="color:var(--ink-soft);margin-top:6px;">Its Projects aren't deleted — they move to "Projects not on a board".</div></div>` : ''}`;
     foot = `<button class="btn secondary" data-bm="close">Cancel</button><button class="btn" data-bm="save">${m.kind==='new'?'Create Board':'Save'}</button>`;
   } else if(m.kind==='share'){
-    title = 'Share — ' + b.name;
+    title = 'Users — ' + b.name;
     const creator = USERS.find(u=>u.id===b.createdBy);
     const added = (b.userIds||[]).map(id=>USERS.find(u=>u.id===id)).filter(Boolean);
     const addable = USERS.filter(u=>u.id!==b.createdBy && !(b.userIds||[]).includes(u.id));
-    body = `<div class="tiny" style="color:var(--ink-soft);margin-bottom:10px;">${b.visibility==='company' ? '🌐 This board is company-wide — everyone can already see it.' : `🔒 Private: ${creator?escapeHtml(creator.name):'the creator'} + the people below (and Admins).`}</div>
+    body = `<div class="tiny" style="color:var(--ink-soft);margin-bottom:10px;">Same as a Client or Listing: ${creator?escapeHtml(creator.name):'the creator'}, the people below, and Admins can see and work on this board. Everyone else can't.</div>
+      <div style="padding:5px 0;font-weight:600;">${creator?escapeHtml(creator.name):'Creator'} <span class="tiny" style="font-weight:400;color:var(--ink-soft);">— created it</span></div>
       ${added.map(u=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;">${escapeHtml(u.name)}<button class="btn secondary sm" data-bm="removeUser" data-user="${u.id}">Remove</button></div>`).join('') || '<div class="tiny">No one added yet.</div>'}
       ${addable.length ? `<div style="display:flex;gap:8px;margin-top:12px;"><select id="bmAddUser" style="flex:1;">${addable.map(u=>`<option value="${u.id}">${escapeHtml(u.name)}</option>`).join('')}</select><button class="btn sm" data-bm="addUser">+ Add</button></div>` : ''}`;
     foot = `<button class="btn" data-bm="close">Done</button>`;
@@ -3993,14 +4073,15 @@ function renderBoardModal(){
   overlay.querySelectorAll('[data-bm="close"]').forEach(x=>x.onclick=()=>{ state.boardModal=null; render(); });
   const save = overlay.querySelector('[data-bm="save"]'); if(save) save.onclick=safeHandler(async ()=>{
     const name = overlay.querySelector('#bmName').value.trim(); if(!name){ flashToast('Give the board a name.'); return; }
-    const vis = (overlay.querySelector('input[name="bmVis"]:checked')||{}).value || 'private';
-    const days = Math.max(0, parseInt(overlay.querySelector('#bmDays').value,10) || 0);
     if(m.kind==='new'){
-      const nb = {id:crypto.randomUUID(), name, kind:'open', clientId:null, columns:bdDefaultColumns(), groups:bdDefaultGroups(), visibility:vis, defaultDueDays:days, createdBy:state.currentUser.id, sortOrder:Date.now()/1e12, userIds:[]};
+      const fromId = (overlay.querySelector('#bmFrom')||{}).value;
+      const src = fromId && db.boards.find(x=>x.id===fromId);
+      const clone = o=>JSON.parse(JSON.stringify(o));
+      const nb = {id:crypto.randomUUID(), name, kind:'open', clientId:null, columns: src ? clone(src.columns) : bdDefaultColumns(), groups: src ? clone(src.groups) : bdDefaultGroups(), visibility:'private', defaultDueDays:0, createdBy:state.currentUser.id, sortOrder:Date.now()/1e12, userIds:[]};
       db.boards.push(nb); setActiveBoard(nb.id); state.boardModal=null; render();
       await supaCreateBoard(nb); flashToast(`Board "${name}" created.`);
     } else {
-      b.name=name; b.visibility=vis; b.defaultDueDays=days; supaSaveBoard(b); state.boardModal=null; render();
+      b.name=name; supaSaveBoard(b); state.boardModal=null; render();
     }
   });
   const del = overlay.querySelector('[data-bm="delete"]'); if(del) del.onclick=safeHandler(async ()=>{
@@ -4034,7 +4115,7 @@ function bdPromptText(label, value, onSave){ state.bdPop=null; state.boardModal 
 function bdNewProjectDefaults(b, groupId){
   const today = todayDate();
   return {boardId:b.id, groupId: groupId || (b.groups[0]&&b.groups[0].id) || null, startDate: today,
-    dueDate: addDays(today, b.defaultDueDays||0), office:'Phoenix', fieldValues:{}, extraFields:[]};
+    dueDate: null, office:'Phoenix', fieldValues:{}, extraFields:[]};
 }
 function bdNextSortOrder(b, groupId){
   const rows = boardProjects(b, true).filter(t=>t.groupId===groupId);
@@ -4051,6 +4132,13 @@ function bdCreateProject(b, groupId, title){
 
 /* ---------- event handling (delegated once on document) ---------- */
 function bdFind(el){
+  bdEnsure();
+  if(el.dataset.bds){
+    const sub = db.subitems.find(x=>x.id===el.dataset.bds);
+    const proj = sub && db.todos.find(x=>x.id===sub.projectId);
+    const sb = proj && db.boards.find(x=>x.id===proj.boardId);
+    return {b:sb, t:sub, col: (sb && el.dataset.bdc) ? bdSubCols(sb).find(c=>c.id===el.dataset.bdc) : null, isSub:true};
+  }
   const t = el.dataset.bdt ? db.todos.find(x=>x.id===el.dataset.bdt) : null;
   const b = (t && t.boardId && db.boards.find(x=>x.id===t.boardId)) || activeBoard() || (state.bdPop && db.boards.find(x=>x.id===state.bdPop.boardId));
   const col = (b && el.dataset.bdc) ? bdCol(b, el.dataset.bdc) : null;
@@ -4063,7 +4151,7 @@ function bdCommitCell(el){
   const before = bdGetValue(t, col);
   if(String(before)===String(v)) return;
   bdSetValue(t, col, v);
-  supaUpdateTodo(t);
+  bdSaveTarget(t);
   if(col.type==='person'){ const badge = el.parentElement.querySelector('.bd-avatar'); if(badge) badge.outerHTML = bdPersonBadge(bdGetValue(t,col)); }
   if(col.type==='link' || col.type==='email' || col.type==='phone' || col.type==='number' || bdPrefs(b.id).sort) renderPreservingScroll('.content');
 }
@@ -4071,6 +4159,8 @@ document.addEventListener('change', ev=>{
   const el = ev.target.closest && ev.target.closest('[data-bd]'); if(!el) return;
   const k = el.dataset.bd;
   if(k==='set' || k==='check'){ bdCommitCell(el); return; }
+  if(k==='subName'){ const x = (db.subitems||[]).find(y=>y.id===el.dataset.bds); if(x && x.name!==el.value.trim()){ x.name = el.value.trim(); supaUpdateSubitem(x); } return; }
+  if(k==='fileInput'){ const p0 = state.bdPop; const pb0 = p0 && db.boards.find(x=>x.id===p0.boardId); if(pb0 && el.files.length) bdAddFilesToCell(pb0, p0, el.files); return; }
   const b = activeBoard();
   const p = b ? bdPrefs(b.id) : {};
   if(!b && k!=='labName' && k!=='labMeaning') return;
@@ -4079,7 +4169,7 @@ document.addEventListener('change', ev=>{
   else if(k==='toggleHide'){ const h = p.hidden||(p.hidden=[]); if(el.checked) p.hidden = h.filter(x=>x!==el.dataset.bdc); else if(!h.includes(el.dataset.bdc)) h.push(el.dataset.bdc); bdSavePrefs(b.id); render(); }
   else if(k==='labName' || k==='labMeaning'){
     const pb = state.bdPop && db.boards.find(x=>x.id===state.bdPop.boardId); if(!pb) return;
-    const b2 = pb; const col = bdCol(b2, state.bdPop.colId); const lab = col && col.labels.find(l=>l.id===el.dataset.lab); if(!lab) return;
+    const b2 = pb; const col = bdPopCol(b2, state.bdPop); const lab = col && col.labels.find(l=>l.id===el.dataset.lab); if(!lab) return;
     if(k==='labName'){
       const old = lab.label; const nv = el.value.trim(); if(!nv || nv===old) return; lab.label = nv;
       if(col.builtin){ const field = col.builtin; db.todos.filter(t=>t.boardId===b2.id && t[field]===old).forEach(t=>{ t[field]=nv; supaUpdateTodo(t); }); }
@@ -4097,7 +4187,14 @@ document.addEventListener('keydown', ev=>{
     state.bdRefocusGroup = el.dataset.bdg;
     renderPreservingScroll('.content');
     const again = document.querySelector(`[data-bd="addItem"][data-bdg="${state.bdRefocusGroup}"]`); if(again) again.focus();
-  } else if(el.dataset.bd==='set' && ev.key==='Enter' && el.tagName==='INPUT'){ el.blur(); }
+  } else if(el.dataset.bd==='addSub' && ev.key==='Enter'){
+    const name = el.value.trim(); if(!name) return;
+    bdEnsure(); const pid = el.dataset.bdt;
+    const x = {id:crypto.randomUUID(), projectId:pid, name, fieldValues:{}, sortOrder: subitemsOf(pid).length+1, createdBy:state.currentUser.id, createdAt:new Date()};
+    db.subitems.push(x); supaCreateSubitem(x);
+    renderPreservingScroll('.content');
+    const again = document.querySelector(`[data-bd="addSub"][data-bdt="${pid}"]`); if(again) again.focus();
+  } else if((el.dataset.bd==='set' || el.dataset.bd==='subName') && ev.key==='Enter' && el.tagName==='INPUT'){ el.blur(); }
   else if(ev.key==='Escape' && state.bdPop){ state.bdPop=null; render(); }
 });
 let bdSearchTimer=null;
@@ -4111,7 +4208,7 @@ document.addEventListener('input', ev=>{
 document.addEventListener('click', ev=>{
   const el = ev.target.closest && ev.target.closest('[data-bd]'); if(!el) return;
   const k = el.dataset.bd;
-  if(['set','check','search','filterPerson','filterStatus','addItem','labName','labMeaning','rowgrip','colresize'].includes(k)) return;
+  if(['set','check','search','filterPerson','filterStatus','addItem','labName','labMeaning','rowgrip','colresize','subName','addSub','fileInput'].includes(k)) return;
   if(k==='toggleHide') return;
   const b = activeBoard();
   const pop = state.bdPop;
@@ -4122,13 +4219,12 @@ document.addEventListener('click', ev=>{
     case 'newBoard': state.boardModal={kind:'new'}; render(); return;
     case 'settings': state.boardModal={kind:'settings', boardId:b.id}; render(); return;
     case 'share': state.boardModal={kind:'share', boardId:b.id}; render(); return;
-    case 'toggleVis': b.visibility = b.visibility==='company' ? 'private' : 'company'; supaSaveBoard(b); flashToast(b.visibility==='company'?'Now company-wide.':'Now private.'); render(); return;
     case 'renameBoard': bdPromptText('Rename board', b.name, v=>{ b.name=v; supaSaveBoard(b); }); return;
     case 'archive': state.boardArchiveOpen = !state.boardArchiveOpen; render(); return;
     case 'restore': { const t = db.todos.find(x=>x.id===el.dataset.bdt); if(t){ bdRestore(t); supaUpdateTodo(t); flashToast(`"${t.title}" is back on the board.`); render(); } return; }
     case 'open': { ev.preventDefault(); if(el.dataset.focus==='comments') state.bdFocusComments = true; openTodoDetail(el.dataset.bdt); render(); return; }
     case 'adoptLegacy': { const t = db.todos.find(x=>x.id===el.dataset.bdt); if(t && b){ Object.assign(t, {boardId:b.id, groupId:b.groups[0]&&b.groups[0].id, sortOrder:bdNextSortOrder(b, b.groups[0]&&b.groups[0].id)}); if(!t.startDate) t.startDate = t.createdAt || todayDate(); if(!t.office) t.office='Phoenix'; supaUpdateTodo(t); render(); } return; }
-    case 'newProject': { openNewTodoModal({type:'project', boardId:b.id, groupId:b.groups[0]&&b.groups[0].id, dueInput: toLocalDateStr(addDays(todayDate(), b.defaultDueDays||0))}); render(); return; }
+    case 'newProject': { openNewTodoModal({type:'project', boardId:b.id, groupId:b.groups[0]&&b.groups[0].id, dueInput:''}); render(); return; }
     case 'collapse': { const p = bdPrefs(b.id); const c = p.collapsed||(p.collapsed=[]); const g = el.dataset.bdg; p.collapsed = c.includes(g) ? c.filter(x=>x!==g) : c.concat(g); bdSavePrefs(b.id); render(); return; }
     case 'addGroup': { const g = {id:bdUid('g_'), name:'New Group', color:BD_COLORS[(b.groups.length+3)%BD_COLORS.length]}; b.groups.push(g); supaSaveBoard(b); render(); bdPromptText('Name this group', 'New Group', v=>{ g.name=v; supaSaveBoard(b); }); return; }
     case 'groupMenu': bdOpenPop('groupMenu', el, {boardId:b.id, groupId:el.dataset.bdg}); return;
@@ -4142,23 +4238,34 @@ document.addEventListener('click', ev=>{
       popBoard.groups = gs.filter(x=>x.id!==g.id); const dest = popBoard.groups[0].id;
       rows.forEach(t=>{ t.groupId = dest; supaUpdateTodo(t); }); supaSaveBoard(popBoard); state.bdPop=null; render(); return;
     }
-    case 'status': { const f = bdFind(el); if(f.b && f.t) bdOpenPop('status', el, {boardId:f.b.id, todoId:f.t.id, colId:el.dataset.bdc}); return; }
+    case 'status': { const f = bdFind(el); if(f.b && f.t) bdOpenPop('status', el, f.isSub ? {boardId:f.b.id, subId:f.t.id, sub:true, colId:el.dataset.bdc} : {boardId:f.b.id, todoId:f.t.id, colId:el.dataset.bdc}); return; }
+    case 'files': { const f = bdFind(el); if(f.b && f.t) bdOpenPop('files', el, f.isSub ? {boardId:f.b.id, subId:f.t.id, sub:true, colId:el.dataset.bdc} : {boardId:f.b.id, todoId:f.t.id, colId:el.dataset.bdc}); return; }
+    case 'fileRemove': {
+      const col = bdPopCol(popBoard, pop); const t = bdPopTarget(pop); const files = (bdGetValue(t,col)||[]).slice();
+      const f = files.find(x=>x.id===el.dataset.fid); if(!f || !confirm(`Remove "${f.name}"? It's deleted for everyone.`)) return;
+      bdSetValue(t, col, files.filter(x=>x.id!==f.id)); bdSaveTarget(t); removePortalFile(f.path); render(); return;
+    }
+    case 'toggleSubs': { bdEnsure(); const id = el.dataset.bdt; state.bdExpanded[id] = !state.bdExpanded[id]; renderPreservingScroll('.content'); return; }
+    case 'subDelete': { const x = (db.subitems||[]).find(y=>y.id===el.dataset.bds); if(x && confirm(`Delete subitem "${x.name||'(untitled)'}"?`)){ db.subitems = db.subitems.filter(y=>y.id!==x.id); supaDeleteSubitem(x.id); renderPreservingScroll('.content'); } return; }
+    case 'addSubCol': { const f = bdFind(el); if(f.b) bdOpenPop('addCol', el, {boardId:f.b.id, sub:true}); return; }
+    case 'subColhead': { const f = bdFind(el); if(f.b) bdOpenPop('colMenu', el, {boardId:f.b.id, sub:true, colId:el.dataset.bdc}); return; }
     case 'pickLabel': {
-      const col = bdCol(popBoard, pop.colId); const t = db.todos.find(x=>x.id===pop.todoId);
+      const col = bdPopCol(popBoard, pop); const t = bdPopTarget(pop);
       const lab = el.dataset.lab ? col.labels.find(l=>l.id===el.dataset.lab) : null;
-      bdSetValue(t, col, bdStatusStoreValue(col, lab)); bdApplyOutcome(t, col, lab); supaUpdateTodo(t);
+      bdSetValue(t, col, bdStatusStoreValue(col, lab)); if(!pop.sub) bdApplyOutcome(t, col, lab); bdSaveTarget(t);
       state.bdPop=null; renderPreservingScroll('.content'); return;
     }
     case 'editLabels': pop.editing = true; render(); return;
     case 'editLabelsFromMenu': state.bdPop = Object.assign({}, pop, {kind:'status', editing:true, todoId:null}); render(); return;
     case 'labColor': pop.colorFor = pop.colorFor===el.dataset.lab ? null : el.dataset.lab; render(); return;
-    case 'labPick': { const col = bdCol(popBoard, pop.colId); const lab = col.labels.find(l=>l.id===el.dataset.lab); lab.color = el.dataset.color; pop.colorFor=null; supaSaveBoard(popBoard); render(); return; }
-    case 'labAdd': { const col = bdCol(popBoard, pop.colId); col.labels.push({id:bdUid('l_'), label:'New label', color:BD_COLORS[col.labels.length % BD_COLORS.length]}); supaSaveBoard(popBoard); render(); return; }
+    case 'labPick': { const col = bdPopCol(popBoard, pop); const lab = col.labels.find(l=>l.id===el.dataset.lab); lab.color = el.dataset.color; pop.colorFor=null; supaSaveBoard(popBoard); render(); return; }
+    case 'labAdd': { const col = bdPopCol(popBoard, pop); col.labels.push({id:bdUid('l_'), label:'New label', color:BD_COLORS[col.labels.length % BD_COLORS.length]}); supaSaveBoard(popBoard); render(); return; }
     case 'labDelete': {
-      const col = bdCol(popBoard, pop.colId); const lab = col.labels.find(l=>l.id===el.dataset.lab);
-      const used = boardProjects(popBoard, true).filter(t=>{ const x = bdStatusLabelFor(col, bdGetValue(t,col)); return x && x.id===lab.id; });
-      if(used.length && !confirm(`${used.length} Project(s) use "${lab.label}". Delete it anyway? They'll go blank.`)) return;
-      used.forEach(t=>{ bdSetValue(t, col, ''); supaUpdateTodo(t); });
+      const col = bdPopCol(popBoard, pop); const lab = col.labels.find(l=>l.id===el.dataset.lab);
+      const pool = pop.sub ? (db.subitems||[]).filter(x=>boardProjects(popBoard,true).some(t=>t.id===x.projectId)) : boardProjects(popBoard, true);
+      const used = pool.filter(t=>{ const x = bdStatusLabelFor(col, bdGetValue(t,col)); return x && x.id===lab.id; });
+      if(used.length && !confirm(`${used.length} item(s) use "${lab.label}". Delete it anyway? They'll go blank.`)) return;
+      used.forEach(t=>{ bdSetValue(t, col, ''); bdSaveTarget(t); });
       col.labels = col.labels.filter(l=>l.id!==lab.id); supaSaveBoard(popBoard); render(); return;
     }
     case 'labDone': state.bdPop=null; render(); return;
@@ -4167,7 +4274,8 @@ document.addEventListener('click', ev=>{
       const tdef = BD_TYPES.find(x=>x.type===el.dataset.type);
       const col = {id:bdUid('c_'), name:tdef.label.replace(' / $',''), type:tdef.type, width: tdef.type==='longtext'?240:140};
       if(col.type==='status') col.labels = [{id:bdUid('l_'), label:'Done', color:'#00C875'},{id:bdUid('l_'), label:'Working on it', color:'#FDAB3D'},{id:bdUid('l_'), label:'Need', color:'#E2445C'}];
-      popBoard.columns.push(col); supaSaveBoard(popBoard);
+      if(pop.sub) bdSubCols(popBoard).push(col); else popBoard.columns.push(col);
+      supaSaveBoard(popBoard);
       bdPromptText('Name the new column', col.name, v=>{ col.name=v; supaSaveBoard(popBoard); });
       return;
     }
@@ -4175,17 +4283,48 @@ document.addEventListener('click', ev=>{
     case 'sortCol': { const p = bdPrefs(popBoard.id); p.sort = {col:pop.colId, dir:el.dataset.dir}; bdSavePrefs(popBoard.id); state.bdPop=null; render(); return; }
     case 'clearSort': { bdPrefs(b.id).sort = null; bdSavePrefs(b.id); render(); return; }
     case 'clearFilters': { const p = bdPrefs(b.id); p.search=''; p.person=null; p.status=null; bdSavePrefs(b.id); render(); return; }
-    case 'renameCol': { const col = bdCol(popBoard, pop.colId); bdPromptText('Rename column', col.name, v=>{ col.name=v; supaSaveBoard(popBoard); }); return; }
+    case 'renameCol': { const col = bdPopCol(popBoard, pop); bdPromptText('Rename column', col.name, v=>{ col.name=v; supaSaveBoard(popBoard); }); return; }
     case 'hideCol': { const p = bdPrefs(popBoard.id); (p.hidden||(p.hidden=[])).push(pop.colId); bdSavePrefs(popBoard.id); state.bdPop=null; render(); return; }
     case 'hideMenu': bdOpenPop('hide', el, {boardId:b.id}); return;
     case 'deleteCol': {
-      const col = bdCol(popBoard, pop.colId);
+      const col = bdPopCol(popBoard, pop);
       if(!confirm(`Delete the column "${col.name}" and everything in it? This can't be undone.`)) return;
+      if(pop.sub){
+        popBoard.subColumns = bdSubCols(popBoard).filter(c=>c.id!==col.id);
+        (db.subitems||[]).filter(x=>boardProjects(popBoard,true).some(t=>t.id===x.projectId)).forEach(x=>{ if(col.id in x.fieldValues){ delete x.fieldValues[col.id]; supaUpdateSubitem(x); } });
+        supaSaveBoard(popBoard); state.bdPop=null; render(); return;
+      }
       popBoard.columns = popBoard.columns.filter(c=>c.id!==col.id);
       boardProjects(popBoard, true).forEach(t=>{ if(t.fieldValues && col.id in t.fieldValues){ delete t.fieldValues[col.id]; supaUpdateTodo(t); } });
       supaSaveBoard(popBoard); state.bdPop=null; render(); return;
     }
   }
+});
+
+/* ---------- File column uploads ---------- */
+async function bdAddFilesToCell(b, target, fileList){
+  const col = bdPopCol(b, target); const t = bdPopTarget(target); if(!col||!t) return;
+  const pending = filesToAttachments(fileList);
+  state.bdUploading = true; render();
+  const ok = await uploadPendingAttachments(pending, 'todos', bdFileOwnerId(t));
+  state.bdUploading = false;
+  const done = pending.filter(a=>a.path).map(fileMetaOnly);
+  if(done.length){ const cur = Array.isArray(bdGetValue(t,col)) ? bdGetValue(t,col) : []; bdSetValue(t, col, cur.concat(done)); bdSaveTarget(t); flashToast(`${done.length} file${done.length===1?'':'s'} added.`); }
+  render();
+}
+document.addEventListener('dragover', ev=>{
+  if(bdDrag) return;
+  const cell = ev.target.closest && ev.target.closest('.bd-filecell');
+  if(cell && ev.dataTransfer && Array.from(ev.dataTransfer.types||[]).includes('Files')){ ev.preventDefault(); cell.classList.add('bd-filehover'); }
+});
+document.addEventListener('dragleave', ev=>{ const cell = ev.target.closest && ev.target.closest('.bd-filecell'); if(cell) cell.classList.remove('bd-filehover'); });
+document.addEventListener('drop', ev=>{
+  if(bdDrag) return;
+  const cell = ev.target.closest && ev.target.closest('.bd-filecell');
+  if(!cell || !ev.dataTransfer || !ev.dataTransfer.files.length) return;
+  ev.preventDefault(); cell.classList.remove('bd-filehover');
+  const f = bdFind(cell); if(!f.b || !f.t) return;
+  bdAddFilesToCell(f.b, f.isSub ? {subId:f.t.id, sub:true, colId:cell.dataset.bdc} : {todoId:f.t.id, colId:cell.dataset.bdc}, ev.dataTransfer.files);
 });
 
 /* ---------- drag & drop: rows, columns; column resize ---------- */
@@ -7371,6 +7510,7 @@ function renderNewEventModal(){
     state.newEventModal=null;
     render();
     await supaCreateEntry(newEntry, l.id);
+    if((newEntry.attachments||[]).some(a=>a._file)){ await uploadPendingAttachments(newEntry.attachments, 'entries', newEntry.id); await supaUpdateEntry(newEntry, l.id); }
     flashToast(`${name} added.`);
     render();
   });
@@ -10976,7 +11116,7 @@ function renderTodoDetailModal(){
     document.getElementById('detSaveBtnTop').textContent = forMe? 'Save & Close' : 'Save & Assign';
   };
   const detPrivateEl = document.getElementById('detPrivate'); if(detPrivateEl) detPrivateEl.onchange=()=>{ td.private = detPrivateEl.checked; };
-  wireAttachmentZone(overlay, 'detDropZone', 'detFileInput', ()=>td.attachments, 'det');
+  wireAttachmentZone(overlay, 'detDropZone', 'detFileInput', ()=>td.attachments, 'det', ()=>({kind:'todos', id:td.id, save:()=>supaUpdateTodo(td)}));
   overlay.querySelector('[data-action="detDelete"]').onclick=()=>{
     if(confirm(`Delete "${td.title}"? This can't be undone.`)){ deleteTodo(td.id); render(); }
   };
@@ -13056,7 +13196,6 @@ function renderEventModalBody(l,e){
     </div>
     <input type="file" id="evFileInput" multiple style="display:none;">
     ${attachmentListHtml(e.attachments||(e.attachments=[]), 'event')}
-    <div class="tiny" style="color:var(--ink-soft);margin-top:4px;">Attachments stay in this browser session only, same as To-Do attachments.</div>
   </div>
   ${accessHtml}
   ${state.currentUser.role==='Admin' ? `
@@ -13100,7 +13239,8 @@ function attachModalHandlers(root){
     const evEntryId = evDropZoneEl.dataset.entry;
     let evEntry = null;
     db.lists.forEach(l=>{ if(!evEntry && l.entries) evEntry = l.entries.find(x=>x.id===evEntryId) || null; });
-    if(evEntry){ if(!evEntry.attachments) evEntry.attachments=[]; wireAttachmentZone(root, 'evDropZone', 'evFileInput', ()=>evEntry.attachments, 'event'); }
+    let evListId = null; db.lists.forEach(l=>{ if(l.entries && l.entries.includes(evEntry)) evListId = l.id; });
+    if(evEntry){ if(!evEntry.attachments) evEntry.attachments=[]; wireAttachmentZone(root, 'evDropZone', 'evFileInput', ()=>evEntry.attachments, 'event', ()=>({kind:'entries', id:evEntry.id, save:()=>supaUpdateEntry(evEntry, evListId)})); }
   }
   const saveCloseBtn = root.querySelector('[data-action="saveAndCloseDeal"]'); if(saveCloseBtn) saveCloseBtn.onclick=safeHandler(()=>{
     const frame = state.modalStack[state.modalStack.length-1];
@@ -13874,7 +14014,7 @@ function renderNewTodoPickerModal(){
     title = 'Which board?';
     const boards = visibleBoards();
     body = `<div style="display:flex;flex-direction:column;gap:8px;">
-      ${boards.map(b=>`<button class="btn secondary" data-action="ntpPickBoard" data-board="${b.id}" style="text-align:left;padding:14px;font-size:14px;">${b.visibility==='company'?'🌐':'🔒'} ${escapeHtml(b.name)}</button>`).join('') || '<div class="tiny" style="color:var(--ink-soft);">You don\'t have any boards yet.</div>'}
+      ${boards.map(b=>`<button class="btn secondary" data-action="ntpPickBoard" data-board="${b.id}" style="text-align:left;padding:14px;font-size:14px;">📋 ${escapeHtml(b.name)}</button>`).join('') || '<div class="tiny" style="color:var(--ink-soft);">You don\'t have any boards yet.</div>'}
       <button class="btn" data-action="ntpNewBoard" style="padding:12px;">+ New Board</button>
     </div>`;
   } else if(p.step==='chooseAccount'){
@@ -13942,7 +14082,7 @@ function renderNewTodoPickerModal(){
   overlay.querySelectorAll('[data-action="ntpPickBoard"]').forEach(btn=>btn.onclick=()=>{
     const b = db.boards.find(x=>x.id===btn.dataset.board); if(!b) return;
     state.newTodoPicker=null;
-    openNewTodoModal({type:'project', boardId:b.id, groupId:b.groups[0]&&b.groups[0].id, dueInput: toLocalDateStr(addDays(todayDate(), b.defaultDueDays||0))});
+    openNewTodoModal({type:'project', boardId:b.id, groupId:b.groups[0]&&b.groups[0].id, dueInput:''});
     render();
   });
   const ntpNewBoardBtn = overlay.querySelector('[data-action="ntpNewBoard"]'); if(ntpNewBoardBtn) ntpNewBoardBtn.onclick=()=>{ state.newTodoPicker=null; state.mainView={type:'projects'}; state.boardModal={kind:'new'}; render(); };
@@ -14039,7 +14179,7 @@ function openNewTodoModal(context){
   // context.type lets a caller (the Projects/Checklists pages' own "+ New" buttons) open
   // this modal pre-set to that type instead of defaulting to a plain task — added 2026-09-06
   // so Projects/Checklists have a real, direct creation path outside the New To-Do flow.
-  state.newTodoModal={ context, title: context.title||'', category: context.category||'', status:'Not Started', dueInput: context.dueInput || toLocalDateStr(todayDate()), notes:'', type: context.type||'task', assignTo:state.currentUser.id, attachments:[], checklistItems:[] };
+  state.newTodoModal={ context, title: context.title||'', category: context.category||'', status:'Not Started', dueInput: (context.dueInput!==undefined ? context.dueInput : toLocalDateStr(todayDate())), notes:'', type: context.type||'task', assignTo:state.currentUser.id, attachments:[], checklistItems:[] };
   // Opened straight into Project/Checklist mode (board "+ New Project", Projects page, + menu):
   // start with the same 5 blank rows the Project toggle gives, Start = today.
   if(context.type==='project' || context.type==='checklist'){
@@ -14079,28 +14219,80 @@ function attachmentListHtml(attachments, removeAttr){
   if(!attachments.length) return '';
   return attachments.map((a,i)=>`
     <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--edge-lighter);border-radius:8px;margin-top:6px;font-size:12.5px;">
-      <a href="${a.url}" download="${escapeAttr(a.name)}" style="flex:1;color:var(--edge-darker);text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">📎 ${escapeHtml(a.name)}</a>
+      ${a.path ? `<a href="#" data-attpath="${escapeAttr(a.path)}" style="flex:1;color:var(--edge-darker);text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">📎 ${escapeHtml(a.name)}</a>`
+        : `<a href="${a.url||'#'}" download="${escapeAttr(a.name)}" style="flex:1;color:var(--edge-darker);text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">📎 ${escapeHtml(a.name)}${a.failed?' <span style="color:var(--bad);">(upload failed)</span>':(a._file?' <span style="color:var(--ink-soft);">(uploading…)</span>':'')}</a>`}
       <span style="color:var(--ink-soft);font-size:11px;">${(a.size/1024).toFixed(0)}KB</span>
       <button type="button" data-removeattach="${i}" data-removeattachfor="${removeAttr}" style="background:none;border:none;color:var(--bad);font-size:13px;">✕</button>
     </div>`).join('');
 }
 function filesToAttachments(fileList){
-  return Array.from(fileList).map(f=>({name:f.name, size:f.size, url:URL.createObjectURL(f)}));
+  return Array.from(fileList).map(f=>({id:crypto.randomUUID(), name:f.name, size:f.size, url:URL.createObjectURL(f), _file:f}));
 }
-function wireAttachmentZone(overlay, zoneId, inputId, getAttachments, target){
+/* ---------------- PERMANENT FILES (Phase 3, 2026-09-25) ----------------
+   Files live in the private Supabase Storage bucket 'portal-files' at
+   todos/<todo id>/<file id>-<name>  or  entries/<entry id>/<file id>-<name>.
+   Storage rules: you can read/add/remove a file if you can see its To-Do/Project/entry.
+   The list of files (name, size, path, who, when) is saved on the row (todos.files /
+   entries.files); links are short-lived signed URLs fetched on click. */
+const PORTAL_FILES_BUCKET = 'portal-files';
+function fileMetaOnly(a){ return {id:a.id, name:a.name, size:a.size, path:a.path, uploadedBy:a.uploadedBy||null, uploadedAt:a.uploadedAt||null}; }
+function persistedFiles(list){ return (list||[]).filter(a=>a && a.path).map(fileMetaOnly); }
+async function uploadPendingAttachments(list, kind, ownerId){
+  const pending = (list||[]).filter(a=>a._file && !a.path);
+  let failed = 0;
+  for(const a of pending){
+    const safe = a.name.replace(/[^\w.\- ]+/g,'_').slice(0,120);
+    const path = `${kind}/${ownerId}/${a.id}-${safe}`;
+    const { error } = await supabaseClient.storage.from(PORTAL_FILES_BUCKET).upload(path, a._file, {upsert:false, contentType: a._file.type || undefined});
+    if(error){ console.error('upload failed', error); failed++; a.failed = true; continue; }
+    a.path = path; a.uploadedBy = state.currentUser.id; a.uploadedAt = new Date().toISOString(); delete a._file; delete a.failed;
+  }
+  if(failed) flashToast(`${failed} file${failed===1?'':'s'} didn't upload — try again.`);
+  return pending.length - failed;
+}
+async function openPortalFile(path){
+  const w = window.open('', '_blank');
+  const { data, error } = await supabaseClient.storage.from(PORTAL_FILES_BUCKET).createSignedUrl(path, 3600);
+  if(error || !data){ if(w) w.close(); flashToast("Couldn't open that file. (" + (error?error.message:'unknown') + ')'); return; }
+  if(w) w.location = data.signedUrl; else window.location.href = data.signedUrl;
+}
+async function removePortalFile(path){
+  if(!path) return;
+  const { error } = await supabaseClient.storage.from(PORTAL_FILES_BUCKET).remove([path]);
+  if(error) console.error('remove file failed', error);
+}
+document.addEventListener('click', ev=>{
+  const a = ev.target.closest && ev.target.closest('[data-attpath]'); if(!a) return;
+  ev.preventDefault(); ev.stopPropagation(); openPortalFile(a.dataset.attpath);
+});
+// persist (optional): ()=>({kind:'todos'|'entries', id, save}) for an already-saved
+// record — files upload immediately and the record is re-saved. Without it (a brand-new
+// unsaved To-Do / Convention), files wait in memory and upload right after the save.
+function wireAttachmentZone(overlay, zoneId, inputId, getAttachments, target, persist){
   const zone = overlay.querySelector('#'+zoneId);
   const input = overlay.querySelector('#'+inputId);
   if(!zone || !input) return;
-  input.onchange = ()=>{ getAttachments().push(...filesToAttachments(input.files)); renderPreservingScroll('.modal-body'); };
+  const afterAdd = async ()=>{
+    renderPreservingScroll('.modal-body');
+    if(!persist) return;
+    const ctx = persist(); if(!ctx) return;
+    await uploadPendingAttachments(getAttachments(), ctx.kind, ctx.id);
+    ctx.save();
+    renderPreservingScroll('.modal-body');
+  };
+  input.onchange = ()=>{ getAttachments().push(...filesToAttachments(input.files)); afterAdd(); };
   zone.ondragover = (ev)=>{ ev.preventDefault(); zone.style.borderColor='var(--edge)'; };
   zone.ondragleave = ()=>{ zone.style.borderColor='var(--line)'; };
   zone.ondrop = (ev)=>{
     ev.preventDefault(); zone.style.borderColor='var(--line)';
-    if(ev.dataTransfer.files.length) getAttachments().push(...filesToAttachments(ev.dataTransfer.files));
-    renderPreservingScroll('.modal-body');
+    if(ev.dataTransfer.files.length){ getAttachments().push(...filesToAttachments(ev.dataTransfer.files)); afterAdd(); }
   };
   overlay.querySelectorAll(`[data-removeattachfor="${target}"]`).forEach(b=>b.onclick=()=>{
-    getAttachments().splice(parseInt(b.dataset.removeattach),1); renderPreservingScroll('.modal-body');
+    const list = getAttachments(); const a = list[parseInt(b.dataset.removeattach)];
+    if(a && a.path && !confirm(`Remove "${a.name}"? It's deleted for everyone.`)) return;
+    list.splice(parseInt(b.dataset.removeattach),1);
+    if(a && a.path){ removePortalFile(a.path); const ctx = persist && persist(); if(ctx) ctx.save(); }
+    renderPreservingScroll('.modal-body');
   });
 }
 function renderNewTodoModal(){
@@ -14318,7 +14510,9 @@ function renderNewTodoModal(){
     } else {
       flashToast('To-do saved.');
     }
-    supaCreateTodo(newTd);
+    supaCreateTodo(newTd).then(async ()=>{
+      if((newTd.attachments||[]).some(a=>a._file)){ await uploadPendingAttachments(newTd.attachments, 'todos', newTd.id); supaUpdateTodo(newTd); }
+    });
     if(m.openChildTodoAfterSave && newTd.type==='project'){
       // "+ New To-Do" pressed on a brand-new Project: it's saved now, so open it and put a
       // New To-Do (already linked to it) on top.
