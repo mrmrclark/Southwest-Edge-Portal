@@ -3632,7 +3632,9 @@ function bdDefaultSubColumns(){
 }
 function bdSubCols(b){ if(!b.subColumns || !b.subColumns.length) b.subColumns = bdDefaultSubColumns(); return b.subColumns; }
 function bdDefaultGroups(){
-  return [{id:'g_todo', name:'To Dos', color:'#579BFC'}, {id:'g_large', name:'Large Projects', color:'#FDAB3D'}];
+  // One plain starter group. (Was Collin's "To Dos" + "Large Projects" — the "To Dos"
+  // name made Projects look like To-Dos, 2026-09-26.) Add more with "+ Add new group".
+  return [{id:'g_todo', name:'Active', color:'#00C875'}];
 }
 
 /* ---------- data ---------- */
