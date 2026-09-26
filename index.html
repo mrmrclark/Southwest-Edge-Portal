@@ -436,7 +436,12 @@
   /* ---------- PROJECT BOARDS (Monday-style) ---------- */
   .bd-layout{display:flex;gap:18px;align-items:flex-start;}
   .bd-main{flex:1;min-width:0;}
-  .bd-nav{width:230px;flex:none;background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:10px 0 14px;position:sticky;top:0;max-height:calc(100vh - 110px);overflow-y:auto;}
+  .bd-nav{width:230px;flex:none;background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:10px 0 14px;position:sticky;top:0;max-height:calc(100vh - 110px);overflow-y:auto;overflow-x:hidden;}
+  .bd-nav-resize{position:absolute;top:0;right:0;bottom:0;width:7px;cursor:col-resize;z-index:3;border-radius:0 12px 12px 0;}
+  .bd-nav-resize:hover{background:var(--edge);opacity:.35;}
+  .bd-scroll{overflow:auto !important;max-height:calc(100vh - 215px);}
+  .bd-table thead th{position:sticky;top:0;z-index:2;}
+  .bd-table thead th.bd-title-th,.bd-table thead th.bd-grip-th{z-index:4;}
   .bd-nav.collapsed{width:34px;padding:8px 0;display:flex;justify-content:center;}
   .bd-nav-head{display:flex;justify-content:space-between;align-items:center;padding:2px 10px 8px;font-weight:700;font-size:14px;}
   .bd-nav-btn,.bd-nav-toggle{border:1px solid var(--line);background:#fff;border-radius:6px;width:26px;height:26px;cursor:pointer;font-size:14px;line-height:1;color:var(--ink-soft);}
@@ -3391,7 +3396,7 @@ function captureScrollPositions(){
   const snap = {sidebar:null, content:null, viewKey:lastRenderedViewKey, modals:[]};
   const sb = document.querySelector('.sidebar'); if(sb) snap.sidebar = sb.scrollTop;
   const ct = document.querySelector('.content'); if(ct) snap.content = ct.scrollTop;
-  snap.keep = {}; document.querySelectorAll('[data-keep-scroll]').forEach(el=>{ snap.keep[el.dataset.keepScroll] = el.scrollLeft; });
+  snap.keep = {}; document.querySelectorAll('[data-keep-scroll]').forEach(el=>{ snap.keep[el.dataset.keepScroll] = [el.scrollLeft, el.scrollTop]; });
   document.querySelectorAll('.modal-card').forEach(card=>{
     const body = card.querySelector('.modal-body');
     if(body) snap.modals.push({key: modalWindowKey(card), top: body.scrollTop});
@@ -3404,7 +3409,7 @@ function restoreScrollPositions(snap){
   const nowKey = mainViewKey();
   if(snap.viewKey!==null && snap.viewKey===nowKey){ const ct = document.querySelector('.content'); if(ct && snap.content) ct.scrollTop = snap.content; }
   lastRenderedViewKey = nowKey;
-  if(snap.keep) document.querySelectorAll('[data-keep-scroll]').forEach(el=>{ const v = snap.keep[el.dataset.keepScroll]; if(v) el.scrollLeft = v; });
+  if(snap.keep) document.querySelectorAll('[data-keep-scroll]').forEach(el=>{ const v = snap.keep[el.dataset.keepScroll]; if(v){ el.scrollLeft = v[0]; el.scrollTop = v[1]; } });
   if(snap.modals.length){
     const used = new Set();
     document.querySelectorAll('.modal-card').forEach(card=>{
@@ -3831,6 +3836,16 @@ function renderProjectsBoardsMain(){
     <div class="bd-main"><div class="bd-mobile-only">${tabs}</div>${main}<div class="bd-mobile-only">${bdLegacyHtml(legacy, b)}</div></div>
   </div>`;
 }
+function bdNavWidth(){ if(!state.bdNavWidth){ try { state.bdNavWidth = parseInt(localStorage.getItem('edgeBdNavWidth'),10) || 230; } catch(e){ state.bdNavWidth = 230; } } return state.bdNavWidth; }
+document.addEventListener('pointerdown', ev=>{
+  const h = ev.target.closest && ev.target.closest('[data-bd="navResize"]'); if(!h) return;
+  ev.preventDefault();
+  const nav = h.closest('.bd-nav'); const sx = ev.clientX; const sw = nav.getBoundingClientRect().width;
+  const move = e=>{ const w = Math.max(160, Math.min(480, Math.round(sw + e.clientX - sx))); nav.style.width = w+'px'; state.bdNavWidth = w; };
+  const up = ()=>{ window.removeEventListener('pointermove',move); window.removeEventListener('pointerup',up); document.body.classList.remove('mw-busy'); try { localStorage.setItem('edgeBdNavWidth', String(state.bdNavWidth)); } catch(e){} };
+  document.body.classList.add('mw-busy');
+  window.addEventListener('pointermove',move); window.addEventListener('pointerup',up);
+});
 function bdNavCollapsed(){ if(state.bdNavCollapsed===undefined){ try { state.bdNavCollapsed = localStorage.getItem('edgeBdNavCollapsed')==='1'; } catch(e){ state.bdNavCollapsed=false; } } return state.bdNavCollapsed; }
 function bdNavHtml(boards, b, legacy){
   if(bdNavCollapsed()) return `<div class="bd-nav collapsed"><button class="bd-nav-toggle" data-bd="navToggle" title="Show the boards panel">»</button></div>`;
@@ -3845,7 +3860,8 @@ function bdNavHtml(boards, b, legacy){
     return `<div class="bd-nav-item ${b&&x.id===b.id?'active':''}" data-bd="tab" data-board="${x.id}" title="${escapeAttr(x.name)}"><span class="bd-nav-ic">📋</span><span class="bd-nav-name">${escapeHtml(x.name)}</span>${n?`<span class="bd-nav-count">${n}</span>`:''}</div>`;
   }).join('') || `<div class="tiny" style="color:var(--ink-soft);padding:4px 10px;">${q?'No matches.':'No boards yet.'}</div>`;
   const legacyItems = legacy.map(p=>`<div class="bd-nav-item" data-bd="open" data-bdt="${p.id}" title="${escapeAttr(p.title+' — '+getTodoLinkSummary(p))}"><span class="bd-nav-ic">🗂️</span><span class="bd-nav-name">${escapeHtml(p.title)}</span></div>`).join('');
-  return `<div class="bd-nav">
+  return `<div class="bd-nav" style="width:${bdNavWidth()}px;">
+    <div class="bd-nav-resize" data-bd="navResize" title="Drag to resize"></div>
     <div class="bd-nav-head"><span>Projects</span>
       <span style="display:flex;gap:4px;"><button class="bd-nav-btn" data-bd="newBoard" title="New board">+</button><button class="bd-nav-btn" data-bd="navToggle" title="Hide this panel">«</button></span></div>
     <input class="bd-nav-search" data-bd="navSearch" placeholder="🔍 Search boards" value="${escapeAttr(state.bdNavSearch||'')}">
@@ -4266,7 +4282,7 @@ document.addEventListener('input', ev=>{
 document.addEventListener('click', ev=>{
   const el = ev.target.closest && ev.target.closest('[data-bd]'); if(!el) return;
   const k = el.dataset.bd;
-  if(k==='navSearch') return;
+  if(k==='navSearch' || k==='navResize') return;
   if(['set','check','search','filterPerson','filterStatus','addItem','labName','labMeaning','rowgrip','colresize','subName','addSub','fileInput'].includes(k)) return;
   if(k==='toggleHide') return;
   const b = activeBoard();
