@@ -171,8 +171,17 @@
 
   /* ---------- SHELL ---------- */
   .shell{display:flex;height:100vh;width:100vw;}
+  .sb-wrap{position:relative;flex:none;}
+  .sb-resize{position:absolute;top:0;right:-3px;width:7px;height:100%;cursor:col-resize;z-index:20;}
+  .sb-resize:hover{background:var(--edge);opacity:.35;}
+  .sb-toggle{width:24px;height:24px;border-radius:50%;border:1px solid var(--line);background:#fff;color:var(--ink-soft);cursor:pointer;font-size:13px;line-height:1;box-shadow:0 1px 4px rgba(0,0,0,.12);display:flex;align-items:center;justify-content:center;padding:0;}
+  .sb-toggle:hover{border-color:var(--edge);color:var(--edge);}
+  .sb-toggle-in{position:absolute;top:74px;right:-12px;z-index:21;opacity:.75;transition:opacity .15s;}
+  .sb-wrap:hover .sb-toggle-in{opacity:1;}
+  .sb-rail{width:18px;flex:none;background:var(--paper);border-right:1px solid var(--line);position:relative;}
+  .sb-rail .sb-toggle{position:absolute;top:74px;left:6px;z-index:21;}
   .sidebar{
-    width:270px;min-width:270px;height:100vh;background:var(--paper);border-right:1px solid var(--line);
+    width:var(--sbw,270px);min-width:var(--sbw,270px);height:100vh;background:var(--paper);border-right:1px solid var(--line);
     display:flex;flex-direction:column;overflow-y:auto;
   }
   .sidebar-header{
@@ -4583,6 +4592,27 @@ function wireBdDetail(overlay, td){
   if(state.bdFocusComments){ state.bdFocusComments=false; const a = overlay.querySelector('#bdCommentsAnchor'); if(a) requestAnimationFrame(()=>{ a.scrollIntoView({block:'start'}); const ta = overlay.querySelector('#bdCommentText'); if(ta) ta.focus(); }); }
 }
 
+/* ---------------- MAIN SIDEBAR: resize + collapse (2026-09-26) ----------------
+   Drag the sidebar's right edge to resize (180–420px) or click « to hide it (» brings it
+   back). Both remembered per browser. Desktop only. */
+function sbWidth(){ if(!state.sbWidth){ try { state.sbWidth = parseInt(localStorage.getItem('edgeSbWidth'),10) || 270; } catch(e){ state.sbWidth = 270; } } return state.sbWidth; }
+function sbCollapsed(){ if(state.sbCollapsed===undefined){ try { state.sbCollapsed = localStorage.getItem('edgeSbCollapsed')==='1'; } catch(e){ state.sbCollapsed=false; } } return state.sbCollapsed; }
+document.addEventListener('click', ev=>{
+  const t = ev.target.closest && ev.target.closest('[data-sb="toggle"]'); if(!t) return;
+  ev.preventDefault(); state.sbCollapsed = !sbCollapsed();
+  try { localStorage.setItem('edgeSbCollapsed', state.sbCollapsed?'1':'0'); } catch(e){}
+  render();
+});
+document.addEventListener('pointerdown', ev=>{
+  const h = ev.target.closest && ev.target.closest('[data-sb="resize"]'); if(!h) return;
+  ev.preventDefault();
+  const shell = document.querySelector('.shell'); const sx = ev.clientX; const sw = sbWidth();
+  const move = e=>{ state.sbWidth = Math.max(180, Math.min(420, Math.round(sw + e.clientX - sx))); if(shell) shell.style.setProperty('--sbw', state.sbWidth+'px'); };
+  const up = ()=>{ window.removeEventListener('pointermove',move); window.removeEventListener('pointerup',up); document.body.classList.remove('mw-busy'); try { localStorage.setItem('edgeSbWidth', String(state.sbWidth)); } catch(e){} };
+  document.body.classList.add('mw-busy');
+  window.addEventListener('pointermove',move); window.addEventListener('pointerup',up);
+});
+
 /* ---------------- LOGIN SCREEN ---------------- */
 function handleForUser(u){ return '@'+u.name.split(' ')[0].toLowerCase(); }
 function renderLogin(){
@@ -7689,9 +7719,11 @@ function renderShell(){
   const hideMain = state.isMobile && state.mobileScreen==='nav';
   const showOfflineBanner = state.isOffline || !!state.offlineOutboxCount;
   return `
-  <div class="shell" style="${showOfflineBanner?'padding-top:26px;box-sizing:border-box;':''}">
+  <div class="shell" style="${showOfflineBanner?'padding-top:26px;box-sizing:border-box;':''}--sbw:${sbWidth()}px;">
     ${renderOfflineBanner()}
-    <div style="${hideSidebar?'display:none;':''}">${renderSidebar()}</div>
+    ${(!state.isMobile && sbCollapsed())
+      ? `<div class="sb-rail"><button class="sb-toggle" data-sb="toggle" title="Show the sidebar">»</button></div>`
+      : `<div class="sb-wrap" style="${hideSidebar?'display:none;':''}">${renderSidebar()}${state.isMobile?'':`<div class="sb-resize" data-sb="resize" title="Drag to resize"></div><button class="sb-toggle sb-toggle-in" data-sb="toggle" title="Hide the sidebar">«</button>`}</div>`}
     <div class="main" style="${hideMain?'display:none;':''}position:relative;">
       ${renderTopbar()}
       <div class="content"><div class="content-flex"><div class="content-inner${(state.mainView.type==='dashboard'||state.mainView.type==='wip'||state.mainView.type==='projects')?' wide':''}${state.mainView.type==='projects'?' full':''}" id="mainContentInner">${renderMainContent()}</div>${(state.mainView.type==='wip'||state.mainView.type==='projects') ? '' : renderSidePanel()}</div></div>
