@@ -456,6 +456,9 @@
   .bd-nav-ic{flex:none;font-size:13px;}
   .bd-nav-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .bd-nav-count{font-size:10.5px;background:#E6E9EF;color:var(--ink-soft);border-radius:8px;padding:1px 6px;font-weight:600;}
+  .bd-nav-add{color:var(--ink-soft);font-size:12.5px;}
+  .bd-template-banner{background:#F3ECFD;border:1px solid #DCCBF7;color:#5B3B8C;border-radius:10px;padding:8px 12px;margin-bottom:10px;font-size:13px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+  .bd-template-banner .btn{margin-left:auto;}
   .bd-nav-soon{color:var(--ink-soft);padding:2px 10px 6px;font-size:11.5px !important;line-height:1.35;}
   .bd-mobile-only{display:none;}
   @media (max-width:820px){ .bd-nav{display:none;} .bd-mobile-only{display:block;} }
@@ -516,10 +519,25 @@
   .bd-td-checkbox{text-align:center;}
   .bd-status{height:36px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:600;font-size:12.5px;cursor:pointer;padding:0 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .bd-status:hover{filter:brightness(.95);}
-  .bd-person{display:flex;align-items:center;gap:4px;padding:0 4px;height:36px;position:relative;}
-  .bd-person select{border:none;background:transparent;font-size:12.5px;padding:0;width:100%;height:34px;cursor:pointer;}
-  .bd-avatar{flex:none;width:24px;height:24px;border-radius:50%;background:var(--edge);color:#fff;font-size:10px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;}
-  .bd-avatar.empty{background:#E6E9EF;color:#999;font-size:12px;}
+  .bd-person{display:flex;align-items:center;justify-content:center;gap:8px;padding:0 6px;height:36px;cursor:pointer;}
+  .bd-person:hover{background:var(--edge-lighter);}
+  .bd-form-cell .bd-person{justify-content:flex-start;}
+  .bd-person-name{font-size:13px;}
+  .bd-avatar{flex:none;width:28px;height:28px;border-radius:50%;background:var(--edge);color:#fff;font-size:11px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;box-shadow:0 0 0 2px #fff;}
+  .bd-avatar.empty{background:transparent;border:1.5px solid #C5C7D0;color:#C5C7D0;box-shadow:none;}
+  .bd-tool{border:none;background:transparent;padding:6px 10px;border-radius:6px;font-size:13.5px;color:var(--ink);cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-weight:400;}
+  .bd-tool:hover{background:#EEF0F4;}
+  .bd-tool.on{background:#E6F0FF;color:#1F5DB8;}
+  .bd-tool .bd-avatar{width:20px;height:20px;font-size:9px;}
+  .bd-tool-search input{border:none;background:transparent;padding:0;width:120px;font-size:13.5px;outline:none;box-shadow:none;}
+  .bd-tool-search.on input,.bd-tool-search:focus-within input{width:170px;}
+  .bd-pop-search{width:100%;margin-bottom:6px;font-size:13px;padding:6px 8px;}
+  .bd-menu-item.on{background:#E6F0FF;}
+  .bd-menu-item .bd-avatar{width:24px;height:24px;font-size:10px;}
+  .bd-dot{width:12px;height:12px;border-radius:3px;display:inline-block;flex:none;}
+  .bd-mini{border:1px solid var(--line);background:#fff;border-radius:4px;padding:0 6px;margin-left:4px;cursor:pointer;font-size:12px;}
+  .bd-mini:hover{border-color:var(--edge);color:var(--edge);}
+
   .bd-linkcell{display:flex;align-items:center;}
   .bd-linkcell a{padding:0 6px;text-decoration:none;}
   .bd-addrow td{border-bottom:1px solid var(--line-soft);background:#fff;}
@@ -3627,11 +3645,11 @@ function subitemsOf(projectId){ bdEnsure(); return db.subitems.filter(x=>x.proje
 function boardRowToLocal(r){
   return {id:r.id, name:r.name, kind:r.kind, clientId:r.client_id, columns:r.columns||[], groups:r.groups||[],
     visibility:r.visibility, defaultDueDays:r.default_due_days, createdBy: authIdToLocalUserId(r.created_by)||r.created_by,
-    sortOrder:r.sort_order||0, userIds:[], subColumns: r.sub_columns || []};
+    sortOrder:r.sort_order||0, userIds:[], subColumns: r.sub_columns || [], isTemplate: !!r.is_template};
 }
 function boardLocalToRow(b){
   return {id:b.id, name:b.name, kind:b.kind||'open', client_id:b.clientId||null, columns:b.columns, groups:b.groups,
-    visibility:b.visibility||'private', default_due_days:b.defaultDueDays||0, sort_order:b.sortOrder||0, sub_columns: b.subColumns || []};
+    visibility:b.visibility||'private', default_due_days:b.defaultDueDays||0, sort_order:b.sortOrder||0, sub_columns: b.subColumns || [], is_template: !!b.isTemplate};
 }
 async function fetchBoardsFromSupabase(){
   try {
@@ -3681,14 +3699,18 @@ function visibleBoards(){
   bdEnsure();
   const me = state.currentUser.id;
   const isAdmin = state.currentUser.role==='Admin';
-  return db.boards.filter(b=>b.kind==='open' && (isAdmin || b.createdBy===me || (b.userIds||[]).includes(me)))
+  return db.boards.filter(b=>b.kind==='open' && (b.isTemplate || isAdmin || b.createdBy===me || (b.userIds||[]).includes(me)))
     .sort((a,b)=>(a.sortOrder-b.sortOrder) || a.name.localeCompare(b.name));
 }
+// Templates (Monday-style): any board can be flagged a Template → it's shown to everyone
+// in the Templates folder and offered under "Start from" when making a new board.
+function myBoards(){ return visibleBoards().filter(b=>!b.isTemplate); }
+function templateBoards(){ return visibleBoards().filter(b=>b.isTemplate); }
 function activeBoard(){
   const boards = visibleBoards();
   let id = state.activeBoardId;
   if(!id){ try { id = localStorage.getItem('edgeActiveBoard_'+state.currentUser.id); } catch(e){} }
-  return boards.find(b=>b.id===id) || boards[0] || null;
+  return boards.find(b=>b.id===id) || boards.find(b=>!b.isTemplate) || boards[0] || null;
 }
 function setActiveBoard(id){
   state.activeBoardId = id; state.boardArchiveOpen = false;
@@ -3750,10 +3772,12 @@ function bdApplyOutcome(t, col, label){
 function bdRestore(t){ t.completed = false; t.outcome = null; t.completedAt = null; const b = db.boards.find(x=>x.id===t.boardId); const sc = b && bdStatusCol(b); if(sc) t.status=''; }
 
 /* ---------- cell rendering ---------- */
+const BD_AVATAR_COLORS = ['#E1531A','#579BFC','#00A86B','#A25DDC','#FDAB3D','#E2445C','#037F4C','#784BD1','#FF7575','#0086C0'];
+function bdAvatarColor(uid){ let h=0; String(uid||'').split('').forEach(c=>{ h=(h*31+c.charCodeAt(0))>>>0; }); return BD_AVATAR_COLORS[h % BD_AVATAR_COLORS.length]; }
 function bdPersonBadge(uid){
   const u = USERS.find(x=>x.id===uid);
-  if(!u) return `<span class="bd-avatar empty">👤</span>`;
-  return `<span class="bd-avatar" title="${escapeAttr(u.name)}">${escapeHtml(u.initials || u.name.split(' ').map(s=>s[0]).join('').slice(0,2))}</span>`;
+  if(!u) return `<span class="bd-avatar empty" title="Unassigned">👤</span>`;
+  return `<span class="bd-avatar" style="background:${bdAvatarColor(u.id)};" title="${escapeAttr(u.name)}">${escapeHtml(u.initials || u.name.split(' ').map(s=>s[0]).join('').slice(0,2))}</span>`;
 }
 function bdCellHtml(b, t, col, mode, isSub){
   const v = bdGetValue(t, col);
@@ -3768,8 +3792,8 @@ function bdCellHtml(b, t, col, mode, isSub){
       return `<div class="bd-status" ${k} data-bd="status" style="background:${lab?lab.color:'#C4C4C4'};">${lab?escapeHtml(lab.label):''}</div>`;
     }
     case 'person': {
-      return `<label class="bd-person">${bdPersonBadge(v)}<select ${k} data-bd="set">
-        <option value=""></option>${usersSortedByMe().map(u=>`<option value="${u.id}" ${u.id===v?'selected':''}>${escapeHtml(u.name)}</option>`).join('')}</select></label>`;
+      const u = USERS.find(x=>x.id===v);
+      return `<div class="bd-person" data-bd="personPick" ${k} title="${u?escapeAttr(u.name):'Click to assign'}">${bdPersonBadge(v)}${mode==='form' ? `<span class="bd-person-name">${u?escapeHtml(u.name):'<span style="color:var(--ink-soft);">Unassigned</span>'}</span>` : ''}</div>`;
     }
     case 'date': return `<input type="date" class="bd-in" ${k} data-bd="set" value="${escapeAttr(v)}">`;
     case 'number': return `<input type="text" inputmode="decimal" class="bd-in bd-num" ${k} data-bd="set" value="${escapeAttr(v)}">`;
@@ -3850,7 +3874,9 @@ function bdNavCollapsed(){ if(state.bdNavCollapsed===undefined){ try { state.bdN
 function bdNavHtml(boards, b, legacy){
   if(bdNavCollapsed()) return `<div class="bd-nav collapsed"><button class="bd-nav-toggle" data-bd="navToggle" title="Show the boards panel">»</button></div>`;
   const q = (state.bdNavSearch||'').trim().toLowerCase();
-  const shown = q ? boards.filter(x=>x.name.toLowerCase().includes(q)) : boards;
+  const mine = boards.filter(x=>!x.isTemplate), temps = boards.filter(x=>x.isTemplate);
+  const shown = q ? mine.filter(x=>x.name.toLowerCase().includes(q)) : mine;
+  const tShown = q ? temps.filter(x=>x.name.toLowerCase().includes(q)) : temps;
   const folderOpen = k => !(state.bdNavClosed||{})[k];
   const folder = (k, label, inner, count) => `
     <div class="bd-nav-folder" data-bd="navFolder" data-folder="${k}">${folderOpen(k)?'▾':'▸'} ${label}${count!=null?` <span class="bd-nav-count">${count}</span>`:''}</div>
@@ -3865,7 +3891,8 @@ function bdNavHtml(boards, b, legacy){
     <div class="bd-nav-head"><span>Projects</span>
       <span style="display:flex;gap:4px;"><button class="bd-nav-btn" data-bd="newBoard" title="New board">+</button><button class="bd-nav-btn" data-bd="navToggle" title="Hide this panel">«</button></span></div>
     <input class="bd-nav-search" data-bd="navSearch" placeholder="🔍 Search boards" value="${escapeAttr(state.bdNavSearch||'')}">
-    ${folder('boards', 'My Boards', boardItems, boards.length)}
+    ${folder('templates', 'Templates', tShown.map(x=>`<div class="bd-nav-item ${b&&x.id===b.id?'active':''}" data-bd="tab" data-board="${x.id}" title="${escapeAttr(x.name)}"><span class="bd-nav-ic">🧩</span><span class="bd-nav-name">${escapeHtml(x.name)}</span></div>`).join('') + `<div class="bd-nav-item bd-nav-add" data-bd="newTemplate"><span class="bd-nav-ic">＋</span><span class="bd-nav-name">New template</span></div>`, temps.length)}
+    ${folder('boards', 'My Boards', boardItems, mine.length)}
     ${folder('clients', 'Clients', `<div class="tiny bd-nav-soon">Client Projects will live here (Phase 4).</div>`)}
     ${folder('listings', 'Listings', `<div class="tiny bd-nav-soon">Listing Projects will live here (Phase 4).</div>`)}
     ${legacy.length ? folder('older', 'Older Projects', legacyItems, legacy.length) : ''}
@@ -3896,8 +3923,9 @@ function bdToolbarHtml(b){
   const archivedCount = boardProjects(b, true).filter(t=>t.completed).length;
   const hiddenCount = (p.hidden||[]).length;
   return `
+  ${b.isTemplate ? `<div class="bd-template-banner">🧩 <b>Template.</b> Its columns, labels and groups are copied into new boards — Projects added here stay here. <button class="btn sm" data-bd="useTemplate">Use this template →</button></div>` : ''}
   <div class="bd-head">
-    <div class="bd-title" data-bd="renameBoard" title="Click to rename">${escapeHtml(b.name)}</div>
+    <div class="bd-title" data-bd="renameBoard" title="Click to rename">${b.isTemplate?'🧩 ':''}${escapeHtml(b.name)}</div>
     <button class="btn secondary sm" data-bd="share">👥 Users${b.userIds && b.userIds.length ? ` (${b.userIds.length+1})` : ''}</button>
     <button class="btn secondary sm" data-bd="settings">⚙️ Settings</button>
     <span style="flex:1;"></span>
@@ -3905,16 +3933,12 @@ function bdToolbarHtml(b){
   </div>
   <div class="bd-toolbar">
     <button class="btn sm" data-bd="newProject">+ New Project</button>
-    <input class="bd-search" data-bd="search" placeholder="🔍 Search" value="${escapeAttr(p.search||'')}">
-    <select data-bd="filterPerson" title="Person or Requester">
-      <option value="">👤 Anyone</option>
-      ${usersSortedByMe().map(u=>`<option value="${u.id}" ${p.person===u.id?'selected':''}>${escapeHtml(u.name)}</option>`).join('')}
-    </select>
-    ${sc ? `<select data-bd="filterStatus"><option value="">All statuses</option><option value="__blank" ${p.status==='__blank'?'selected':''}>(no status)</option>
-      ${(sc.labels||[]).filter(l=>!l.meaning).map(l=>`<option value="${escapeAttr(l.label)}" ${p.status===l.label?'selected':''}>${escapeHtml(l.label)}</option>`).join('')}</select>` : ''}
-    <button class="btn secondary sm" data-bd="hideMenu">👁 Hide${hiddenCount?` (${hiddenCount})`:''}</button>
-    ${p.sort && p.sort.col ? `<button class="btn secondary sm" data-bd="clearSort" title="Back to your own drag order">↕ Sorted — clear</button>` : ''}
-    ${(p.search||p.person||p.status) ? `<button class="btn secondary sm" data-bd="clearFilters">✕ Clear filters</button>` : ''}
+    <label class="bd-tool bd-tool-search ${p.search?'on':''}">🔍<input data-bd="search" placeholder="Search" value="${escapeAttr(p.search||'')}"></label>
+    <button class="bd-tool ${p.person?'on':''}" data-bd="filterPersonMenu">${p.person ? bdPersonBadge(p.person) : '👤'} Person</button>
+    ${sc ? `<button class="bd-tool ${p.status?'on':''}" data-bd="filterStatusMenu">⏷ Filter${p.status?' · 1':''}</button>` : ''}
+    <button class="bd-tool ${p.sort&&p.sort.col?'on':''}" data-bd="sortMenu">⇅ Sort${p.sort&&p.sort.col?' · 1':''}</button>
+    <button class="bd-tool ${hiddenCount?'on':''}" data-bd="hideMenu">👁 Hide${hiddenCount?` · ${hiddenCount}`:''}</button>
+    ${(p.search||p.person||p.status) ? `<button class="bd-tool" data-bd="clearFilters">✕ Clear</button>` : ''}
   </div>`;
 }
 function bdBoardHtml(b){
@@ -4054,6 +4078,31 @@ function renderBoardPopover(){
       </div>
       <div class="bd-pop-link" data-bd="editLabels">✏️ Edit Labels</div>`;
     }
+  } else if(p.kind==='person'){
+    const col = bdPopCol(b, p); const t = bdPopTarget(p); if(!col||!t){ state.bdPop=null; return; }
+    const cur = bdGetValue(t, col);
+    const q = (p.q||'').toLowerCase();
+    html = `<input class="bd-pop-search" data-bd="popSearch" placeholder="Search people" value="${escapeAttr(p.q||'')}">
+      ${usersSortedByMe().filter(u=>!q || u.name.toLowerCase().includes(q)).map(u=>`<div class="bd-menu-item ${u.id===cur?'on':''}" data-bd="pickPerson" data-user="${u.id}">${bdPersonBadge(u.id)} ${escapeHtml(u.name)}${u.id===state.currentUser.id?' <span class="tiny">(me)</span>':''}${u.id===cur?' <span style="margin-left:auto;">✓</span>':''}</div>`).join('')}
+      ${cur && col.builtin!=='assignedTo' ? `<div class="bd-menu-item" data-bd="pickPerson" data-user="" style="color:var(--ink-soft);border-top:1px solid var(--line-soft);margin-top:4px;">✕ Remove</div>` : ''}`;
+  } else if(p.kind==='filterPerson'){
+    const cur = bdPrefs(b.id).person;
+    html = `<div class="bd-pop-title">Show Projects for</div>
+      <div class="bd-menu-item ${!cur?'on':''}" data-bd="setFilterPerson" data-user="">👥 Everyone</div>
+      ${usersSortedByMe().map(u=>`<div class="bd-menu-item ${u.id===cur?'on':''}" data-bd="setFilterPerson" data-user="${u.id}">${bdPersonBadge(u.id)} ${escapeHtml(u.name)}</div>`).join('')}
+      <div class="tiny" style="color:var(--ink-soft);margin:6px 4px 0;">Matches Person or Requester.</div>`;
+  } else if(p.kind==='filterStatus'){
+    const sc = bdStatusCol(b); const cur = bdPrefs(b.id).status;
+    html = `<div class="bd-pop-title">Filter by Status</div>
+      <div class="bd-menu-item ${!cur?'on':''}" data-bd="setFilterStatus" data-val="">All</div>
+      <div class="bd-menu-item ${cur==='__blank'?'on':''}" data-bd="setFilterStatus" data-val="__blank"><span class="bd-dot" style="background:#C4C4C4;"></span> (no status)</div>
+      ${(sc?sc.labels:[]).filter(l=>!l.meaning).map(l=>`<div class="bd-menu-item ${cur===l.label?'on':''}" data-bd="setFilterStatus" data-val="${escapeAttr(l.label)}"><span class="bd-dot" style="background:${l.color};"></span> ${escapeHtml(l.label)}</div>`).join('')}`;
+  } else if(p.kind==='sortMenu'){
+    const cur = bdPrefs(b.id).sort||{};
+    const opts = [{id:'__title', name:'Project'}].concat(b.columns);
+    html = `<div class="bd-pop-title">Sort by</div>
+      ${opts.map(c=>`<div class="bd-menu-item ${cur.col===c.id?'on':''}" style="justify-content:space-between;"><span>${escapeHtml(c.name)}</span><span><button class="bd-mini" data-bd="setSort" data-col="${c.id}" data-dir="asc">↑</button><button class="bd-mini" data-bd="setSort" data-col="${c.id}" data-dir="desc">↓</button></span></div>`).join('')}
+      ${cur.col ? `<div class="bd-menu-item" data-bd="clearSort" style="color:var(--ink-soft);border-top:1px solid var(--line-soft);margin-top:4px;">✕ Clear sort (back to drag order)</div>` : ''}`;
   } else if(p.kind==='addCol'){
     html = `<div class="bd-pop-title">Add a column</div>` + BD_TYPES.map(x=>`<div class="bd-menu-item" data-bd="addColType" data-type="${x.type}">${x.icon} ${x.label}</div>`).join('');
   } else if(p.kind==='files'){
@@ -4110,16 +4159,18 @@ function renderBoardModal(){
   overlay.className='modal-overlay'; overlay.style.zIndex=220;
   let title='', body='', foot='';
   if(m.kind==='new' || m.kind==='settings'){
-    title = m.kind==='new' ? 'New Board' : 'Board Settings';
+    title = m.kind==='new' ? (m.asTemplate ? 'New Template' : 'New Board') : 'Board Settings';
     const canManage = !b || state.currentUser.role==='Admin' || b.createdBy===state.currentUser.id;
     const copyable = visibleBoards();
     body = `
       <div class="field"><label>Board name</label><input id="bmName" value="${escapeAttr(b?b.name:'')}" placeholder="e.g., Edge Texas Requests"></div>
       ${m.kind==='new' ? `<div class="field"><label>Start from</label>
         <select id="bmFrom"><option value="">Standard Project columns</option>
-          ${copyable.map(x=>`<option value="${x.id}">Copy the setup of "${escapeHtml(x.name)}"</option>`).join('')}</select>
+          ${copyable.some(x=>x.isTemplate) ? `<optgroup label="Templates">${copyable.filter(x=>x.isTemplate).map(x=>`<option value="${x.id}" ${m.fromId===x.id?'selected':''}>🧩 ${escapeHtml(x.name)}</option>`).join('')}</optgroup>` : ''}
+          ${copyable.some(x=>!x.isTemplate) ? `<optgroup label="Copy one of my boards">${copyable.filter(x=>!x.isTemplate).map(x=>`<option value="${x.id}" ${m.fromId===x.id?'selected':''}>${escapeHtml(x.name)}</option>`).join('')}</optgroup>` : ''}</select>
         <div class="tiny" style="color:var(--ink-soft);margin-top:4px;">Copying brings over that board's columns, labels and groups — not its Projects.</div></div>
-      <div class="tiny" style="color:var(--ink-soft);">Only you (and Admins) can see a new board until you add Users to it — same as a Client or Listing.</div>` : ''}
+      <div class="tiny" style="color:var(--ink-soft);">${m.asTemplate ? 'Templates are visible to everyone so anyone can start a board from them.' : 'Only you (and Admins) can see a new board until you add Users to it — same as a Client or Listing.'}</div>` : ''}
+      ${m.kind==='settings' && canManage ? `<label style="display:flex;gap:8px;align-items:center;margin-top:10px;font-weight:400;"><input type="checkbox" id="bmIsTemplate" style="width:auto;" ${b.isTemplate?'checked':''}> 🧩 This board is a <b>Template</b> — everyone can see it and start new boards from it</label>` : ''}
       ${m.kind==='settings' && canManage ? `<div style="margin-top:20px;padding-top:14px;border-top:1px solid var(--line-soft);"><button class="btn danger sm" data-bm="delete">🗑️ Delete this board</button>
         <div class="tiny" style="color:var(--ink-soft);margin-top:6px;">Its Projects aren't deleted — they move to "Projects not on a board".</div></div>` : ''}`;
     foot = `<button class="btn secondary" data-bm="close">Cancel</button><button class="btn" data-bm="save">${m.kind==='new'?'Create Board':'Save'}</button>`;
@@ -4149,11 +4200,13 @@ function renderBoardModal(){
       const fromId = (overlay.querySelector('#bmFrom')||{}).value;
       const src = fromId && db.boards.find(x=>x.id===fromId);
       const clone = o=>JSON.parse(JSON.stringify(o));
-      const nb = {id:crypto.randomUUID(), name, kind:'open', clientId:null, columns: src ? clone(src.columns) : bdDefaultColumns(), groups: src ? clone(src.groups) : bdDefaultGroups(), visibility:'private', defaultDueDays:0, createdBy:state.currentUser.id, sortOrder:Date.now()/1e12, userIds:[]};
+      const nb = {id:crypto.randomUUID(), name, kind:'open', clientId:null, columns: src ? clone(src.columns) : bdDefaultColumns(), groups: src ? clone(src.groups) : bdDefaultGroups(), subColumns: src ? clone(src.subColumns||[]) : [], visibility: m.asTemplate?'company':'private', isTemplate: !!m.asTemplate, defaultDueDays:0, createdBy:state.currentUser.id, sortOrder:Date.now()/1e12, userIds:[]};
       db.boards.push(nb); setActiveBoard(nb.id); state.boardModal=null; render();
       await supaCreateBoard(nb); flashToast(`Board "${name}" created.`);
     } else {
-      b.name=name; supaSaveBoard(b); state.boardModal=null; render();
+      b.name=name;
+      const tEl = overlay.querySelector('#bmIsTemplate'); if(tEl){ b.isTemplate = tEl.checked; b.visibility = tEl.checked ? 'company' : 'private'; }
+      supaSaveBoard(b); state.boardModal=null; render();
     }
   });
   const del = overlay.querySelector('[data-bm="delete"]'); if(del) del.onclick=safeHandler(async ()=>{
@@ -4271,6 +4324,8 @@ document.addEventListener('keydown', ev=>{
 });
 let bdSearchTimer=null;
 document.addEventListener('input', ev=>{
+  const ps = ev.target.closest && ev.target.closest('[data-bd="popSearch"]');
+  if(ps && state.bdPop){ state.bdPop.q = ps.value; const pos = ps.selectionStart; render(); const p2 = document.querySelector('[data-bd="popSearch"]'); if(p2){ p2.focus(); try{ p2.setSelectionRange(pos,pos); }catch(e){} } return; }
   const nav = ev.target.closest && ev.target.closest('[data-bd="navSearch"]');
   if(nav){ state.bdNavSearch = nav.value; const pos = nav.selectionStart; render(); const n2 = document.querySelector('[data-bd="navSearch"]'); if(n2){ n2.focus(); try{ n2.setSelectionRange(pos,pos); }catch(e){} } return; }
   const el = ev.target.closest && ev.target.closest('[data-bd="search"]'); if(!el) return;
@@ -4282,7 +4337,7 @@ document.addEventListener('input', ev=>{
 document.addEventListener('click', ev=>{
   const el = ev.target.closest && ev.target.closest('[data-bd]'); if(!el) return;
   const k = el.dataset.bd;
-  if(k==='navSearch' || k==='navResize') return;
+  if(k==='navSearch' || k==='navResize' || k==='popSearch') return;
   if(['set','check','search','filterPerson','filterStatus','addItem','labName','labMeaning','rowgrip','colresize','subName','addSub','fileInput'].includes(k)) return;
   if(k==='toggleHide') return;
   const b = activeBoard();
@@ -4292,6 +4347,8 @@ document.addEventListener('click', ev=>{
     case 'closePop': state.bdPop=null; render(); return;
     case 'tab': setActiveBoard(el.dataset.board); render(); return;
     case 'newBoard': state.boardModal={kind:'new'}; render(); return;
+    case 'newTemplate': state.boardModal={kind:'new', asTemplate:true}; render(); return;
+    case 'useTemplate': state.boardModal={kind:'new', fromId:b.id}; render(); return;
     case 'settings': state.boardModal={kind:'settings', boardId:b.id}; render(); return;
     case 'share': state.boardModal={kind:'share', boardId:b.id}; render(); return;
     case 'renameBoard': bdPromptText('Rename board', b.name, v=>{ b.name=v; supaSaveBoard(b); }); return;
@@ -4316,6 +4373,14 @@ document.addEventListener('click', ev=>{
       popBoard.groups = gs.filter(x=>x.id!==g.id); const dest = popBoard.groups[0].id;
       rows.forEach(t=>{ t.groupId = dest; supaUpdateTodo(t); }); supaSaveBoard(popBoard); state.bdPop=null; render(); return;
     }
+    case 'personPick': { const f = bdFind(el); if(f.b && f.t) bdOpenPop('person', el, f.isSub ? {boardId:f.b.id, subId:f.t.id, sub:true, colId:el.dataset.bdc} : {boardId:f.b.id, todoId:f.t.id, colId:el.dataset.bdc}); return; }
+    case 'pickPerson': { const col = bdPopCol(popBoard, pop); const t = bdPopTarget(pop); bdSetValue(t, col, el.dataset.user); bdSaveTarget(t); state.bdPop=null; renderPreservingScroll('.content'); return; }
+    case 'filterPersonMenu': bdOpenPop('filterPerson', el, {boardId:b.id}); return;
+    case 'filterStatusMenu': bdOpenPop('filterStatus', el, {boardId:b.id}); return;
+    case 'sortMenu': bdOpenPop('sortMenu', el, {boardId:b.id}); return;
+    case 'setFilterPerson': { const pr = bdPrefs(popBoard.id); pr.person = el.dataset.user || null; bdSavePrefs(popBoard.id); state.bdPop=null; render(); return; }
+    case 'setFilterStatus': { const pr = bdPrefs(popBoard.id); pr.status = el.dataset.val || null; bdSavePrefs(popBoard.id); state.bdPop=null; render(); return; }
+    case 'setSort': { const pr = bdPrefs(popBoard.id); pr.sort = {col:el.dataset.col, dir:el.dataset.dir}; bdSavePrefs(popBoard.id); state.bdPop=null; render(); return; }
     case 'status': { const f = bdFind(el); if(f.b && f.t) bdOpenPop('status', el, f.isSub ? {boardId:f.b.id, subId:f.t.id, sub:true, colId:el.dataset.bdc} : {boardId:f.b.id, todoId:f.t.id, colId:el.dataset.bdc}); return; }
     case 'files': { const f = bdFind(el); if(f.b && f.t) bdOpenPop('files', el, f.isSub ? {boardId:f.b.id, subId:f.t.id, sub:true, colId:el.dataset.bdc} : {boardId:f.b.id, todoId:f.t.id, colId:el.dataset.bdc}); return; }
     case 'fileRemove': {
@@ -4359,7 +4424,7 @@ document.addEventListener('click', ev=>{
     }
     case 'colhead': { if(el.dataset.bdc) bdOpenPop('colMenu', el, {boardId:b.id, colId:el.dataset.bdc}); return; }
     case 'sortCol': { const p = bdPrefs(popBoard.id); p.sort = {col:pop.colId, dir:el.dataset.dir}; bdSavePrefs(popBoard.id); state.bdPop=null; render(); return; }
-    case 'clearSort': { bdPrefs(b.id).sort = null; bdSavePrefs(b.id); render(); return; }
+    case 'clearSort': { const bb = popBoard || b; bdPrefs(bb.id).sort = null; bdSavePrefs(bb.id); state.bdPop=null; render(); return; }
     case 'clearFilters': { const p = bdPrefs(b.id); p.search=''; p.person=null; p.status=null; bdSavePrefs(b.id); render(); return; }
     case 'renameCol': { const col = bdPopCol(popBoard, pop); bdPromptText('Rename column', col.name, v=>{ col.name=v; supaSaveBoard(popBoard); }); return; }
     case 'hideCol': { const p = bdPrefs(popBoard.id); (p.hidden||(p.hidden=[])).push(pop.colId); bdSavePrefs(popBoard.id); state.bdPop=null; render(); return; }
