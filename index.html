@@ -433,6 +433,100 @@
   .mw-nw{top:0;left:0;cursor:nwse-resize;} .mw-se{bottom:0;right:0;cursor:nwse-resize;}
   body.mw-busy, body.mw-busy *{user-select:none !important;}
   @media (max-width:820px){ .mw-h{display:none;} .mw-draggable{cursor:auto;} }
+  /* ---------- PROJECT BOARDS (Monday-style) ---------- */
+  .bd-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;border-bottom:1px solid var(--line);padding-bottom:8px;}
+  .bd-tab{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:6px 12px;font-size:13px;font-weight:600;color:var(--ink-soft);cursor:pointer;}
+  .bd-tab.active{background:var(--edge);border-color:var(--edge);color:#fff;}
+  .bd-tab.add{border-style:dashed;}
+  .bd-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;}
+  .bd-title{font-size:22px;font-weight:700;cursor:pointer;}
+  .bd-title:hover{text-decoration:underline dotted;}
+  .bd-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:14px;}
+  .bd-toolbar select,.bd-search{width:auto;font-size:13px;padding:6px 8px;}
+  .bd-search{min-width:180px;}
+  .bd-scroll{overflow-x:auto;padding-bottom:4px;}
+  .bd-group{margin-bottom:22px;}
+  .bd-group-head{display:flex;align-items:center;gap:8px;font-weight:700;font-size:16px;margin:0 0 6px 2px;position:sticky;left:0;width:max-content;}
+  .content-inner.full{max-width:none;}
+  .bd-table .bd-grip, .bd-table .bd-grip-th{position:sticky;left:0;z-index:2;}
+  .bd-table .bd-title-td, .bd-table .bd-title-th{position:sticky;left:22px;z-index:2;box-shadow:2px 0 0 var(--line-soft);}
+  .bd-table thead .bd-title-th, .bd-table thead .bd-grip-th{z-index:3;}
+  .bd-table tbody td.bd-grip, .bd-table tbody td.bd-title-td{background:#fff;}
+  .bd-row:hover td.bd-grip, .bd-row:hover td.bd-title-td{background:#F7F9FC;}
+  .bd-caret{cursor:pointer;width:16px;display:inline-block;}
+  .bd-group-name{cursor:pointer;}
+  .bd-group-name:hover{text-decoration:underline dotted;}
+  .bd-table{border-collapse:separate;border-spacing:0;font-size:13px;table-layout:fixed;border-left:5px solid var(--gc);border-radius:6px 0 0 6px;}
+  .bd-th{background:var(--paper);border-bottom:1px solid var(--line);border-right:1px solid var(--line-soft);padding:7px 8px;font-weight:600;color:var(--ink-soft);text-align:center;position:relative;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;user-select:none;}
+  .bd-th:hover{background:var(--edge-lighter);}
+  .bd-grip-th{width:22px;min-width:22px;cursor:default;}
+  .bd-title-th{width:300px;min-width:300px;text-align:left;}
+  .bd-add-th{width:40px;min-width:40px;cursor:default;}
+  .bd-add-th button{border:none;background:none;font-size:18px;color:var(--ink-soft);cursor:pointer;}
+  .bd-colresize{position:absolute;top:0;right:0;width:6px;height:100%;cursor:col-resize;}
+  .bd-colresize:hover{background:var(--edge);opacity:.4;}
+  .bd-dropline-col{box-shadow:inset 3px 0 0 var(--edge);}
+  .bd-row td{border-bottom:1px solid var(--line-soft);border-right:1px solid var(--line-soft);background:#fff;height:36px;padding:0;vertical-align:middle;}
+  .bd-row:hover td{background:#F7F9FC;}
+  .bd-row.bd-dragging td{opacity:.4;}
+  .bd-dropline td{box-shadow:inset 0 3px 0 var(--edge);}
+  .bd-group-head.bd-dropline{outline:2px dashed var(--edge);}
+  .bd-grip{width:22px;text-align:center;color:#bbb;cursor:grab;font-size:11px;letter-spacing:-2px;}
+  .bd-grip[draggable="false"]{cursor:not-allowed;}
+  .bd-title-td{padding:0 8px !important;}
+  .bd-title-inner{display:flex;align-items:center;gap:6px;height:36px;}
+  .bd-name{flex:1;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .bd-name:hover{color:var(--edge-darker);text-decoration:underline;}
+  .bd-bubble{cursor:pointer;opacity:.45;font-size:13px;white-space:nowrap;}
+  .bd-bubble b{font-size:10px;background:var(--edge);color:#fff;border-radius:8px;padding:0 5px;margin-left:2px;}
+  .bd-row:hover .bd-bubble,.bd-bubble:has(b){opacity:1;}
+  .bd-in{border:1px solid transparent;background:transparent;width:100%;height:34px;padding:0 8px;font-size:13px;border-radius:0;box-shadow:none;}
+  .bd-in:hover{border-color:var(--line);}
+  .bd-in:focus{border-color:var(--edge);background:#fff;outline:none;}
+  textarea.bd-in{height:auto;padding:6px 8px;}
+  .bd-num{text-align:right;}
+  .bd-td-checkbox{text-align:center;}
+  .bd-status{height:36px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:600;font-size:12.5px;cursor:pointer;padding:0 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .bd-status:hover{filter:brightness(.95);}
+  .bd-person{display:flex;align-items:center;gap:4px;padding:0 4px;height:36px;position:relative;}
+  .bd-person select{border:none;background:transparent;font-size:12.5px;padding:0;width:100%;height:34px;cursor:pointer;}
+  .bd-avatar{flex:none;width:24px;height:24px;border-radius:50%;background:var(--edge);color:#fff;font-size:10px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;}
+  .bd-avatar.empty{background:#E6E9EF;color:#999;font-size:12px;}
+  .bd-linkcell{display:flex;align-items:center;}
+  .bd-linkcell a{padding:0 6px;text-decoration:none;}
+  .bd-addrow td{border-bottom:1px solid var(--line-soft);background:#fff;}
+  .bd-addrow .bd-in{color:var(--ink-soft);}
+  .bd-sum{padding:4px 6px;vertical-align:top;}
+  .bd-sumbar{display:flex;height:22px;border-radius:3px;overflow:hidden;}
+  .bd-sumnum{text-align:center;font-weight:600;font-size:12.5px;}
+  .bd-sumnum .tiny{font-weight:400;color:var(--ink-soft);}
+  .bd-pop-shield{position:fixed;inset:0;z-index:999;}
+  .bd-pop{position:fixed;z-index:1000;background:#fff;border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,.22);padding:10px;min-width:220px;max-width:340px;max-height:70vh;overflow-y:auto;font-size:13px;}
+  .bd-pop-title{font-weight:700;font-size:12px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.04em;margin:2px 4px 8px;}
+  .bd-palette{display:grid;grid-template-columns:1fr 1fr;gap:6px;min-width:300px;}
+  .bd-pal-item{height:32px;border-radius:4px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:600;cursor:pointer;font-size:12.5px;}
+  .bd-pal-item:hover{filter:brightness(.92);}
+  .bd-pop-link{text-align:center;padding:10px 4px 2px;border-top:1px solid var(--line-soft);margin-top:10px;cursor:pointer;}
+  .bd-pop-link:hover{color:var(--edge-darker);}
+  .bd-menu-item{padding:8px 10px;border-radius:6px;cursor:pointer;display:flex;align-items:center;gap:8px;font-weight:400;margin:0;}
+  .bd-menu-item:hover{background:var(--edge-lighter);}
+  .bd-lab-edit{display:flex;align-items:center;gap:6px;margin-bottom:6px;}
+  .bd-lab-edit input{flex:1;padding:5px 7px;font-size:13px;}
+  .bd-lab-edit select{width:auto;font-size:11.5px;padding:4px;}
+  .bd-swatch{width:22px;height:22px;border-radius:4px;display:inline-block;cursor:pointer;flex:none;}
+  .bd-colorgrid{display:grid;grid-template-columns:repeat(8,22px);gap:5px;margin:4px 0 10px 4px;}
+  .bd-detail-card{margin:6px 0 16px;}
+  .bd-form{display:grid;grid-template-columns:140px 1fr;gap:4px 10px;margin-top:8px;}
+  .bd-form-row{display:contents;}
+  .bd-form-label{font-size:12.5px;color:var(--ink-soft);align-self:center;}
+  .bd-form-cell{border:1px solid var(--line-soft);border-radius:6px;overflow:hidden;background:#fff;min-height:36px;}
+  .bd-form-cell .bd-status{border-radius:0;}
+  .bd-comments{display:flex;flex-direction:column;gap:8px;}
+  .bd-comment{background:var(--edge-lighter);border-radius:8px;padding:8px 10px;}
+  .bd-comment-meta{display:flex;align-items:center;gap:6px;font-size:12.5px;}
+  .bd-comment-meta .row-trash{margin-left:auto;}
+  .bd-comment-body{margin-top:4px;font-size:13.5px;}
+  .bd-archive .bd-table td{padding:6px 10px;}
   .modal-foot{padding:12px 20px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end;}
 
   .contact-card{
@@ -828,6 +922,7 @@ async function fetchAllProfilesIntoUsers(){
     u.notifPref = (!u.notifUseDefault && p.notif_schedule_type) ? {type:p.notif_schedule_type, days:p.notif_schedule_days||[], time:p.notif_schedule_time||'07:00'} : null;
     u.wantsAssignmentEmails = p.notif_assignment_emails !== false; // default true if column is null/undefined
     u.wantsAssignerEmails = p.notif_assigner_emails !== false; // default true if column is null/undefined
+    u.wantsRequesterEmails = p.notify_requester_emails !== false;
     u.mapTypePreference = p.map_type_preference || 'hybrid';
     u.commissionPlanId = p.commission_plan_id || null;
     u.dashboardTier = p.dashboard_tier || 'standard';
@@ -1539,6 +1634,10 @@ function todoRowToLocal(r){
     reminderPending: !!r.reminder_pending,
     createdAt: r.created_at ? new Date(r.created_at) : null,
     completedAt: r.completed_at ? new Date(r.completed_at) : null,
+    boardId: r.board_id || null, groupId: r.group_id || null, fieldValues: r.field_values || {}, extraFields: r.extra_fields || [],
+    startDate: r.start_date ? new Date(r.start_date+'T00:00:00') : null, office: r.office || null,
+    requesterId: r.requester_id ? (authIdToLocalUserId(r.requester_id) || r.requester_id) : null,
+    sortOrder: r.sort_order, outcome: r.outcome || null, isStandard: !!r.is_standard,
     archivedAt: r.archived_at ? new Date(r.archived_at) : undefined};
 }
 function todoLocalToRow(t){
@@ -1551,6 +1650,10 @@ function todoLocalToRow(t){
     reminder_pending: !!t.reminderPending,
     completed_at: t.completedAt ? t.completedAt.toISOString() : null,
     skip_assignment_notification: !!t.skipAssignmentNotification,
+    board_id: t.boardId || null, group_id: t.groupId || null, field_values: t.fieldValues || {}, extra_fields: t.extraFields || [],
+    start_date: t.startDate ? toLocalDateStr(t.startDate) : null, office: t.office || null,
+    requester_id: t.requesterId ? localUserIdToAuthId(t.requesterId) : null,
+    sort_order: (t.sortOrder==null ? null : t.sortOrder), outcome: t.outcome || null, is_standard: !!t.isStandard,
     archived_at: t.archivedAt ? t.archivedAt.toISOString() : null};
 }
 async function fetchTodosFromSupabase(){
@@ -1618,6 +1721,7 @@ async function fetchAllAppDataFromSupabase(){
   await fetchProspectsFromSupabase();
   await fetchEntriesFromSupabase();
   await fetchTodosFromSupabase();
+  await fetchBoardsFromSupabase();
   await fetchQuickLinksFromSupabase();
   await fetchDeletionRequestsFromSupabase();
   await fetchPendingUsersFromSupabase();
@@ -3224,10 +3328,12 @@ function render(){
   if(state.contactImportReview) renderContactImportReviewModal();
   if(state.taskfireImport) renderTaskFireImportModal();
   if(state.mapsImport) renderMapsImportModal();
+  if(state.boardModal) renderBoardModal();
   wireTodoRowHandlers(app);
   renderPortalChatWidget();
   if(state.undoToast) renderUndoToast();
   if(state.toast) showToastNow();
+  if(state.bdPop) renderBoardPopover();
   restoreScrollPositions(__scrollSnap);
 }
 
@@ -3236,13 +3342,18 @@ function render(){
    main page, open windows) back to the top on any click. Capture them first and
    put them back after. The main page only keeps its spot if you're still on the
    same page; a window only keeps its spot if it's the same window (same title). */
+let lastRenderedViewKey = null;
 function mainViewKey(){
   try { return JSON.stringify(state.mainView||{}).slice(0,400); } catch(e){ return String(state.mainView && state.mainView.type); }
 }
 function captureScrollPositions(){
-  const snap = {sidebar:null, content:null, viewKey:mainViewKey(), modals:[]};
+  // lastRenderedViewKey = the page the current .content belongs to. A click handler has
+  // usually already changed state.mainView before calling render(), so comparing to the
+  // live state would wrongly carry the old page's scroll onto the new page.
+  const snap = {sidebar:null, content:null, viewKey:lastRenderedViewKey, modals:[]};
   const sb = document.querySelector('.sidebar'); if(sb) snap.sidebar = sb.scrollTop;
   const ct = document.querySelector('.content'); if(ct) snap.content = ct.scrollTop;
+  snap.keep = {}; document.querySelectorAll('[data-keep-scroll]').forEach(el=>{ snap.keep[el.dataset.keepScroll] = el.scrollLeft; });
   document.querySelectorAll('.modal-card').forEach(card=>{
     const body = card.querySelector('.modal-body');
     if(body) snap.modals.push({key: modalWindowKey(card), top: body.scrollTop});
@@ -3252,7 +3363,10 @@ function captureScrollPositions(){
 function restoreScrollPositions(snap){
   if(!snap) return;
   const sb = document.querySelector('.sidebar'); if(sb && snap.sidebar) sb.scrollTop = snap.sidebar;
-  if(snap.viewKey===mainViewKey()){ const ct = document.querySelector('.content'); if(ct && snap.content) ct.scrollTop = snap.content; }
+  const nowKey = mainViewKey();
+  if(snap.viewKey!==null && snap.viewKey===nowKey){ const ct = document.querySelector('.content'); if(ct && snap.content) ct.scrollTop = snap.content; }
+  lastRenderedViewKey = nowKey;
+  if(snap.keep) document.querySelectorAll('[data-keep-scroll]').forEach(el=>{ const v = snap.keep[el.dataset.keepScroll]; if(v) el.scrollLeft = v; });
   if(snap.modals.length){
     const used = new Set();
     document.querySelectorAll('.modal-card').forEach(card=>{
@@ -3389,6 +3503,789 @@ function mwStartResize(ev, card, dir){
   const start = ()=>{ obs.observe(document.body, {childList:true, subtree:true}); scan(document.body); };
   if(document.body) start(); else document.addEventListener('DOMContentLoaded', start);
 })();
+
+/* =====================================================================
+   PROJECT BOARDS (Monday-style) — Phase 2, 2026-09-25
+   A board = a table of Projects with its own groups + columns. A Project is still a
+   row in `todos` (type 'project'); boards add board_id / group_id / field_values etc.
+   Tables: project_boards, project_board_users, project_comments, project_view_prefs.
+   Built-in columns map to real todo fields (Person→assignedTo, Status→status, Due→dueDate…);
+   custom columns live in todo.fieldValues[colId].
+   Done/Failed labels: picking one completes the Project and moves it to the Archive.
+   ===================================================================== */
+const BD_COLORS = ['#00C875','#FDAB3D','#E2445C','#579BFC','#A25DDC','#FFCB00','#037F4C','#FF642E','#66CCFF','#784BD1','#FF7575','#BB3354','#9CD326','#CAB641','#333333','#C4C4C4'];
+const BD_TYPES = [
+  {type:'text', label:'Text', icon:'🔤'},
+  {type:'longtext', label:'Long text', icon:'📝'},
+  {type:'status', label:'Status', icon:'🟩'},
+  {type:'person', label:'Person', icon:'👤'},
+  {type:'date', label:'Date', icon:'📅'},
+  {type:'number', label:'Number / $', icon:'🔢'},
+  {type:'link', label:'Link', icon:'🔗'},
+  {type:'email', label:'Email', icon:'✉️'},
+  {type:'phone', label:'Phone', icon:'📞'},
+  {type:'checkbox', label:'Checkbox', icon:'☑️'},
+];
+const BD_OFFICES = ['Phoenix','Austin','Dallas','Houston'];
+function bdUid(p){ return (p||'c_') + Math.random().toString(36).slice(2,9); }
+function bdDefaultStatusLabels(){
+  return [
+    {id:'l_work', label:'Working on it', color:'#FDAB3D'},
+    {id:'l_wait', label:'Awaiting Response', color:'#FF642E'},
+    {id:'l_stuck', label:'Stuck', color:'#E2445C'},
+    {id:'l_done', label:'Done', color:'#00C875', meaning:'done'},
+    {id:'l_fail', label:'Failed/Cancelled', color:'#333333', meaning:'failed'},
+  ];
+}
+// Collin's standard Project fields (Monday "Projects" board), plus Office/Start/Completed.
+function bdDefaultColumns(){
+  return [
+    {id:'person', name:'Person', type:'person', builtin:'assignedTo', width:120},
+    {id:'requester', name:'Requester', type:'person', builtin:'requesterId', width:130},
+    {id:'status', name:'Status', type:'status', builtin:'status', width:150, labels:bdDefaultStatusLabels()},
+    {id:'office', name:'Office', type:'status', builtin:'office', width:110, labels:BD_OFFICES.map((o,i)=>({id:'o_'+o.toLowerCase(), label:o, color:['#579BFC','#A25DDC','#FF7575','#9CD326'][i]}))},
+    {id:'start', name:'Start', type:'date', builtin:'startDate', width:120},
+    {id:'due', name:'Due', type:'date', builtin:'dueDate', width:120},
+    {id:'completed', name:'Completed', type:'date', builtin:'completedAt', width:120},
+    {id:'notes', name:'Notes', type:'longtext', builtin:'notes', width:240},
+    {id:'website', name:'Website', type:'link', width:160},
+  ];
+}
+function bdDefaultGroups(){
+  return [{id:'g_todo', name:'To Dos', color:'#579BFC'}, {id:'g_large', name:'Large Projects', color:'#FDAB3D'}];
+}
+
+/* ---------- data ---------- */
+function bdEnsure(){ if(!db.boards) db.boards = []; if(!db.projectComments) db.projectComments = []; if(!state.boardPrefs) state.boardPrefs = {}; }
+function boardRowToLocal(r){
+  return {id:r.id, name:r.name, kind:r.kind, clientId:r.client_id, columns:r.columns||[], groups:r.groups||[],
+    visibility:r.visibility, defaultDueDays:r.default_due_days, createdBy: authIdToLocalUserId(r.created_by)||r.created_by,
+    sortOrder:r.sort_order||0, userIds:[]};
+}
+function boardLocalToRow(b){
+  return {id:b.id, name:b.name, kind:b.kind||'open', client_id:b.clientId||null, columns:b.columns, groups:b.groups,
+    visibility:b.visibility||'private', default_due_days:b.defaultDueDays||5, sort_order:b.sortOrder||0};
+}
+async function fetchBoardsFromSupabase(){
+  try {
+    const [{data:boards, error:e1}, {data:bu, error:e2}, {data:prefs, error:e3}, {data:comments, error:e4}] = await Promise.all([
+      supabaseClient.from('project_boards').select('*'),
+      supabaseClient.from('project_board_users').select('*'),
+      supabaseClient.from('project_view_prefs').select('*'),
+      supabaseClient.from('project_comments').select('*').order('created_at', {ascending:true}),
+    ]);
+    if(e1){ console.error('fetchBoards error:', e1); return; }
+    db.boards = (boards||[]).map(boardRowToLocal);
+    (bu||[]).forEach(r=>{ const b = db.boards.find(x=>x.id===r.board_id); const lid = authIdToLocalUserId(r.user_id)||r.user_id; if(b && lid) b.userIds.push(lid); });
+    state.boardPrefs = {};
+    (prefs||[]).forEach(p=>{ state.boardPrefs[p.board_id] = p.prefs||{}; });
+    db.projectComments = (comments||[]).map(c=>({id:c.id, projectId:c.project_id, userId: authIdToLocalUserId(c.user_id)||c.user_id, body:c.body, createdAt:new Date(c.created_at)}));
+    if(e2) console.error(e2); if(e3) console.error(e3); if(e4) console.error(e4);
+  } catch(err){ console.error('fetchBoardsFromSupabase failed:', err); }
+}
+async function supaCreateBoard(b){
+  const { error } = await supabaseClient.from('project_boards').insert({...boardLocalToRow(b), created_by: localUserIdToAuthId(b.createdBy)});
+  if(error){ console.error('supaCreateBoard', error); flashToast('Board saved here, but syncing failed. ('+error.message+')'); }
+}
+let bdSaveTimers = {};
+function supaSaveBoard(b){
+  clearTimeout(bdSaveTimers[b.id]);
+  bdSaveTimers[b.id] = setTimeout(async ()=>{
+    const { error } = await supabaseClient.from('project_boards').update(boardLocalToRow(b)).eq('id', b.id);
+    if(error){ console.error('supaSaveBoard', error); flashToast('Board change didn\'t sync. ('+error.message+')'); }
+  }, 300);
+}
+async function supaDeleteBoard(id){
+  const { error } = await supabaseClient.from('project_boards').delete().eq('id', id);
+  if(error){ console.error('supaDeleteBoard', error); flashToast('Delete didn\'t sync. ('+error.message+')'); }
+}
+let bdPrefTimers = {};
+function bdPrefs(boardId){ bdEnsure(); if(!state.boardPrefs[boardId]) state.boardPrefs[boardId] = {}; return state.boardPrefs[boardId]; }
+function bdSavePrefs(boardId){
+  clearTimeout(bdPrefTimers[boardId]);
+  bdPrefTimers[boardId] = setTimeout(async ()=>{
+    const { error } = await supabaseClient.from('project_view_prefs').upsert({user_id: localUserIdToAuthId(state.currentUser.id), board_id: boardId, prefs: bdPrefs(boardId), updated_at: new Date().toISOString()});
+    if(error) console.error('bdSavePrefs', error);
+  }, 500);
+}
+function visibleBoards(){
+  bdEnsure();
+  const me = state.currentUser.id;
+  const isAdmin = state.currentUser.role==='Admin';
+  return db.boards.filter(b=>b.kind==='open' && (isAdmin || b.createdBy===me || b.visibility==='company' || (b.userIds||[]).includes(me)))
+    .sort((a,b)=>(a.sortOrder-b.sortOrder) || a.name.localeCompare(b.name));
+}
+function activeBoard(){
+  const boards = visibleBoards();
+  let id = state.activeBoardId;
+  if(!id){ try { id = localStorage.getItem('edgeActiveBoard_'+state.currentUser.id); } catch(e){} }
+  return boards.find(b=>b.id===id) || boards[0] || null;
+}
+function setActiveBoard(id){
+  state.activeBoardId = id; state.boardArchiveOpen = false;
+  try { localStorage.setItem('edgeActiveBoard_'+state.currentUser.id, id); } catch(e){}
+}
+function boardProjects(b, includeCompleted){
+  return db.todos.filter(t=>t.type==='project' && t.boardId===b.id && (includeCompleted ? true : !t.completed));
+}
+function bdCol(b, colId){ return (b.columns||[]).find(c=>c.id===colId); }
+function bdStatusCol(b){ return (b.columns||[]).find(c=>c.builtin==='status'); }
+
+/* ---------- values ---------- */
+function bdGetValue(t, col){
+  switch(col.builtin){
+    case 'assignedTo': return t.assignedTo||'';
+    case 'requesterId': return t.requesterId||'';
+    case 'status': return t.status||'';
+    case 'office': return t.office||'';
+    case 'startDate': return t.startDate ? toLocalDateStr(t.startDate) : '';
+    case 'dueDate': return t.dueDate ? toLocalDateStr(t.dueDate) : '';
+    case 'completedAt': return t.completedAt ? toLocalDateStr(t.completedAt) : '';
+    case 'notes': return t.notes||'';
+  }
+  const v = (t.fieldValues||{})[col.id];
+  return v==null ? '' : v;
+}
+function bdSetValue(t, col, v){
+  const d = v ? new Date(v+'T00:00:00') : null;
+  switch(col.builtin){
+    case 'assignedTo': t.assignedTo = v || state.currentUser.id; return;
+    case 'requesterId': t.requesterId = v || null; return;
+    case 'status': t.status = v || ''; return;
+    case 'office': t.office = v || null; return;
+    case 'startDate': t.startDate = d; return;
+    case 'dueDate': t.dueDate = d; return;
+    case 'completedAt': t.completedAt = d; return;
+    case 'notes': t.notes = v || ''; return;
+  }
+  if(!t.fieldValues) t.fieldValues = {};
+  if(v==='' || v==null) delete t.fieldValues[col.id]; else t.fieldValues[col.id] = v;
+}
+// Status-type columns store the label TEXT for built-ins (status/office — readable in
+// emails and elsewhere) and the label ID for custom status columns (survives renames).
+function bdStatusLabelFor(col, v){
+  if(!v) return null;
+  return (col.labels||[]).find(l=>l.id===v || l.label===v) || null;
+}
+function bdStatusStoreValue(col, label){ if(!label) return ''; return col.builtin ? label.label : label.id; }
+// Picking a Done / Failed label completes the Project → it leaves the board for the Archive.
+function bdApplyOutcome(t, col, label){
+  if(col.builtin!=='status') return;
+  const meaning = label && label.meaning;
+  if(meaning==='done' || meaning==='failed'){
+    t.completed = true; t.outcome = meaning;
+    if(!t.completedAt) t.completedAt = new Date();
+    flashToast(`"${t.title}" moved to the Archive (${meaning==='done'?'Done':'Failed/Cancelled'}).`);
+  }
+}
+function bdRestore(t){ t.completed = false; t.outcome = null; t.completedAt = null; const b = db.boards.find(x=>x.id===t.boardId); const sc = b && bdStatusCol(b); if(sc) t.status=''; }
+
+/* ---------- cell rendering ---------- */
+function bdPersonBadge(uid){
+  const u = USERS.find(x=>x.id===uid);
+  if(!u) return `<span class="bd-avatar empty">👤</span>`;
+  return `<span class="bd-avatar" title="${escapeAttr(u.name)}">${escapeHtml(u.initials || u.name.split(' ').map(s=>s[0]).join('').slice(0,2))}</span>`;
+}
+function bdCellHtml(b, t, col, mode){
+  const v = bdGetValue(t, col);
+  const k = `data-bdt="${t.id}" data-bdc="${col.id}"`;
+  switch(col.type){
+    case 'status': {
+      const lab = bdStatusLabelFor(col, v);
+      return `<div class="bd-status" ${k} data-bd="status" style="background:${lab?lab.color:'#C4C4C4'};">${lab?escapeHtml(lab.label):''}</div>`;
+    }
+    case 'person': {
+      return `<label class="bd-person">${bdPersonBadge(v)}<select ${k} data-bd="set">
+        <option value=""></option>${usersSortedByMe().map(u=>`<option value="${u.id}" ${u.id===v?'selected':''}>${escapeHtml(u.name)}</option>`).join('')}</select></label>`;
+    }
+    case 'date': return `<input type="date" class="bd-in" ${k} data-bd="set" value="${escapeAttr(v)}">`;
+    case 'number': return `<input type="text" inputmode="decimal" class="bd-in bd-num" ${k} data-bd="set" value="${escapeAttr(v)}">`;
+    case 'checkbox': return `<input type="checkbox" ${k} data-bd="check" ${v?'checked':''} style="width:auto;">`;
+    case 'link': return `<div class="bd-linkcell"><input class="bd-in" ${k} data-bd="set" value="${escapeAttr(v)}" placeholder="">${v?`<a href="${escapeAttr(/^https?:/i.test(v)?v:'https://'+v)}" target="_blank" rel="noopener" title="Open link">↗</a>`:''}</div>`;
+    case 'email': return `<div class="bd-linkcell"><input class="bd-in" ${k} data-bd="set" value="${escapeAttr(v)}">${v?`<a href="mailto:${escapeAttr(v)}" title="Email">✉</a>`:''}</div>`;
+    case 'phone': return `<div class="bd-linkcell"><input class="bd-in" ${k} data-bd="set" value="${escapeAttr(v)}">${v?`<a href="tel:${escapeAttr(v)}" title="Call">☎</a>`:''}</div>`;
+    case 'longtext': return mode==='form'
+      ? `<textarea class="bd-in" rows="2" ${k} data-bd="set">${escapeHtml(v)}</textarea>`
+      : `<input class="bd-in" ${k} data-bd="set" value="${escapeAttr(v)}" title="${escapeAttr(v)}">`;
+    default: return `<input class="bd-in" ${k} data-bd="set" value="${escapeAttr(v)}">`;
+  }
+}
+
+/* ---------- filtering / sorting ---------- */
+function bdVisibleColumns(b){ const hidden = bdPrefs(b.id).hidden||[]; return (b.columns||[]).filter(c=>!hidden.includes(c.id)); }
+function bdColWidth(b, col){ const w = (bdPrefs(b.id).widths||{})[col.id]; return w || col.width || 140; }
+function bdFilterRows(b, rows){
+  const p = bdPrefs(b.id);
+  const q = (p.search||'').trim().toLowerCase();
+  if(q) rows = rows.filter(t=>{
+    const hay = [t.title, t.notes, ...Object.values(t.fieldValues||{})].join(' ').toLowerCase();
+    return q.split(/\s+/).every(w=>hay.includes(w));
+  });
+  if(p.person) rows = rows.filter(t=>t.assignedTo===p.person || t.requesterId===p.person);
+  if(p.status){ const sc = bdStatusCol(b); rows = rows.filter(t=>(t.status||'')===(p.status==='__blank'?'':p.status)); }
+  return rows;
+}
+function bdSortRows(b, rows){
+  const p = bdPrefs(b.id);
+  const byOrder = (a,c)=> ((a.sortOrder??1e15) - (c.sortOrder??1e15)) || ((a.createdAt||0) - (c.createdAt||0));
+  if(!p.sort || !p.sort.col) return rows.slice().sort(byOrder);
+  const dir = p.sort.dir==='desc' ? -1 : 1;
+  const col = p.sort.col==='__title' ? {id:'__title'} : bdCol(b, p.sort.col);
+  if(!col) return rows.slice().sort(byOrder);
+  const key = t=>{
+    if(col.id==='__title') return (t.title||'').toLowerCase();
+    const v = bdGetValue(t, col);
+    if(col.type==='number') return parseFloat(String(v).replace(/[$,\s]/g,'')) || 0;
+    if(col.type==='person'){ const u = USERS.find(x=>x.id===v); return u ? u.name.toLowerCase() : '~'; }
+    if(col.type==='status'){ const i = (col.labels||[]).findIndex(l=>l.id===v||l.label===v); return i<0 ? 999 : i; }
+    return String(v||'~').toLowerCase();
+  };
+  return rows.slice().sort((a,c)=>{ const x=key(a), y=key(c); return (x<y?-1:x>y?1:0)*dir || byOrder(a,c); });
+}
+
+/* ---------- page ---------- */
+function renderProjectsBoardsMain(){
+  const boards = visibleBoards();
+  const b = activeBoard();
+  const legacy = visibleProjectsList().filter(p=>!p.boardId && !p.completed);
+  const tabs = `
+  <div class="bd-tabs">
+    ${boards.map(x=>`<button class="bd-tab ${b&&x.id===b.id?'active':''}" data-bd="tab" data-board="${x.id}">${x.visibility==='company'?'🌐':'🔒'} ${escapeHtml(x.name)}</button>`).join('')}
+    <button class="bd-tab add" data-bd="newBoard">+ New Board</button>
+  </div>`;
+  if(!b){
+    return tabs + `<div class="empty-state"><div class="big">No boards yet.</div><div class="tiny">A board is a table of Projects — like a Monday.com board. Click <b>+ New Board</b> to make your first one.</div></div>` + bdLegacyHtml(legacy, null);
+  }
+  return tabs + (state.boardArchiveOpen ? bdArchiveHtml(b) : bdBoardHtml(b)) + bdLegacyHtml(legacy, b);
+}
+function bdLegacyHtml(legacy, b){
+  if(!legacy.length) return '';
+  return `
+  <div class="section-label" style="margin-top:28px;">Projects not on a board yet (${legacy.length})</div>
+  ${legacy.map(p=>`
+    <div class="row-card" style="cursor:default;">
+      <div class="nav-icon" style="font-size:20px;">🗂️</div>
+      <div class="row-body"><div class="row-title" data-bd="open" data-bdt="${p.id}" style="cursor:pointer;">${escapeHtml(p.title)}</div>
+        <div class="row-meta"><span class="tiny">${escapeHtml(getTodoLinkSummary(p))}</span></div></div>
+      ${b ? `<button class="btn secondary sm" data-bd="adoptLegacy" data-bdt="${p.id}">Move to "${escapeHtml(b.name)}"</button>` : ''}
+    </div>`).join('')}`;
+}
+function bdToolbarHtml(b){
+  const p = bdPrefs(b.id);
+  const me = state.currentUser.id;
+  const canManage = state.currentUser.role==='Admin' || b.createdBy===me;
+  const sc = bdStatusCol(b);
+  const archivedCount = boardProjects(b, true).filter(t=>t.completed).length;
+  const hiddenCount = (p.hidden||[]).length;
+  return `
+  <div class="bd-head">
+    <div class="bd-title" data-bd="renameBoard" title="Click to rename">${escapeHtml(b.name)}</div>
+    <span class="pill gray" ${canManage?`data-bd="toggleVis" style="cursor:pointer;" title="Click to switch"`:''}>${b.visibility==='company'?'🌐 Company-wide':'🔒 Private'}</span>
+    <button class="btn secondary sm" data-bd="share">👥 Share${b.userIds && b.userIds.length ? ` (${b.userIds.length})` : ''}</button>
+    <button class="btn secondary sm" data-bd="settings">⚙️ Settings</button>
+    <span style="flex:1;"></span>
+    <button class="btn secondary sm" data-bd="archive">🗄️ Archive (${archivedCount})</button>
+  </div>
+  <div class="bd-toolbar">
+    <button class="btn sm" data-bd="newProject">+ New Project</button>
+    <input class="bd-search" data-bd="search" placeholder="🔍 Search" value="${escapeAttr(p.search||'')}">
+    <select data-bd="filterPerson" title="Person or Requester">
+      <option value="">👤 Anyone</option>
+      ${usersSortedByMe().map(u=>`<option value="${u.id}" ${p.person===u.id?'selected':''}>${escapeHtml(u.name)}</option>`).join('')}
+    </select>
+    ${sc ? `<select data-bd="filterStatus"><option value="">All statuses</option><option value="__blank" ${p.status==='__blank'?'selected':''}>(no status)</option>
+      ${(sc.labels||[]).filter(l=>!l.meaning).map(l=>`<option value="${escapeAttr(l.label)}" ${p.status===l.label?'selected':''}>${escapeHtml(l.label)}</option>`).join('')}</select>` : ''}
+    <button class="btn secondary sm" data-bd="hideMenu">👁 Hide${hiddenCount?` (${hiddenCount})`:''}</button>
+    ${p.sort && p.sort.col ? `<button class="btn secondary sm" data-bd="clearSort" title="Back to your own drag order">↕ Sorted — clear</button>` : ''}
+    ${(p.search||p.person||p.status) ? `<button class="btn secondary sm" data-bd="clearFilters">✕ Clear filters</button>` : ''}
+  </div>`;
+}
+function bdBoardHtml(b){
+  const cols = bdVisibleColumns(b);
+  const all = boardProjects(b, false);
+  const filtered = bdFilterRows(b, all);
+  const groups = b.groups && b.groups.length ? b.groups : bdDefaultGroups();
+  const firstGroupId = groups[0].id;
+  const rowsFor = g => bdSortRows(b, filtered.filter(t=>(t.groupId||firstGroupId)===g.id || (!groups.some(x=>x.id===t.groupId) && g.id===firstGroupId)));
+  const collapsed = bdPrefs(b.id).collapsed||[];
+  const sorted = !!(bdPrefs(b.id).sort && bdPrefs(b.id).sort.col);
+  const sortState = bdPrefs(b.id).sort||{};
+  const arrow = id => sortState.col===id ? (sortState.dir==='desc'?' ▼':' ▲') : '';
+  const headCells = cols.map(c=>`<th class="bd-th" style="width:${bdColWidth(b,c)}px;min-width:${bdColWidth(b,c)}px;" draggable="true" data-bd="colhead" data-bdc="${c.id}" data-board="${b.id}">
+      <span class="bd-th-name">${escapeHtml(c.name)}${arrow(c.id)}</span><span class="bd-colresize" data-bd="colresize" data-bdc="${c.id}"></span></th>`).join('');
+  const groupHtml = g=>{
+    const rows = rowsFor(g);
+    const isCol = collapsed.includes(g.id);
+    return `
+    <div class="bd-group" data-bdg="${g.id}">
+      <div class="bd-group-head" style="color:${g.color};" data-bd="groupdrop" data-bdg="${g.id}">
+        <span class="bd-caret" data-bd="collapse" data-bdg="${g.id}">${isCol?'▸':'▾'}</span>
+        <span class="bd-group-name" data-bd="groupMenu" data-bdg="${g.id}" title="Click for group options">${escapeHtml(g.name)}</span>
+        <span class="tiny" style="color:var(--ink-soft);font-weight:400;">${rows.length} item${rows.length===1?'':'s'}</span>
+      </div>
+      ${isCol ? '' : `
+      <table class="bd-table" style="--gc:${g.color};">
+        <thead><tr>
+          <th class="bd-th bd-grip-th"></th>
+          <th class="bd-th bd-title-th" data-bd="colhead" data-bdc="__title"><span class="bd-th-name">Project${arrow('__title')}</span></th>
+          ${headCells}
+          <th class="bd-th bd-add-th"><button data-bd="addCol" title="Add a column">+</button></th>
+        </tr></thead>
+        <tbody data-bd="tbody" data-bdg="${g.id}">
+          ${rows.map(t=>{
+            const cc = (db.projectComments||[]).filter(c=>c.projectId===t.id).length;
+            return `<tr class="bd-row" data-bdrow="${t.id}" data-bdg="${g.id}">
+              <td class="bd-grip" draggable="${sorted?'false':'true'}" data-bd="rowgrip" data-bdt="${t.id}" title="${sorted?'Clear the sort to drag':'Drag to move'}">⋮⋮</td>
+              <td class="bd-title-td"><div class="bd-title-inner"><span class="bd-name" data-bd="open" data-bdt="${t.id}">${escapeHtml(t.title)}</span>
+                <span class="bd-bubble" data-bd="open" data-bdt="${t.id}" data-focus="comments" title="Comments">💬${cc?`<b>${cc}</b>`:''}</span></div></td>
+              ${cols.map(c=>`<td class="bd-td bd-td-${c.type}">${bdCellHtml(b,t,c)}</td>`).join('')}
+              <td></td>
+            </tr>`;
+          }).join('')}
+          <tr class="bd-addrow"><td></td><td colspan="${cols.length+2}"><input class="bd-in" data-bd="addItem" data-bdg="${g.id}" placeholder="+ Add project"></td></tr>
+        </tbody>
+        <tfoot><tr><td></td><td></td>${cols.map(c=>`<td class="bd-sum">${bdSummaryHtml(c, rows)}</td>`).join('')}<td></td></tr></tfoot>
+      </table>`}
+    </div>`;
+  };
+  return bdToolbarHtml(b) + `<div class="bd-scroll" data-keep-scroll="board-${b.id}">${groups.map(groupHtml).join('')}
+    <button class="btn secondary sm" data-bd="addGroup" style="margin:6px 0 20px;">+ Add new group</button></div>`;
+}
+function bdSummaryHtml(col, rows){
+  if(!rows.length) return '';
+  if(col.type==='status'){
+    const counts = {};
+    rows.forEach(t=>{ const lab = bdStatusLabelFor(col, bdGetValue(t,col)); const key = lab?lab.id:'__none'; counts[key]=(counts[key]||0)+1; });
+    const segs = Object.entries(counts).map(([id,n])=>{
+      const lab = (col.labels||[]).find(l=>l.id===id);
+      return `<span style="flex:${n};background:${lab?lab.color:'#C4C4C4'};" title="${escapeAttr((lab?lab.label:'(blank)')+': '+n)}"></span>`;
+    }).join('');
+    return `<div class="bd-sumbar">${segs}</div>`;
+  }
+  if(col.type==='number'){
+    const sum = rows.reduce((s,t)=>s+(parseFloat(String(bdGetValue(t,col)).replace(/[$,\s]/g,''))||0),0);
+    return `<div class="bd-sumnum">${sum.toLocaleString()}<div class="tiny">sum</div></div>`;
+  }
+  return '';
+}
+function bdArchiveHtml(b){
+  const rows = boardProjects(b, true).filter(t=>t.completed).sort((a,c)=>(c.completedAt||0)-(a.completedAt||0));
+  return bdToolbarHtml(b) + `
+  <div class="bd-archive">
+    <div class="section-label" style="display:flex;align-items:center;gap:10px;">🗄️ Archive — ${rows.length} item${rows.length===1?'':'s'}
+      <button class="btn secondary sm" data-bd="archive">← Back to board</button></div>
+    ${rows.length ? `<table class="bd-table" style="--gc:#999;"><thead><tr><th class="bd-th">Project</th><th class="bd-th">Outcome</th><th class="bd-th">Completed</th><th class="bd-th">Person</th><th class="bd-th"></th></tr></thead><tbody>
+      ${rows.map(t=>`<tr class="bd-row"><td class="bd-title-td"><span class="bd-name" data-bd="open" data-bdt="${t.id}">${escapeHtml(t.title)}</span></td>
+        <td>${t.outcome==='failed'?'<span class="pill" style="background:#333;color:#fff;">Failed/Cancelled</span>':'<span class="pill" style="background:#00C875;color:#fff;">Done</span>'}</td>
+        <td>${t.completedAt?fmtDate(t.completedAt):''}</td><td>${bdPersonBadge(t.assignedTo)}</td>
+        <td><button class="btn secondary sm" data-bd="restore" data-bdt="${t.id}">↩ Restore</button></td></tr>`).join('')}
+    </tbody></table>` : `<div class="empty-state"><div class="tiny">Nothing archived yet. Projects land here when their Status is set to Done or Failed/Cancelled.</div></div>`}
+  </div>`;
+}
+
+/* ---------- popovers (status palette, column menus, etc.) ---------- */
+function bdOpenPop(kind, anchorEl, extra){
+  const r = anchorEl.getBoundingClientRect();
+  state.bdPop = Object.assign({kind, x:r.left, y:r.bottom+4, w:r.width}, extra||{});
+  render();
+}
+function renderBoardPopover(){
+  const p = state.bdPop; if(!p) return;
+  const b = db.boards.find(x=>x.id===p.boardId); if(!b){ state.bdPop=null; return; }
+  let html = '';
+  if(p.kind==='status'){
+    const col = bdCol(b, p.colId); const t = db.todos.find(x=>x.id===p.todoId); if(!col || (!t && !p.editing)){ state.bdPop=null; return; }
+    if(p.editing){
+      html = `<div class="bd-pop-title">Edit labels — ${escapeHtml(col.name)}</div>
+      ${(col.labels||[]).map(l=>`<div class="bd-lab-edit">
+        <span class="bd-swatch" style="background:${l.color};" data-bd="labColor" data-lab="${l.id}" title="Change color"></span>
+        <input value="${escapeAttr(l.label)}" data-bd="labName" data-lab="${l.id}">
+        ${col.builtin==='status' ? `<select data-bd="labMeaning" data-lab="${l.id}" title="What picking this label does">
+          <option value="" ${!l.meaning?'selected':''}>stays on board</option>
+          <option value="done" ${l.meaning==='done'?'selected':''}>= Done → Archive</option>
+          <option value="failed" ${l.meaning==='failed'?'selected':''}>= Failed → Archive</option></select>` : ''}
+        <button class="row-trash" data-bd="labDelete" data-lab="${l.id}" title="Delete label">✕</button>
+      </div>
+      ${p.colorFor===l.id ? `<div class="bd-colorgrid">${BD_COLORS.map(c=>`<span class="bd-swatch" style="background:${c};" data-bd="labPick" data-lab="${l.id}" data-color="${c}"></span>`).join('')}</div>`:''}`).join('')}
+      <button class="btn secondary sm" data-bd="labAdd" style="margin-top:8px;">+ New label</button>
+      <button class="btn sm" data-bd="labDone" style="margin-top:8px;float:right;">Done</button>`;
+    } else {
+      html = `<div class="bd-palette">
+        <div class="bd-pal-item" style="background:#C4C4C4;" data-bd="pickLabel" data-lab="" title="Clear"></div>
+        ${(col.labels||[]).map(l=>`<div class="bd-pal-item" style="background:${l.color};" data-bd="pickLabel" data-lab="${l.id}">${escapeHtml(l.label)}</div>`).join('')}
+      </div>
+      <div class="bd-pop-link" data-bd="editLabels">✏️ Edit Labels</div>`;
+    }
+  } else if(p.kind==='addCol'){
+    html = `<div class="bd-pop-title">Add a column</div>` + BD_TYPES.map(x=>`<div class="bd-menu-item" data-bd="addColType" data-type="${x.type}">${x.icon} ${x.label}</div>`).join('');
+  } else if(p.kind==='colMenu'){
+    const isTitle = p.colId==='__title';
+    const col = isTitle ? null : bdCol(b, p.colId);
+    html = `<div class="bd-pop-title">${escapeHtml(isTitle?'Project':col.name)}</div>
+      <div class="bd-menu-item" data-bd="sortCol" data-dir="asc">↑ Sort A→Z / low→high</div>
+      <div class="bd-menu-item" data-bd="sortCol" data-dir="desc">↓ Sort Z→A / high→low</div>
+      ${isTitle ? '' : `
+      <div class="bd-menu-item" data-bd="renameCol">✏️ Rename</div>
+      ${col.type==='status' ? `<div class="bd-menu-item" data-bd="editLabelsFromMenu">🎨 Edit labels</div>` : ''}
+      <div class="bd-menu-item" data-bd="hideCol">👁 Hide (just for me)</div>
+      ${col.builtin ? `<div class="bd-menu-item tiny" style="color:var(--ink-soft);cursor:default;">Built-in column — can be hidden, not deleted</div>` : `<div class="bd-menu-item" data-bd="deleteCol" style="color:var(--bad);">🗑️ Delete column</div>`}`}`;
+  } else if(p.kind==='hide'){
+    const hidden = bdPrefs(b.id).hidden||[];
+    html = `<div class="bd-pop-title">Show / hide columns (just for you)</div>` + b.columns.map(c=>`<label class="bd-menu-item"><input type="checkbox" style="width:auto;" data-bd="toggleHide" data-bdc="${c.id}" ${hidden.includes(c.id)?'':'checked'}> ${escapeHtml(c.name)}</label>`).join('');
+  } else if(p.kind==='groupMenu'){
+    const g = b.groups.find(x=>x.id===p.groupId); if(!g){ state.bdPop=null; return; }
+    html = `<div class="bd-pop-title">${escapeHtml(g.name)}</div>
+      <div class="bd-menu-item" data-bd="renameGroup">✏️ Rename group</div>
+      <div class="bd-menu-item" data-bd="groupUp">↑ Move group up</div>
+      <div class="bd-menu-item" data-bd="groupDown">↓ Move group down</div>
+      <div class="bd-colorgrid">${BD_COLORS.map(c=>`<span class="bd-swatch" style="background:${c};" data-bd="groupColor" data-color="${c}"></span>`).join('')}</div>
+      <div class="bd-menu-item" data-bd="deleteGroup" style="color:var(--bad);">🗑️ Delete group</div>`;
+  }
+  const pop = document.createElement('div');
+  pop.className = 'bd-pop'; pop.innerHTML = html;
+  const left = Math.max(8, Math.min(p.x, window.innerWidth-340));
+  pop.style.left = left+'px'; pop.style.top = Math.min(p.y, window.innerHeight-60)+'px';
+  const shield = document.createElement('div'); shield.className='bd-pop-shield'; shield.dataset.bd='closePop';
+  document.getElementById('app').appendChild(shield);
+  document.getElementById('app').appendChild(pop);
+  requestAnimationFrame(()=>{ const r = pop.getBoundingClientRect(); if(r.bottom > window.innerHeight-8) pop.style.top = Math.max(8, window.innerHeight-8-r.height)+'px'; });
+}
+
+/* ---------- modals: new board / settings / share ---------- */
+function renderBoardModal(){
+  const m = state.boardModal; if(!m) return;
+  const b = m.boardId ? db.boards.find(x=>x.id===m.boardId) : null;
+  const overlay = document.createElement('div');
+  overlay.className='modal-overlay'; overlay.style.zIndex=220;
+  let title='', body='', foot='';
+  if(m.kind==='new' || m.kind==='settings'){
+    title = m.kind==='new' ? 'New Board' : 'Board Settings';
+    const canManage = !b || state.currentUser.role==='Admin' || b.createdBy===state.currentUser.id;
+    body = `
+      <div class="field"><label>Board name</label><input id="bmName" value="${escapeAttr(b?b.name:'')}" placeholder="e.g., Edge Texas Requests"></div>
+      <div class="field"><label>Who can see it?</label>
+        <label style="display:flex;gap:8px;align-items:center;margin:4px 0;font-weight:400;"><input type="radio" name="bmVis" value="private" style="width:auto;" ${(!b||b.visibility==='private')?'checked':''} ${canManage?'':'disabled'}> 🔒 Private — me + people I add</label>
+        <label style="display:flex;gap:8px;align-items:center;margin:4px 0;font-weight:400;"><input type="radio" name="bmVis" value="company" style="width:auto;" ${(b&&b.visibility==='company')?'checked':''} ${canManage?'':'disabled'}> 🌐 Company-wide — everyone at Edge</label>
+      </div>
+      <div class="field"><label>New Projects are due how many days out?</label><input id="bmDays" type="number" min="0" max="365" value="${b?b.defaultDueDays:5}" style="max-width:120px;">
+        <div class="tiny" style="color:var(--ink-soft);margin-top:4px;">Start = today; Due = today + this many days. Either can be changed on each Project.</div></div>
+      ${m.kind==='settings' && canManage ? `<div style="margin-top:20px;padding-top:14px;border-top:1px solid var(--line-soft);"><button class="btn danger sm" data-bm="delete">🗑️ Delete this board</button>
+        <div class="tiny" style="color:var(--ink-soft);margin-top:6px;">Its Projects aren't deleted — they move to "Projects not on a board".</div></div>` : ''}`;
+    foot = `<button class="btn secondary" data-bm="close">Cancel</button><button class="btn" data-bm="save">${m.kind==='new'?'Create Board':'Save'}</button>`;
+  } else if(m.kind==='share'){
+    title = 'Share — ' + b.name;
+    const creator = USERS.find(u=>u.id===b.createdBy);
+    const added = (b.userIds||[]).map(id=>USERS.find(u=>u.id===id)).filter(Boolean);
+    const addable = USERS.filter(u=>u.id!==b.createdBy && !(b.userIds||[]).includes(u.id));
+    body = `<div class="tiny" style="color:var(--ink-soft);margin-bottom:10px;">${b.visibility==='company' ? '🌐 This board is company-wide — everyone can already see it.' : `🔒 Private: ${creator?escapeHtml(creator.name):'the creator'} + the people below (and Admins).`}</div>
+      ${added.map(u=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;">${escapeHtml(u.name)}<button class="btn secondary sm" data-bm="removeUser" data-user="${u.id}">Remove</button></div>`).join('') || '<div class="tiny">No one added yet.</div>'}
+      ${addable.length ? `<div style="display:flex;gap:8px;margin-top:12px;"><select id="bmAddUser" style="flex:1;">${addable.map(u=>`<option value="${u.id}">${escapeHtml(u.name)}</option>`).join('')}</select><button class="btn sm" data-bm="addUser">+ Add</button></div>` : ''}`;
+    foot = `<button class="btn" data-bm="close">Done</button>`;
+  } else if(m.kind==='rename'){
+    title = m.label || 'Rename';
+    body = `<div class="field"><input id="bmText" value="${escapeAttr(m.value||'')}"></div>`;
+    foot = `<button class="btn secondary" data-bm="close">Cancel</button><button class="btn" data-bm="saveText">Save</button>`;
+  }
+  overlay.innerHTML = `<div class="modal-card" style="width:460px;"><div class="modal-head"><div class="modal-title">${escapeHtml(title)}</div><button class="modal-close" data-bm="close">✕</button></div>
+    <div class="modal-body">${body}</div><div class="modal-foot">${foot}</div></div>`;
+  document.getElementById('app').appendChild(overlay);
+  const first = overlay.querySelector('#bmName, #bmText'); if(first) setTimeout(()=>{ first.focus(); first.select && first.select(); },0);
+  overlay.querySelectorAll('[data-bm="close"]').forEach(x=>x.onclick=()=>{ state.boardModal=null; render(); });
+  const save = overlay.querySelector('[data-bm="save"]'); if(save) save.onclick=safeHandler(async ()=>{
+    const name = overlay.querySelector('#bmName').value.trim(); if(!name){ flashToast('Give the board a name.'); return; }
+    const vis = (overlay.querySelector('input[name="bmVis"]:checked')||{}).value || 'private';
+    const days = Math.max(0, parseInt(overlay.querySelector('#bmDays').value,10) || 0);
+    if(m.kind==='new'){
+      const nb = {id:crypto.randomUUID(), name, kind:'open', clientId:null, columns:bdDefaultColumns(), groups:bdDefaultGroups(), visibility:vis, defaultDueDays:days, createdBy:state.currentUser.id, sortOrder:Date.now()/1e12, userIds:[]};
+      db.boards.push(nb); setActiveBoard(nb.id); state.boardModal=null; render();
+      await supaCreateBoard(nb); flashToast(`Board "${name}" created.`);
+    } else {
+      b.name=name; b.visibility=vis; b.defaultDueDays=days; supaSaveBoard(b); state.boardModal=null; render();
+    }
+  });
+  const del = overlay.querySelector('[data-bm="delete"]'); if(del) del.onclick=safeHandler(async ()=>{
+    if(!confirm(`Delete the board "${b.name}"? Its Projects stay — they just won't be on a board anymore.`)) return;
+    db.todos.filter(t=>t.boardId===b.id).forEach(t=>{ t.boardId=null; t.groupId=null; });
+    db.boards = db.boards.filter(x=>x.id!==b.id); state.activeBoardId=null; state.boardModal=null; render();
+    await supaDeleteBoard(b.id);
+  });
+  const addU = overlay.querySelector('[data-bm="addUser"]'); if(addU) addU.onclick=safeHandler(async ()=>{
+    const uid = overlay.querySelector('#bmAddUser').value; const auth = localUserIdToAuthId(uid);
+    if(!auth){ flashToast('That person needs to sign in to the Portal once first.'); return; }
+    const { error } = await supabaseClient.from('project_board_users').insert({board_id:b.id, user_id:auth});
+    if(error){ flashToast('Could not add them. ('+error.message+')'); return; }
+    b.userIds.push(uid); render();
+  });
+  overlay.querySelectorAll('[data-bm="removeUser"]').forEach(x=>x.onclick=safeHandler(async ()=>{
+    const uid = x.dataset.user;
+    const { error } = await supabaseClient.from('project_board_users').delete().eq('board_id', b.id).eq('user_id', localUserIdToAuthId(uid));
+    if(error){ flashToast('Could not remove. ('+error.message+')'); return; }
+    b.userIds = b.userIds.filter(i=>i!==uid); render();
+  }));
+  const st = overlay.querySelector('[data-bm="saveText"]'); if(st){
+    const doSave = ()=>{ const v = overlay.querySelector('#bmText').value.trim(); if(!v) return; const cb = m.onSave; state.boardModal=null; cb && cb(v); render(); };
+    st.onclick = doSave;
+    overlay.querySelector('#bmText').onkeydown = e=>{ if(e.key==='Enter') doSave(); };
+  }
+}
+function bdPromptText(label, value, onSave){ state.bdPop=null; state.boardModal = {kind:'rename', label, value, onSave}; render(); }
+
+/* ---------- project create / update ---------- */
+function bdNewProjectDefaults(b, groupId){
+  const today = todayDate();
+  return {boardId:b.id, groupId: groupId || (b.groups[0]&&b.groups[0].id) || null, startDate: today,
+    dueDate: addDays(today, b.defaultDueDays||0), office:'Phoenix', fieldValues:{}, extraFields:[]};
+}
+function bdNextSortOrder(b, groupId){
+  const rows = boardProjects(b, true).filter(t=>t.groupId===groupId);
+  return rows.reduce((m,t)=>Math.max(m, t.sortOrder||0), 0) + 1;
+}
+function bdCreateProject(b, groupId, title){
+  const d = bdNewProjectDefaults(b, groupId);
+  const t = Object.assign({id:crypto.randomUUID(), title, category:'', status:'', assignedTo:state.currentUser.id, createdBy:state.currentUser.id,
+    type:'project', private:false, completed:false, notes:'', isNew:false, attachments:[], checklistItems:[], listId:null, clientId:null, dealId:null, entryId:null, projectId:null,
+    requesterId:null, sortOrder: bdNextSortOrder(b, d.groupId), createdAt:new Date(), authorizedUserIds:[]}, d);
+  db.todos.push(t); supaCreateTodo(t);
+  return t;
+}
+
+/* ---------- event handling (delegated once on document) ---------- */
+function bdFind(el){
+  const t = el.dataset.bdt ? db.todos.find(x=>x.id===el.dataset.bdt) : null;
+  const b = (t && t.boardId && db.boards.find(x=>x.id===t.boardId)) || activeBoard() || (state.bdPop && db.boards.find(x=>x.id===state.bdPop.boardId));
+  const col = (b && el.dataset.bdc) ? bdCol(b, el.dataset.bdc) : null;
+  return {b, t, col};
+}
+function bdCommitCell(el){
+  const {b, t, col} = bdFind(el); if(!b||!t||!col) return;
+  let v = el.type==='checkbox' ? (el.checked ? '1' : '') : el.value.trim();
+  if(col.type==='number') v = v.replace(/[$,\s]/g,'');
+  const before = bdGetValue(t, col);
+  if(String(before)===String(v)) return;
+  bdSetValue(t, col, v);
+  supaUpdateTodo(t);
+  if(col.type==='person'){ const badge = el.parentElement.querySelector('.bd-avatar'); if(badge) badge.outerHTML = bdPersonBadge(bdGetValue(t,col)); }
+  if(col.type==='link' || col.type==='email' || col.type==='phone' || col.type==='number' || bdPrefs(b.id).sort) renderPreservingScroll('.content');
+}
+document.addEventListener('change', ev=>{
+  const el = ev.target.closest && ev.target.closest('[data-bd]'); if(!el) return;
+  const k = el.dataset.bd;
+  if(k==='set' || k==='check'){ bdCommitCell(el); return; }
+  const b = activeBoard();
+  const p = b ? bdPrefs(b.id) : {};
+  if(!b && k!=='labName' && k!=='labMeaning') return;
+  if(k==='filterPerson'){ p.person = el.value||null; bdSavePrefs(b.id); render(); }
+  else if(k==='filterStatus'){ p.status = el.value||null; bdSavePrefs(b.id); render(); }
+  else if(k==='toggleHide'){ const h = p.hidden||(p.hidden=[]); if(el.checked) p.hidden = h.filter(x=>x!==el.dataset.bdc); else if(!h.includes(el.dataset.bdc)) h.push(el.dataset.bdc); bdSavePrefs(b.id); render(); }
+  else if(k==='labName' || k==='labMeaning'){
+    const pb = state.bdPop && db.boards.find(x=>x.id===state.bdPop.boardId); if(!pb) return;
+    const b2 = pb; const col = bdCol(b2, state.bdPop.colId); const lab = col && col.labels.find(l=>l.id===el.dataset.lab); if(!lab) return;
+    if(k==='labName'){
+      const old = lab.label; const nv = el.value.trim(); if(!nv || nv===old) return; lab.label = nv;
+      if(col.builtin){ const field = col.builtin; db.todos.filter(t=>t.boardId===b2.id && t[field]===old).forEach(t=>{ t[field]=nv; supaUpdateTodo(t); }); }
+    } else { lab.meaning = el.value || undefined; if(!lab.meaning) delete lab.meaning; }
+    supaSaveBoard(b2); render();
+  }
+});
+document.addEventListener('keydown', ev=>{
+  if(ev.key==='Escape' && state.bdPop){ state.bdPop=null; render(); return; }
+  const el = ev.target.closest && ev.target.closest('[data-bd]'); if(!el) return;
+  if(el.dataset.bd==='addItem' && ev.key==='Enter'){
+    const title = el.value.trim(); if(!title) return;
+    const b = activeBoard(); if(!b) return;
+    bdCreateProject(b, el.dataset.bdg, title);
+    state.bdRefocusGroup = el.dataset.bdg;
+    renderPreservingScroll('.content');
+    const again = document.querySelector(`[data-bd="addItem"][data-bdg="${state.bdRefocusGroup}"]`); if(again) again.focus();
+  } else if(el.dataset.bd==='set' && ev.key==='Enter' && el.tagName==='INPUT'){ el.blur(); }
+  else if(ev.key==='Escape' && state.bdPop){ state.bdPop=null; render(); }
+});
+let bdSearchTimer=null;
+document.addEventListener('input', ev=>{
+  const el = ev.target.closest && ev.target.closest('[data-bd="search"]'); if(!el) return;
+  const b = activeBoard(); if(!b) return;
+  bdPrefs(b.id).search = el.value; bdSavePrefs(b.id);
+  clearTimeout(bdSearchTimer);
+  bdSearchTimer = setTimeout(()=>{ const pos = el.selectionStart; render(); const s = document.querySelector('[data-bd="search"]'); if(s){ s.focus(); try{ s.setSelectionRange(pos,pos); }catch(e){} } }, 250);
+});
+document.addEventListener('click', ev=>{
+  const el = ev.target.closest && ev.target.closest('[data-bd]'); if(!el) return;
+  const k = el.dataset.bd;
+  if(['set','check','search','filterPerson','filterStatus','addItem','labName','labMeaning','rowgrip','colresize'].includes(k)) return;
+  if(k==='toggleHide') return;
+  const b = activeBoard();
+  const pop = state.bdPop;
+  const popBoard = pop && db.boards.find(x=>x.id===pop.boardId);
+  switch(k){
+    case 'closePop': state.bdPop=null; render(); return;
+    case 'tab': setActiveBoard(el.dataset.board); render(); return;
+    case 'newBoard': state.boardModal={kind:'new'}; render(); return;
+    case 'settings': state.boardModal={kind:'settings', boardId:b.id}; render(); return;
+    case 'share': state.boardModal={kind:'share', boardId:b.id}; render(); return;
+    case 'toggleVis': b.visibility = b.visibility==='company' ? 'private' : 'company'; supaSaveBoard(b); flashToast(b.visibility==='company'?'Now company-wide.':'Now private.'); render(); return;
+    case 'renameBoard': bdPromptText('Rename board', b.name, v=>{ b.name=v; supaSaveBoard(b); }); return;
+    case 'archive': state.boardArchiveOpen = !state.boardArchiveOpen; render(); return;
+    case 'restore': { const t = db.todos.find(x=>x.id===el.dataset.bdt); if(t){ bdRestore(t); supaUpdateTodo(t); flashToast(`"${t.title}" is back on the board.`); render(); } return; }
+    case 'open': { ev.preventDefault(); if(el.dataset.focus==='comments') state.bdFocusComments = true; openTodoDetail(el.dataset.bdt); render(); return; }
+    case 'adoptLegacy': { const t = db.todos.find(x=>x.id===el.dataset.bdt); if(t && b){ Object.assign(t, {boardId:b.id, groupId:b.groups[0]&&b.groups[0].id, sortOrder:bdNextSortOrder(b, b.groups[0]&&b.groups[0].id)}); if(!t.startDate) t.startDate = t.createdAt || todayDate(); if(!t.office) t.office='Phoenix'; supaUpdateTodo(t); render(); } return; }
+    case 'newProject': { openNewTodoModal({type:'project', boardId:b.id, groupId:b.groups[0]&&b.groups[0].id, dueInput: toLocalDateStr(addDays(todayDate(), b.defaultDueDays||0))}); render(); return; }
+    case 'collapse': { const p = bdPrefs(b.id); const c = p.collapsed||(p.collapsed=[]); const g = el.dataset.bdg; p.collapsed = c.includes(g) ? c.filter(x=>x!==g) : c.concat(g); bdSavePrefs(b.id); render(); return; }
+    case 'addGroup': { const g = {id:bdUid('g_'), name:'New Group', color:BD_COLORS[(b.groups.length+3)%BD_COLORS.length]}; b.groups.push(g); supaSaveBoard(b); render(); bdPromptText('Name this group', 'New Group', v=>{ g.name=v; supaSaveBoard(b); }); return; }
+    case 'groupMenu': bdOpenPop('groupMenu', el, {boardId:b.id, groupId:el.dataset.bdg}); return;
+    case 'renameGroup': { const g = popBoard.groups.find(x=>x.id===pop.groupId); bdPromptText('Rename group', g.name, v=>{ g.name=v; supaSaveBoard(popBoard); }); return; }
+    case 'groupUp': case 'groupDown': { const gs = popBoard.groups; const i = gs.findIndex(x=>x.id===pop.groupId); const j = k==='groupUp'?i-1:i+1; if(j>=0 && j<gs.length){ [gs[i],gs[j]]=[gs[j],gs[i]]; supaSaveBoard(popBoard); } state.bdPop=null; render(); return; }
+    case 'groupColor': { const g = popBoard.groups.find(x=>x.id===pop.groupId); g.color = el.dataset.color; supaSaveBoard(popBoard); state.bdPop=null; render(); return; }
+    case 'deleteGroup': {
+      const gs = popBoard.groups; if(gs.length<=1){ flashToast('A board needs at least one group.'); return; }
+      const g = gs.find(x=>x.id===pop.groupId); const rows = boardProjects(popBoard, true).filter(t=>t.groupId===g.id);
+      if(!confirm(`Delete the group "${g.name}"?${rows.length?` Its ${rows.length} Project(s) move to "${gs.find(x=>x.id!==g.id).name}".`:''}`)) return;
+      popBoard.groups = gs.filter(x=>x.id!==g.id); const dest = popBoard.groups[0].id;
+      rows.forEach(t=>{ t.groupId = dest; supaUpdateTodo(t); }); supaSaveBoard(popBoard); state.bdPop=null; render(); return;
+    }
+    case 'status': { const f = bdFind(el); if(f.b && f.t) bdOpenPop('status', el, {boardId:f.b.id, todoId:f.t.id, colId:el.dataset.bdc}); return; }
+    case 'pickLabel': {
+      const col = bdCol(popBoard, pop.colId); const t = db.todos.find(x=>x.id===pop.todoId);
+      const lab = el.dataset.lab ? col.labels.find(l=>l.id===el.dataset.lab) : null;
+      bdSetValue(t, col, bdStatusStoreValue(col, lab)); bdApplyOutcome(t, col, lab); supaUpdateTodo(t);
+      state.bdPop=null; renderPreservingScroll('.content'); return;
+    }
+    case 'editLabels': pop.editing = true; render(); return;
+    case 'editLabelsFromMenu': state.bdPop = Object.assign({}, pop, {kind:'status', editing:true, todoId:null}); render(); return;
+    case 'labColor': pop.colorFor = pop.colorFor===el.dataset.lab ? null : el.dataset.lab; render(); return;
+    case 'labPick': { const col = bdCol(popBoard, pop.colId); const lab = col.labels.find(l=>l.id===el.dataset.lab); lab.color = el.dataset.color; pop.colorFor=null; supaSaveBoard(popBoard); render(); return; }
+    case 'labAdd': { const col = bdCol(popBoard, pop.colId); col.labels.push({id:bdUid('l_'), label:'New label', color:BD_COLORS[col.labels.length % BD_COLORS.length]}); supaSaveBoard(popBoard); render(); return; }
+    case 'labDelete': {
+      const col = bdCol(popBoard, pop.colId); const lab = col.labels.find(l=>l.id===el.dataset.lab);
+      const used = boardProjects(popBoard, true).filter(t=>{ const x = bdStatusLabelFor(col, bdGetValue(t,col)); return x && x.id===lab.id; });
+      if(used.length && !confirm(`${used.length} Project(s) use "${lab.label}". Delete it anyway? They'll go blank.`)) return;
+      used.forEach(t=>{ bdSetValue(t, col, ''); supaUpdateTodo(t); });
+      col.labels = col.labels.filter(l=>l.id!==lab.id); supaSaveBoard(popBoard); render(); return;
+    }
+    case 'labDone': state.bdPop=null; render(); return;
+    case 'addCol': bdOpenPop('addCol', el, {boardId:b.id}); return;
+    case 'addColType': {
+      const tdef = BD_TYPES.find(x=>x.type===el.dataset.type);
+      const col = {id:bdUid('c_'), name:tdef.label.replace(' / $',''), type:tdef.type, width: tdef.type==='longtext'?240:140};
+      if(col.type==='status') col.labels = [{id:bdUid('l_'), label:'Done', color:'#00C875'},{id:bdUid('l_'), label:'Working on it', color:'#FDAB3D'},{id:bdUid('l_'), label:'Need', color:'#E2445C'}];
+      popBoard.columns.push(col); supaSaveBoard(popBoard);
+      bdPromptText('Name the new column', col.name, v=>{ col.name=v; supaSaveBoard(popBoard); });
+      return;
+    }
+    case 'colhead': { if(el.dataset.bdc) bdOpenPop('colMenu', el, {boardId:b.id, colId:el.dataset.bdc}); return; }
+    case 'sortCol': { const p = bdPrefs(popBoard.id); p.sort = {col:pop.colId, dir:el.dataset.dir}; bdSavePrefs(popBoard.id); state.bdPop=null; render(); return; }
+    case 'clearSort': { bdPrefs(b.id).sort = null; bdSavePrefs(b.id); render(); return; }
+    case 'clearFilters': { const p = bdPrefs(b.id); p.search=''; p.person=null; p.status=null; bdSavePrefs(b.id); render(); return; }
+    case 'renameCol': { const col = bdCol(popBoard, pop.colId); bdPromptText('Rename column', col.name, v=>{ col.name=v; supaSaveBoard(popBoard); }); return; }
+    case 'hideCol': { const p = bdPrefs(popBoard.id); (p.hidden||(p.hidden=[])).push(pop.colId); bdSavePrefs(popBoard.id); state.bdPop=null; render(); return; }
+    case 'hideMenu': bdOpenPop('hide', el, {boardId:b.id}); return;
+    case 'deleteCol': {
+      const col = bdCol(popBoard, pop.colId);
+      if(!confirm(`Delete the column "${col.name}" and everything in it? This can't be undone.`)) return;
+      popBoard.columns = popBoard.columns.filter(c=>c.id!==col.id);
+      boardProjects(popBoard, true).forEach(t=>{ if(t.fieldValues && col.id in t.fieldValues){ delete t.fieldValues[col.id]; supaUpdateTodo(t); } });
+      supaSaveBoard(popBoard); state.bdPop=null; render(); return;
+    }
+  }
+});
+
+/* ---------- drag & drop: rows, columns; column resize ---------- */
+let bdDrag = null;
+document.addEventListener('dragstart', ev=>{
+  const grip = ev.target.closest && ev.target.closest('[data-bd="rowgrip"]');
+  const head = ev.target.closest && ev.target.closest('th[data-bd="colhead"]');
+  if(grip){ bdDrag = {kind:'row', id:grip.dataset.bdt}; ev.dataTransfer.effectAllowed='move'; ev.dataTransfer.setData('text/plain', grip.dataset.bdt); const tr = grip.closest('tr'); if(tr){ ev.dataTransfer.setDragImage(tr, 20, 16); tr.classList.add('bd-dragging'); } }
+  else if(head && head.dataset.bdc && head.dataset.bdc!=='__title'){ bdDrag = {kind:'col', id:head.dataset.bdc}; ev.dataTransfer.effectAllowed='move'; ev.dataTransfer.setData('text/plain', head.dataset.bdc); }
+});
+document.addEventListener('dragover', ev=>{
+  if(!bdDrag) return;
+  if(bdDrag.kind==='row'){
+    const tr = ev.target.closest && (ev.target.closest('tr.bd-row, tr.bd-addrow') || ev.target.closest('[data-bd="groupdrop"]'));
+    if(tr){ ev.preventDefault(); document.querySelectorAll('.bd-dropline').forEach(x=>x.classList.remove('bd-dropline')); tr.classList.add('bd-dropline'); }
+  } else {
+    const th = ev.target.closest && ev.target.closest('th[data-bd="colhead"]');
+    if(th && th.dataset.bdc!=='__title'){ ev.preventDefault(); document.querySelectorAll('.bd-dropline-col').forEach(x=>x.classList.remove('bd-dropline-col')); th.classList.add('bd-dropline-col'); }
+  }
+});
+document.addEventListener('dragend', ()=>{ bdDrag=null; document.querySelectorAll('.bd-dropline,.bd-dropline-col,.bd-dragging').forEach(x=>x.classList.remove('bd-dropline','bd-dropline-col','bd-dragging')); });
+document.addEventListener('drop', ev=>{
+  if(!bdDrag) return;
+  const b = activeBoard(); if(!b){ bdDrag=null; return; }
+  ev.preventDefault();
+  if(bdDrag.kind==='row'){
+    const t = db.todos.find(x=>x.id===bdDrag.id); bdDrag=null; if(!t) return;
+    const tr = ev.target.closest('tr.bd-row');
+    const gHead = ev.target.closest('[data-bd="groupdrop"]');
+    const addRow = ev.target.closest('tr.bd-addrow');
+    let groupId, before=null;
+    if(tr){ groupId = tr.dataset.bdg; before = db.todos.find(x=>x.id===tr.dataset.bdrow); }
+    else if(addRow){ groupId = addRow.closest('tbody').dataset.bdg; }
+    else if(gHead){ groupId = gHead.dataset.bdg; }
+    if(!groupId || (before && before.id===t.id)){ render(); return; }
+    const siblings = bdSortRows(b, boardProjects(b,false).filter(x=>(x.groupId||b.groups[0].id)===groupId && x.id!==t.id));
+    // renumber the group so there's always room between neighbors
+    const ordered = siblings.slice();
+    const idx = before ? ordered.findIndex(x=>x.id===before.id) : ordered.length;
+    ordered.splice(idx<0?ordered.length:idx, 0, t);
+    t.groupId = groupId;
+    ordered.forEach((x,i)=>{ if(x.sortOrder!==i+1 || x===t){ x.sortOrder=i+1; supaUpdateTodo(x); } });
+    renderPreservingScroll('.content');
+  } else {
+    const th = ev.target.closest('th[data-bd="colhead"]'); const id = bdDrag.id; bdDrag=null;
+    if(!th || th.dataset.bdc===id || th.dataset.bdc==='__title'){ render(); return; }
+    const cols = b.columns; const from = cols.findIndex(c=>c.id===id); const moving = cols.splice(from,1)[0];
+    const to = cols.findIndex(c=>c.id===th.dataset.bdc); cols.splice(to,0,moving);
+    supaSaveBoard(b); renderPreservingScroll('.content');
+  }
+});
+document.addEventListener('pointerdown', ev=>{
+  const h = ev.target.closest && ev.target.closest('[data-bd="colresize"]'); if(!h) return;
+  ev.preventDefault(); ev.stopPropagation();
+  const b = activeBoard(); const col = b && bdCol(b, h.dataset.bdc); if(!col) return;
+  const th = h.closest('th'); const startW = th.getBoundingClientRect().width; const sx = ev.clientX;
+  const ths = document.querySelectorAll(`th[data-bdc="${col.id}"]`);
+  const move = e=>{ const w = Math.max(60, Math.round(startW + e.clientX - sx)); ths.forEach(x=>{ x.style.width=w+'px'; x.style.minWidth=w+'px'; }); (bdPrefs(b.id).widths||(bdPrefs(b.id).widths={}))[col.id]=w; };
+  const up = ()=>{ window.removeEventListener('pointermove',move); window.removeEventListener('pointerup',up); document.body.classList.remove('mw-busy'); bdSavePrefs(b.id); };
+  document.body.classList.add('mw-busy');
+  window.addEventListener('pointermove',move); window.addEventListener('pointerup',up);
+}, true);
+// a column-header click shouldn't fire right after a resize drag
+document.addEventListener('click', ev=>{ if(ev.target.closest && ev.target.closest('[data-bd="colresize"]')) ev.stopPropagation(); }, true);
+
+/* ---------- inside the Project window: board fields + comments ---------- */
+function bdDetailFieldsHtml(td){
+  bdEnsure();
+  const b = td.boardId && db.boards.find(x=>x.id===td.boardId); if(!b) return '';
+  const cols = b.columns.filter(c=>!['assignedTo','dueDate','notes','status'].includes(c.builtin));
+  return `<div class="contact-card bd-detail-card">
+    <div class="label">📋 Board: ${escapeHtml(b.name)}${td.completed?` · <span style="color:var(--ink-soft);">Archived (${td.outcome==='failed'?'Failed/Cancelled':'Done'})</span>`:''}</div>
+    <div class="bd-form">${cols.map(c=>`<div class="bd-form-row"><div class="bd-form-label">${escapeHtml(c.name)}</div><div class="bd-form-cell bd-td-${c.type}">${bdCellHtml(b, td, c, 'form')}</div></div>`).join('')}</div>
+  </div>`;
+}
+function bdCommentsHtml(td){
+  bdEnsure();
+  const list = db.projectComments.filter(c=>c.projectId===td.id);
+  return `<div class="section-label" style="margin-top:18px;" id="bdCommentsAnchor">💬 Comments (${list.length})</div>
+    <div class="bd-comments">${list.map(c=>{ const u = USERS.find(x=>x.id===c.userId); return `<div class="bd-comment">
+      <div class="bd-comment-meta">${bdPersonBadge(c.userId)} <b>${escapeHtml(u?u.name:'Someone')}</b> <span class="tiny">${c.createdAt.toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</span>
+        ${c.userId===state.currentUser.id || state.currentUser.role==='Admin' ? `<button class="row-trash" data-bdcomdel="${c.id}" title="Delete">✕</button>`:''}</div>
+      <div class="bd-comment-body">${escapeHtml(c.body).replace(/\n/g,'<br>')}</div></div>`; }).join('') || '<div class="tiny" style="color:var(--ink-soft);">No comments yet.</div>'}</div>
+    <div style="display:flex;gap:8px;margin-top:8px;align-items:flex-end;"><textarea id="bdCommentText" rows="2" placeholder="Write a comment…" style="flex:1;"></textarea><button class="btn sm" data-bdcompost="${td.id}">Post</button></div>`;
+}
+function wireBdDetail(overlay, td){
+  overlay.querySelectorAll('[data-bdcompost]').forEach(btn=>btn.onclick=safeHandler(async ()=>{
+    const ta = overlay.querySelector('#bdCommentText'); const body = ta.value.trim(); if(!body) return;
+    const c = {id:crypto.randomUUID(), projectId:td.id, userId:state.currentUser.id, body, createdAt:new Date()};
+    db.projectComments.push(c); ta.value=''; renderPreservingScroll('.modal-body');
+    const { error } = await supabaseClient.from('project_comments').insert({id:c.id, project_id:td.id, user_id:localUserIdToAuthId(state.currentUser.id), body});
+    if(error){ flashToast('Comment didn\'t sync. ('+error.message+')'); }
+  }));
+  overlay.querySelectorAll('[data-bdcomdel]').forEach(btn=>btn.onclick=safeHandler(async ()=>{
+    if(!confirm('Delete this comment?')) return;
+    db.projectComments = db.projectComments.filter(c=>c.id!==btn.dataset.bdcomdel); renderPreservingScroll('.modal-body');
+    await supabaseClient.from('project_comments').delete().eq('id', btn.dataset.bdcomdel);
+  }));
+  if(state.bdFocusComments){ state.bdFocusComments=false; const a = overlay.querySelector('#bdCommentsAnchor'); if(a) requestAnimationFrame(()=>{ a.scrollIntoView({block:'start'}); const ta = overlay.querySelector('#bdCommentText'); if(ta) ta.focus(); }); }
+}
 
 /* ---------------- LOGIN SCREEN ---------------- */
 function handleForUser(u){ return '@'+u.name.split(' ')[0].toLowerCase(); }
@@ -3820,6 +4717,10 @@ function renderNotifSettingsModal(){
         <input type="checkbox" id="wantsAssignerEmailsCheck" style="width:auto;" ${u.wantsAssignerEmails!==false?'checked':''}>
         <label style="margin:0;" for="wantsAssignerEmailsCheck">Email me when someone completes or reschedules a to-do I assigned them</label>
       </div>
+      <div class="field" style="display:flex;align-items:center;gap:8px;">
+        <input type="checkbox" id="wantsRequesterEmailsCheck" style="width:auto;" ${u.wantsRequesterEmails!==false?'checked':''}>
+        <label style="margin:0;" for="wantsRequesterEmailsCheck">Email me when the Status changes on a Project I'm the Requester on</label>
+      </div>
       <div class="field">
         <label>Microsoft 365 (Calendar &amp; Email)</label>
         <div style="font-size:11.5px;color:var(--ink-soft);margin-bottom:8px;line-height:1.5;">Connect your own Microsoft 365 account so Edgy (the AI assistant) can create real calendar events and send real emails as you.</div>
@@ -3967,6 +4868,15 @@ function renderNotifSettingsModal(){
       if(error){ console.error('Saving notif_assigner_emails failed:', error); flashToast('Saved locally, but syncing to the server failed — try again. (' + error.message + ')'); return; }
     }
     flashToast(u.wantsAssignerEmails ? "You'll get an email when your assignees complete or reschedule a to-do." : "Those emails are turned off for you.");
+  };
+  const wantsRequesterEmailsCheck = document.getElementById('wantsRequesterEmailsCheck');
+  if(wantsRequesterEmailsCheck) wantsRequesterEmailsCheck.onchange=async ()=>{
+    u.wantsRequesterEmails = wantsRequesterEmailsCheck.checked;
+    if(u.authId){
+      const { error } = await supabaseClient.from('profiles').update({ notify_requester_emails: u.wantsRequesterEmails }).eq('id', u.authId);
+      if(error){ flashToast('Saved locally, but syncing to the server failed — try again. (' + error.message + ')'); return; }
+    }
+    flashToast(u.wantsRequesterEmails ? "You'll get an email when a Project you requested changes status." : "Requester emails turned off for you.");
   };
 }
 function portalUrl(todoId){
@@ -5928,7 +6838,7 @@ function renderMainContent(){
   if(state.mainView.type==='wip') return renderWipView();
   if(state.mainView.type==='contacts') return renderContactsScreen();
   if(state.mainView.type==='archived-clients') return renderArchivedClientsMain();
-  if(state.mainView.type==='projects') return renderProjectsListMain();
+  if(state.mainView.type==='projects') return renderProjectsBoardsMain();
   if(state.mainView.type==='checklists') return renderChecklistsListMain();
   if(state.mainView.type==='list') return renderListMain(state.mainView.id);
   // smart list
@@ -6487,7 +7397,7 @@ function renderShell(){
     <div style="${hideSidebar?'display:none;':''}">${renderSidebar()}</div>
     <div class="main" style="${hideMain?'display:none;':''}position:relative;">
       ${renderTopbar()}
-      <div class="content"><div class="content-flex"><div class="content-inner${(state.mainView.type==='dashboard'||state.mainView.type==='wip')?' wide':''}" id="mainContentInner">${renderMainContent()}</div>${state.mainView.type==='wip' ? '' : renderSidePanel()}</div></div>
+      <div class="content"><div class="content-flex"><div class="content-inner${(state.mainView.type==='dashboard'||state.mainView.type==='wip'||state.mainView.type==='projects')?' wide':''}${state.mainView.type==='projects'?' full':''}" id="mainContentInner">${renderMainContent()}</div>${(state.mainView.type==='wip'||state.mainView.type==='projects') ? '' : renderSidePanel()}</div></div>
     </div>
   </div>
   <button class="fab" data-action="newTodo" title="New To-Do">+</button>
@@ -9788,14 +10698,16 @@ function renderMoveTodoPicker(){
 // to-do — not independently assignable. Items are directly editable in place; a fresh
 // Checklist (or a Project's embedded one) starts with 5 blank rows to fill in, and
 // "+ Add item" grows it one at a time after that.
-// Column labels over a checklist's two date boxes. "Start / Due" is the working
-// assumption (2026-09-25) pending Michael's confirmation — change the labels here.
+// Column labels over a checklist's three date boxes: Start (defaults to today on new
+// items) / Due / Completed (filled in the moment the item is checked, still editable).
+// Stored as item.dueDate / item.dueDate2 / item.completedAt ('YYYY-MM-DD').
 function checklistDateHeaderHtml(){
   return `<div style="display:flex;gap:8px;padding:0 0 2px;font-size:11px;font-weight:600;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.04em;">
     <span style="width:13px;flex:none;"></span>
     <span style="flex:1 1 160px;min-width:120px;">Item</span>
     <span style="flex:1 1 130px;min-width:110px;">Start</span>
     <span style="flex:1 1 130px;min-width:110px;">Due</span>
+    <span style="flex:1 1 130px;min-width:110px;">Completed</span>
     <span style="width:22px;flex:none;"></span>
   </div>`;
 }
@@ -9814,9 +10726,9 @@ function renderChecklistSection(td){
         <div style="display:flex;align-items:center;gap:8px;padding:6px 0;flex-wrap:wrap;">
           <input type="checkbox" data-checkitem="${item.id}" ${item.done?'checked':''} style="width:auto;flex:none;">
           <input data-checklistitemtext="${item.id}" value="${escapeAttr(item.text)}" placeholder="Item ${idx+1}" style="flex:1 1 160px;min-width:120px;font-size:13.5px;${item.done?'text-decoration:line-through;color:var(--ink-soft);':''}">
-          ${item.done && item.completedAt ? `<span class="tiny" title="Completed On" style="flex:none;color:var(--good,#2E7D4F);white-space:nowrap;">✓ ${escapeHtml(new Date(item.completedAt+'T00:00:00').toLocaleDateString(undefined,{month:'short',day:'numeric'}))}</span>` : ''}
           <input type="date" data-checklistitemdue="${item.id}" value="${item.dueDate?toLocalDateStr(item.dueDate):''}" title="Start date" style="flex:1 1 130px;min-width:110px;font-size:12.5px;color:var(--ink-soft);">
           <input type="date" data-checklistitemdue2="${item.id}" value="${item.dueDate2?toLocalDateStr(item.dueDate2):''}" title="Due date" style="flex:1 1 130px;min-width:110px;font-size:12.5px;color:var(--ink-soft);">
+          <input type="date" data-checklistitemcompleted="${item.id}" value="${escapeAttr(item.completedAt||'')}" title="Completed date — fills in when checked" style="flex:1 1 130px;min-width:110px;font-size:12.5px;color:var(--ink-soft);">
           <button class="row-trash" data-removeitem="${item.id}" style="opacity:.5;flex:none;">✕</button>
         </div>`).join('')}
     </div>
@@ -9865,7 +10777,7 @@ function renderTodoDetailModal(){
   if(!td.attachments) td.attachments=[];
   if(!td.checklistItems) td.checklistItems=[];
   if((td.type==='checklist' || td.type==='project') && td.checklistItems.length===0){
-    for(let i=0;i<5;i++) td.checklistItems.push({id:crypto.randomUUID(), text:'', done:false});
+    for(let i=0;i<5;i++) td.checklistItems.push({id:crypto.randomUUID(), text:'', done:false, dueDate:todayDate()});
   }
   const overlay = document.createElement('div');
   overlay.className='modal-overlay'; overlay.style.zIndex=190;
@@ -9875,7 +10787,7 @@ function renderTodoDetailModal(){
   overlay.innerHTML = `
   <div class="modal-card" style="${(td.type==='checklist' || td.type==='project') ? 'width:860px;' : ''}">
     <div class="modal-head">
-      <div class="modal-title">To-Do Details</div>
+      <div class="modal-title">${td.type==='project' ? 'Project' : td.type==='checklist' ? 'Checklist' : 'To-Do'} Details</div>
       <div style="display:flex;gap:8px;align-items:center;">
         <button class="btn sm" data-action="detSave" id="detSaveBtnTop" style="background:#fff;color:var(--edge);">${isForMe? 'Save & Close' : 'Save & Assign'}</button>
         <button class="modal-close" data-action="closeTodoDetail">✕</button>
@@ -9896,7 +10808,9 @@ function renderTodoDetailModal(){
       </div>
       <div class="field autocomplete-box">
         <label>Status</label>
-        <select id="detStatus">${STATUS_PRESETS.map(s=>`<option value="${escapeAttr(s)}" ${(td.status||'Not Started')===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}</select>
+        ${(()=>{ const bb = td.boardId && (db.boards||[]).find(x=>x.id===td.boardId); const sc = bb && bdStatusCol(bb);
+          if(sc) return `<select id="detStatus"><option value=""></option>${(sc.labels||[]).map(l=>`<option value="${escapeAttr(l.label)}" ${td.status===l.label?'selected':''}>${escapeHtml(l.label)}${l.meaning?(l.meaning==='done'?' (→ Archive)':' (→ Archive)'):''}</option>`).join('')}</select>`;
+          return `<select id="detStatus">${STATUS_PRESETS.map(s=>`<option value="${escapeAttr(s)}" ${(td.status||'Not Started')===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}</select>`; })()}
       </div>
       <div class="field">
         <label>Due date</label>
@@ -9916,8 +10830,10 @@ function renderTodoDetailModal(){
         <input type="checkbox" id="detPrivate" style="width:auto;" ${td.private?'checked':''}>
         <label style="margin:0;" for="detPrivate">Private (only I can see the details)</label>
       </div>
+      ${td.type==='project' ? bdDetailFieldsHtml(td) : ''}
       ${td.type==='checklist' ? renderChecklistSection(td) : ''}
       ${td.type==='project' ? renderProjectSection(td) : ''}
+      ${td.type==='project' ? bdCommentsHtml(td) : ''}
       <div class="field">
         <label>Notes</label>
         <textarea id="detNotes" rows="3" placeholder="Any details worth keeping with this to-do…">${escapeHtml(td.notes||'')}</textarea>
@@ -9956,7 +10872,7 @@ function renderTodoDetailModal(){
   overlay.querySelectorAll('[data-dettype]').forEach(b=>b.onclick=()=>{
     td.type=b.dataset.dettype;
     if((td.type==='checklist' || td.type==='project') && td.checklistItems.length===0){
-      for(let i=0;i<5;i++) td.checklistItems.push({id:crypto.randomUUID(), text:'', done:false});
+      for(let i=0;i<5;i++) td.checklistItems.push({id:crypto.randomUUID(), text:'', done:false, dueDate:todayDate()});
     }
     renderPreservingScroll('.modal-body');
   });
@@ -9971,7 +10887,7 @@ function renderTodoDetailModal(){
   });
   overlay.querySelector('[data-action="closeTodoDetail"]').onclick=()=>{ if(attemptCloseTodoDetail(td)) render(); };
   overlay.querySelectorAll('[data-action="addChecklistItem"]').forEach(btn=>btn.onclick=()=>{
-    const newItem = {id:crypto.randomUUID(), text:'', done:false};
+    const newItem = {id:crypto.randomUUID(), text:'', done:false, dueDate:todayDate()};
     td.checklistItems.push(newItem);
     supaUpdateTodo(td);
     renderPreservingScroll('.modal-body');
@@ -9996,9 +10912,27 @@ function renderTodoDetailModal(){
     const item = td.checklistItems.find(i=>i.id===el.dataset.checklistitemdue2);
     if(item){ item.dueDate2 = el.value ? new Date(el.value+'T00:00:00') : null; supaUpdateTodo(td); }
   });
+  overlay.querySelectorAll('[data-checklistitemcompleted]').forEach(el=>el.onchange=()=>{
+    const item = td.checklistItems.find(i=>i.id===el.dataset.checklistitemcompleted);
+    if(item){ item.completedAt = el.value || null; item.done = !!el.value; supaUpdateTodo(td); renderPreservingScroll('.modal-body'); }
+  });
   overlay.querySelectorAll('[data-checkitem]').forEach(el=>el.onchange=()=>{
     const item = td.checklistItems.find(i=>i.id===el.dataset.checkitem);
-    if(item){ item.done = el.checked; item.completedAt = el.checked ? toLocalDateStr(todayDate()) : null; supaUpdateTodo(td); renderPreservingScroll('.modal-body'); }
+    if(item){ item.done = el.checked; item.completedAt = el.checked ? (item.completedAt || toLocalDateStr(todayDate())) : null; supaUpdateTodo(td); renderPreservingScroll('.modal-body'); }
+    // Last item on a Project checked off → offer to close out the whole Project. Blank
+    // placeholder rows don't count, and open child To-Do's inside it block the prompt.
+    if(item && el.checked && td.type==='project' && !td.completed){
+      const realItems = td.checklistItems.filter(i=>i.done || (i.text||'').trim());
+      const openChildren = db.todos.filter(t=>t.projectId===td.id && !t.completed);
+      if(realItems.length && realItems.every(i=>i.done) && !openChildren.length){
+        setTimeout(()=>{
+          if(confirm('All items done — mark this Project complete?')){
+            td.completed = true; td.completedAt = new Date(); if(td.boardId) td.outcome='done'; supaUpdateTodo(td);
+            flashToast(`Marked "${td.title}" complete.`); render();
+          }
+        }, 50);
+      }
+    }
   });
   overlay.querySelectorAll('[data-removeitem]').forEach(el=>el.onclick=()=>{
     td.checklistItems = td.checklistItems.filter(i=>i.id!==el.dataset.removeitem);
@@ -10046,7 +10980,8 @@ function renderTodoDetailModal(){
   overlay.querySelector('[data-action="detDelete"]').onclick=()=>{
     if(confirm(`Delete "${td.title}"? This can't be undone.`)){ deleteTodo(td.id); render(); }
   };
-  overlay.querySelector('[data-action="detToggleComplete"]').onclick=()=>{ td.completed=!td.completed; td.completedAt = td.completed ? new Date() : null; supaUpdateTodo(td); render(); };
+  overlay.querySelector('[data-action="detToggleComplete"]').onclick=()=>{ td.completed=!td.completed; td.completedAt = td.completed ? new Date() : null; if(td.boardId) td.outcome = td.completed ? 'done' : null; supaUpdateTodo(td); render(); };
+  wireBdDetail(overlay, td);
   const sendReminderBtn = overlay.querySelector('[data-action="detSendReminder"]');
   if(sendReminderBtn) sendReminderBtn.onclick=()=>{
     if(!confirm(`Send ${USERS.find(u=>u.id===td.assignedTo).name} a reminder to update this to-do? They'll get an email and won't be able to close it without responding.`)) return;
@@ -10066,6 +11001,7 @@ function renderTodoDetailModal(){
     td.title=document.getElementById('detTitle').value.trim()||td.title;
     td.category=document.getElementById('detCategory').value.trim();
     td.status=document.getElementById('detStatus').value.trim();
+    if(td.boardId && !td.completed){ const bb=(db.boards||[]).find(x=>x.id===td.boardId); const sc = bb && bdStatusCol(bb); if(sc) bdApplyOutcome(td, sc, bdStatusLabelFor(sc, td.status)); }
     td.dueDate=parseNaturalDate(document.getElementById('detDue').value.trim());
     td.notes=document.getElementById('detNotes').value.trim();
     const newAssign=td.assignedTo;
@@ -12924,6 +13860,22 @@ function renderNewTodoPickerModal(){
       <button class="btn secondary" data-action="ntpChooseAccountStep" style="text-align:left;padding:16px;font-size:14px;">🏢 Client / Listing</button>
       <button class="btn secondary" data-action="ntpChooseEntryTypeStep" style="text-align:left;padding:16px;font-size:14px;">🎯 Hit List / Hot List</button>
       <button class="btn secondary" data-action="ntpChooseOpen" style="text-align:left;padding:16px;font-size:14px;">📋 Open To-Do — not tied to anything</button>
+      <button class="btn secondary" data-action="ntpProjectStep" style="text-align:left;padding:16px;font-size:14px;">📁 New Project</button>
+    </div>`;
+  } else if(p.step==='chooseProjectKind'){
+    title = 'New Project — what is it for?';
+    body = `
+    <div style="display:flex;flex-direction:column;gap:10px;">
+      <button class="btn secondary" disabled style="text-align:left;padding:16px;font-size:14px;opacity:.55;">🏢 Listing <span class="tiny">— coming in Phase 4</span></button>
+      <button class="btn secondary" disabled style="text-align:left;padding:16px;font-size:14px;opacity:.55;">💲 Client <span class="tiny">— coming in Phase 4</span></button>
+      <button class="btn secondary" data-action="ntpProjectOpen" style="text-align:left;padding:16px;font-size:14px;">📋 Open — goes on one of your Project boards</button>
+    </div>`;
+  } else if(p.step==='chooseBoard'){
+    title = 'Which board?';
+    const boards = visibleBoards();
+    body = `<div style="display:flex;flex-direction:column;gap:8px;">
+      ${boards.map(b=>`<button class="btn secondary" data-action="ntpPickBoard" data-board="${b.id}" style="text-align:left;padding:14px;font-size:14px;">${b.visibility==='company'?'🌐':'🔒'} ${escapeHtml(b.name)}</button>`).join('') || '<div class="tiny" style="color:var(--ink-soft);">You don\'t have any boards yet.</div>'}
+      <button class="btn" data-action="ntpNewBoard" style="padding:12px;">+ New Board</button>
     </div>`;
   } else if(p.step==='chooseAccount'){
     title = 'Which Client or Listing?';
@@ -12981,8 +13933,19 @@ function renderNewTodoPickerModal(){
     if(p.step==='chooseAccount' || p.step==='chooseEntryType') p.step='chooseType';
     else if(p.step==='chooseDealOrStop') p.step='chooseAccount';
     else if(p.step==='chooseEntry') p.step='chooseEntryType';
+    else if(p.step==='chooseProjectKind') p.step='chooseType';
+    else if(p.step==='chooseBoard') p.step='chooseProjectKind';
     render();
   };
+  const projStepBtn = overlay.querySelector('[data-action="ntpProjectStep"]'); if(projStepBtn) projStepBtn.onclick=()=>{ p.step='chooseProjectKind'; render(); };
+  const projOpenBtn = overlay.querySelector('[data-action="ntpProjectOpen"]'); if(projOpenBtn) projOpenBtn.onclick=()=>{ p.step='chooseBoard'; render(); };
+  overlay.querySelectorAll('[data-action="ntpPickBoard"]').forEach(btn=>btn.onclick=()=>{
+    const b = db.boards.find(x=>x.id===btn.dataset.board); if(!b) return;
+    state.newTodoPicker=null;
+    openNewTodoModal({type:'project', boardId:b.id, groupId:b.groups[0]&&b.groups[0].id, dueInput: toLocalDateStr(addDays(todayDate(), b.defaultDueDays||0))});
+    render();
+  });
+  const ntpNewBoardBtn = overlay.querySelector('[data-action="ntpNewBoard"]'); if(ntpNewBoardBtn) ntpNewBoardBtn.onclick=()=>{ state.newTodoPicker=null; state.mainView={type:'projects'}; state.boardModal={kind:'new'}; render(); };
   const openBtn = overlay.querySelector('[data-action="ntpChooseOpen"]'); if(openBtn) openBtn.onclick=()=>{
     state.newTodoPicker=null;
     openNewTodoModal({});
@@ -13076,7 +14039,13 @@ function openNewTodoModal(context){
   // context.type lets a caller (the Projects/Checklists pages' own "+ New" buttons) open
   // this modal pre-set to that type instead of defaulting to a plain task — added 2026-09-06
   // so Projects/Checklists have a real, direct creation path outside the New To-Do flow.
-  state.newTodoModal={ context, title: context.title||'', category: context.category||'', status:'Not Started', dueInput: toLocalDateStr(todayDate()), notes:'', type: context.type||'task', assignTo:state.currentUser.id, attachments:[], checklistItems:[] };
+  state.newTodoModal={ context, title: context.title||'', category: context.category||'', status:'Not Started', dueInput: context.dueInput || toLocalDateStr(todayDate()), notes:'', type: context.type||'task', assignTo:state.currentUser.id, attachments:[], checklistItems:[] };
+  // Opened straight into Project/Checklist mode (board "+ New Project", Projects page, + menu):
+  // start with the same 5 blank rows the Project toggle gives, Start = today.
+  if(context.type==='project' || context.type==='checklist'){
+    for(let i=0;i<5;i++) state.newTodoModal.checklistItems.push({id:crypto.randomUUID(), text:'', done:false, dueDate:todayDate()});
+  }
+  if(context.boardId) state.newTodoModal.status = '';
 }
 // A Project shows up here if the current person created it, is assigned to it directly,
 // or is assigned any child To Do living inside it — matching how "who can see a Project"
@@ -13163,7 +14132,9 @@ function renderNewTodoModal(){
       </div>
       <div class="field autocomplete-box">
         <label>Status</label>
-        <select id="ntStatus">${STATUS_PRESETS.map(s=>`<option value="${escapeAttr(s)}" ${(m.status||'Not Started')===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}</select>
+        ${(()=>{ const bb = m.context && m.context.boardId && (db.boards||[]).find(x=>x.id===m.context.boardId); const sc = bb && bdStatusCol(bb);
+          if(sc) return `<select id="ntStatus"><option value=""></option>${(sc.labels||[]).filter(l=>!l.meaning).map(l=>`<option value="${escapeAttr(l.label)}" ${m.status===l.label?'selected':''}>${escapeHtml(l.label)}</option>`).join('')}</select>`;
+          return `<select id="ntStatus">${STATUS_PRESETS.map(s=>`<option value="${escapeAttr(s)}" ${(m.status||'Not Started')===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}</select>`; })()}
       </div>
       <div class="field">
         <label>Due date</label>
@@ -13199,6 +14170,7 @@ function renderNewTodoModal(){
               <input data-ntchecklistitemtext="${item.id}" value="${escapeAttr(item.text)}" placeholder="Item ${idx+1}" style="flex:1 1 160px;min-width:120px;font-size:13.5px;">
               <input type="date" data-ntchecklistitemdue="${item.id}" value="${item.dueDate?toLocalDateStr(item.dueDate):''}" title="Start date" style="flex:1 1 130px;min-width:110px;font-size:12.5px;color:var(--ink-soft);">
               <input type="date" data-ntchecklistitemdue2="${item.id}" value="${item.dueDate2?toLocalDateStr(item.dueDate2):''}" title="Due date" style="flex:1 1 130px;min-width:110px;font-size:12.5px;color:var(--ink-soft);">
+              <input type="date" data-ntchecklistitemcompleted="${item.id}" value="${escapeAttr(item.completedAt||'')}" title="Completed date — fills in when checked" style="flex:1 1 130px;min-width:110px;font-size:12.5px;color:var(--ink-soft);">
               <button class="row-trash" data-ntremoveitem="${item.id}" style="opacity:.5;flex:none;">✕</button>
             </div>`).join('')}
         </div>
@@ -13228,7 +14200,7 @@ function renderNewTodoModal(){
     m.type=b.dataset.settype;
     if((m.type==='checklist' || m.type==='project') && !(m.checklistItems && m.checklistItems.length)){
       m.checklistItems = [];
-      for(let i=0;i<5;i++) m.checklistItems.push({id:crypto.randomUUID(), text:'', done:false});
+      for(let i=0;i<5;i++) m.checklistItems.push({id:crypto.randomUUID(), text:'', done:false, dueDate:todayDate()});
     }
     renderPreservingScroll('.modal-body');
   });
@@ -13245,7 +14217,7 @@ function renderNewTodoModal(){
   overlay.querySelectorAll('[data-action="closeNewTodo"]').forEach(btn=>btn.onclick=()=>{ state.newTodoModal=null; render(); });
   overlay.querySelectorAll('[data-action="addNtChecklistItem"]').forEach(btn=>btn.onclick=()=>{
     if(!m.checklistItems) m.checklistItems=[];
-    const newItem = {id:crypto.randomUUID(), text:'', done:false};
+    const newItem = {id:crypto.randomUUID(), text:'', done:false, dueDate:todayDate()};
     m.checklistItems.push(newItem);
     renderPreservingScroll('.modal-body');
     const els = document.querySelectorAll(`[data-ntchecklistitemtext="${newItem.id}"]`);
@@ -13258,7 +14230,19 @@ function renderNewTodoModal(){
   });
   overlay.querySelectorAll('[data-ntcheckitem]').forEach(el=>el.onchange=()=>{
     const item = (m.checklistItems||[]).find(i=>i.id===el.dataset.ntcheckitem);
-    if(item){ item.done = el.checked; item.completedAt = el.checked ? toLocalDateStr(todayDate()) : null; }
+    if(item){
+      item.done = el.checked;
+      item.completedAt = el.checked ? (item.completedAt || toLocalDateStr(todayDate())) : null;
+      // show it right away — this modal doesn't re-render on a checkbox click
+      const cEl = overlay.querySelector(`[data-ntchecklistitemcompleted="${item.id}"]`); if(cEl) cEl.value = item.completedAt || '';
+    }
+  });
+  overlay.querySelectorAll('[data-ntchecklistitemcompleted]').forEach(el=>el.onchange=()=>{
+    const item = (m.checklistItems||[]).find(i=>i.id===el.dataset.ntchecklistitemcompleted);
+    if(item){
+      item.completedAt = el.value || null; item.done = !!el.value;
+      const cb = overlay.querySelector(`[data-ntcheckitem="${item.id}"]`); if(cb) cb.checked = item.done;
+    }
   });
   overlay.querySelectorAll('[data-ntchecklistitemdue]').forEach(el=>el.onchange=()=>{
     const item = (m.checklistItems||[]).find(i=>i.id===el.dataset.ntchecklistitemdue);
@@ -13308,6 +14292,14 @@ function renderNewTodoModal(){
       checklistItems: m.checklistItems || [],
       listId: ctx.listId||null, clientId: ctx.clientId||null, dealId: ctx.dealId||null, entryId: ctx.entryId||null, projectId: ctx.projectId||null
     };
+    // Created from a board (board "+ New Project", or + → New Project → pick a board):
+    // it lands on that board with Start = today, Office = Phoenix, next in its group.
+    const ctxBoard = ctx.boardId && m.type==='project' && (db.boards||[]).find(b=>b.id===ctx.boardId);
+    if(ctxBoard){
+      Object.assign(newTd, {boardId:ctxBoard.id, groupId: ctx.groupId || (ctxBoard.groups[0]&&ctxBoard.groups[0].id), startDate: todayDate(), office:'Phoenix', fieldValues:{}, extraFields:[], requesterId:null, createdAt:new Date()});
+      newTd.sortOrder = bdNextSortOrder(ctxBoard, newTd.groupId);
+      if(newTd.status==='Not Started') newTd.status='';
+    }
     db.todos.push(newTd);
     state.newTodoModal=null;
     // A "+ To-Do" promoted from a Convention/Market Trip checklist line (see
