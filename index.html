@@ -595,7 +595,9 @@
   .bd-subtable{border-collapse:separate;border-spacing:0;font-size:12.5px;table-layout:fixed;border-left:3px solid #C4C4C4;}
   .bd-subtable .bd-row td{height:32px;}
   .bd-subtable .bd-status,.bd-subtable .bd-filecell,.bd-subtable .bd-person,.bd-subtable .bd-in{height:32px;}
-  .bd-sub-name-th,.bd-sub-name-td{width:240px;min-width:240px;text-align:left;}
+  .bd-sub-name-th,.bd-sub-name-td{width:260px;min-width:260px;text-align:left;}
+  .bd-todo-done .bd-name{text-decoration:line-through;color:var(--ink-soft);}
+  .bd-todo-done td{opacity:.75;}
   .modal-foot{padding:12px 20px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end;}
 
   .contact-card{
@@ -3630,6 +3632,16 @@ function bdDefaultSubColumns(){
     {id:'s_text', name:'Text', type:'text', width:200},
   ];
 }
+// A Project's To-Dos, shown as rows under it on the board (▸). They are REAL To-Dos
+// (todos.project_id = the Project) — same ones as in the Project window and My To-Do's.
+const BD_TODO_STATUS_COLORS = {'Not Started':'#C4C4C4','In Progress':'#FDAB3D','Awaiting Others':'#579BFC','Need Feedback':'#A25DDC'};
+const BD_TODO_COLS = [
+  {id:'td_person', name:'Person', type:'person', builtin:'assignedTo', width:110},
+  {id:'td_status', name:'Status', type:'status', builtin:'status', width:150, labels: STATUS_PRESETS.map(s=>({id:'ts_'+s.replace(/\W+/g,'_'), label:s, color:BD_TODO_STATUS_COLORS[s]||'#C4C4C4'}))},
+  {id:'td_due', name:'Due', type:'date', builtin:'dueDate', width:130},
+];
+function bdTodoCol(id){ return BD_TODO_COLS.find(c=>c.id===id); }
+function projectTodos(pid){ return db.todos.filter(t=>t.projectId===pid && t.type!=='project').filter(t=>typeof visibleTodo!=='function' || visibleTodo(t)); }
 function bdSubCols(b){ if(!b.subColumns || !b.subColumns.length) b.subColumns = bdDefaultSubColumns(); return b.subColumns; }
 function bdDefaultGroups(){
   // One plain starter group. (Was Collin's "To Dos" + "Large Projects" — the "To Dos"
@@ -3986,11 +3998,11 @@ function bdBoardHtml(b){
         <tbody data-bd="tbody" data-bdg="${g.id}">
           ${rows.map(t=>{
             const cc = (db.projectComments||[]).filter(c=>c.projectId===t.id).length;
-            const subs = subitemsOf(t.id);
+            const kids = projectTodos(t.id); const openKids = kids.filter(x=>!x.completed).length;
             const open = !!state.bdExpanded[t.id];
             return `<tr class="bd-row" data-bdrow="${t.id}" data-bdg="${g.id}">
               <td class="bd-grip" draggable="${sorted?'false':'true'}" data-bd="rowgrip" data-bdt="${t.id}" title="${sorted?'Clear the sort to drag':'Drag to move'}">⋮⋮</td>
-              <td class="bd-title-td" draggable="${sorted?'false':'true'}" data-bd="rowgrip" data-bdt="${t.id}"><div class="bd-title-inner"><span class="bd-subcaret" data-bd="toggleSubs" data-bdt="${t.id}" title="${open?'Hide':'Show'} subitems">${open?'▾':'▸'}</span><span class="bd-name" data-bd="open" data-bdt="${t.id}">${escapeHtml(t.title)}</span>${subs.length?`<span class="bd-subcount" data-bd="toggleSubs" data-bdt="${t.id}" title="Subitems">${subs.length}</span>`:''}
+              <td class="bd-title-td" draggable="${sorted?'false':'true'}" data-bd="rowgrip" data-bdt="${t.id}"><div class="bd-title-inner"><span class="bd-subcaret" data-bd="toggleSubs" data-bdt="${t.id}" title="${open?'Hide':'Show'} this Project's To-Dos">${open?'▾':'▸'}</span><span class="bd-name" data-bd="open" data-bdt="${t.id}">${escapeHtml(t.title)}</span>${kids.length?`<span class="bd-subcount" data-bd="toggleSubs" data-bdt="${t.id}" title="${openKids} open To-Do${openKids===1?'':'s'} of ${kids.length}">${openKids}/${kids.length}</span>`:''}
                 <span class="bd-bubble" data-bd="open" data-bdt="${t.id}" data-focus="comments" title="Comments">💬${cc?`<b>${cc}</b>`:''}</span></div></td>
               ${cols.map(c=>`<td class="bd-td bd-td-${c.type}">${bdCellHtml(b,t,c)}</td>`).join('')}
               <td></td>
@@ -4006,18 +4018,19 @@ function bdBoardHtml(b){
     <button class="btn secondary sm" data-bd="addGroup" style="margin:6px 0 20px;">+ Add new group</button></div>`;
 }
 function bdSubitemsHtml(b, t, colCount){
-  const scols = bdSubCols(b);
-  const subs = subitemsOf(t.id);
+  const kids = projectTodos(t.id).sort((a,c)=>(!!a.completed - !!c.completed) || ((a.dueDate||8.64e15) - (c.dueDate||8.64e15)));
   return `<tr class="bd-subwrap"><td class="bd-grip"></td><td colspan="${colCount+2}" class="bd-subcell">
     <table class="bd-subtable"><thead><tr>
-      <th class="bd-th bd-sub-name-th">Subitem</th>
-      ${scols.map(c=>`<th class="bd-th" style="width:${c.width||130}px;min-width:${c.width||130}px;" data-bd="subColhead" data-bdc="${c.id}" data-bdt="${t.id}"><span class="bd-th-name">${escapeHtml(c.name)}</span></th>`).join('')}
-      <th class="bd-th bd-add-th"><button data-bd="addSubCol" data-bdt="${t.id}" title="Add a subitem column">+</button></th>
+      <th class="bd-th" style="width:34px;min-width:34px;"></th>
+      <th class="bd-th bd-sub-name-th">To-Do</th>
+      ${BD_TODO_COLS.map(c=>`<th class="bd-th" style="width:${c.width}px;min-width:${c.width}px;">${escapeHtml(c.name)}</th>`).join('')}
     </tr></thead><tbody>
-      ${subs.map(x=>`<tr class="bd-row"><td class="bd-sub-name-td"><input class="bd-in" data-bd="subName" data-bds="${x.id}" value="${escapeAttr(x.name)}"></td>
-        ${scols.map(c=>`<td class="bd-td bd-td-${c.type}">${bdCellHtml(b,x,c,'cell',true)}</td>`).join('')}
-        <td style="text-align:center;"><button class="row-trash" data-bd="subDelete" data-bds="${x.id}" title="Delete subitem">✕</button></td></tr>`).join('')}
-      <tr class="bd-addrow"><td colspan="${scols.length+2}"><input class="bd-in" data-bd="addSub" data-bdt="${t.id}" placeholder="+ Add subitem"></td></tr>
+      ${kids.map(x=>`<tr class="bd-row ${x.completed?'bd-todo-done':''}">
+        <td style="text-align:center;"><input type="checkbox" data-bd="todoDone" data-bdt="${x.id}" ${x.completed?'checked':''} style="width:auto;" title="${x.completed?'Mark not done':'Mark done'}"></td>
+        <td class="bd-sub-name-td"><span class="bd-name" data-bd="open" data-bdt="${x.id}" style="padding:0 8px;">${escapeHtml(x.title)}</span></td>
+        ${BD_TODO_COLS.map(c=>`<td class="bd-td bd-td-${c.type}">${bdCellHtml(b,x,c)}</td>`).join('')}
+      </tr>`).join('')}
+      <tr class="bd-addrow"><td></td><td colspan="${BD_TODO_COLS.length+1}"><input class="bd-in" data-bd="addTodo" data-bdt="${t.id}" placeholder="+ Add To-Do"></td></tr>
     </tbody></table></td></tr>`;
 }
 function bdSummaryHtml(col, rows){
@@ -4053,7 +4066,7 @@ function bdArchiveHtml(b){
 }
 
 /* ---------- popovers (status palette, column menus, etc.) ---------- */
-function bdPopCol(b, p){ return (p.sub ? bdSubCols(b) : b.columns).find(c=>c.id===p.colId); }
+function bdPopCol(b, p){ return bdTodoCol(p.colId) || (p.sub ? bdSubCols(b) : b.columns).find(c=>c.id===p.colId); }
 function bdPopTarget(p){ bdEnsure(); return p.subId ? db.subitems.find(x=>x.id===p.subId) : db.todos.find(x=>x.id===p.todoId); }
 function bdSaveTarget(x){ if(x && x.projectId && !('type' in x)) supaUpdateSubitem(x); else if(x) supaUpdateTodo(x); }
 function bdFileOwnerId(x){ return (x && x.projectId && !('type' in x)) ? x.projectId : x.id; }
@@ -4087,7 +4100,7 @@ function renderBoardPopover(){
         <div class="bd-pal-item" style="background:#C4C4C4;" data-bd="pickLabel" data-lab="" title="Clear"></div>
         ${(col.labels||[]).map(l=>`<div class="bd-pal-item" style="background:${l.color};" data-bd="pickLabel" data-lab="${l.id}">${escapeHtml(l.label)}</div>`).join('')}
       </div>
-      <div class="bd-pop-link" data-bd="editLabels">✏️ Edit Labels</div>`;
+      ${bdTodoCol(p.colId) ? '' : `<div class="bd-pop-link" data-bd="editLabels">✏️ Edit Labels</div>`}`;
     }
   } else if(p.kind==='person'){
     const col = bdPopCol(b, p); const t = bdPopTarget(p); if(!col||!t){ state.bdPop=null; return; }
@@ -4276,6 +4289,11 @@ function bdFind(el){
     return {b:sb, t:sub, col: (sb && el.dataset.bdc) ? bdSubCols(sb).find(c=>c.id===el.dataset.bdc) : null, isSub:true};
   }
   const t = el.dataset.bdt ? db.todos.find(x=>x.id===el.dataset.bdt) : null;
+  if(t && el.dataset.bdc && bdTodoCol(el.dataset.bdc)){
+    const parent = db.todos.find(x=>x.id===t.projectId);
+    const pb = (parent && db.boards.find(x=>x.id===parent.boardId)) || activeBoard();
+    return {b:pb, t, col:bdTodoCol(el.dataset.bdc), isTodo:true};
+  }
   const b = (t && t.boardId && db.boards.find(x=>x.id===t.boardId)) || activeBoard() || (state.bdPop && db.boards.find(x=>x.id===state.bdPop.boardId));
   const col = (b && el.dataset.bdc) ? bdCol(b, el.dataset.bdc) : null;
   return {b, t, col};
@@ -4295,6 +4313,7 @@ document.addEventListener('change', ev=>{
   const el = ev.target.closest && ev.target.closest('[data-bd]'); if(!el) return;
   const k = el.dataset.bd;
   if(k==='set' || k==='check'){ bdCommitCell(el); return; }
+  if(k==='todoDone'){ toggleComplete(el.dataset.bdt); renderPreservingScroll('.content'); return; }
   if(k==='subName'){ const x = (db.subitems||[]).find(y=>y.id===el.dataset.bds); if(x && x.name!==el.value.trim()){ x.name = el.value.trim(); supaUpdateSubitem(x); } return; }
   if(k==='fileInput'){ const p0 = state.bdPop; const pb0 = p0 && db.boards.find(x=>x.id===p0.boardId); if(pb0 && el.files.length) bdAddFilesToCell(pb0, p0, el.files); return; }
   const b = activeBoard();
@@ -4323,6 +4342,15 @@ document.addEventListener('keydown', ev=>{
     state.bdRefocusGroup = el.dataset.bdg;
     renderPreservingScroll('.content');
     const again = document.querySelector(`[data-bd="addItem"][data-bdg="${state.bdRefocusGroup}"]`); if(again) again.focus();
+  } else if(el.dataset.bd==='addTodo' && ev.key==='Enter'){
+    const title = el.value.trim(); if(!title) return;
+    const proj = db.todos.find(x=>x.id===el.dataset.bdt); if(!proj) return;
+    const td = {id:crypto.randomUUID(), title, category:'', status:'Not Started', dueDate:null, assignedTo:state.currentUser.id, createdBy:state.currentUser.id,
+      type:'task', private:false, completed:false, notes:'', isNew:false, attachments:[], checklistItems:[],
+      listId:proj.listId||null, clientId:proj.clientId||null, dealId:proj.dealId||null, entryId:proj.entryId||null, projectId:proj.id, createdAt:new Date()};
+    db.todos.push(td); supaCreateTodo(td);
+    renderPreservingScroll('.content');
+    const again = document.querySelector(`[data-bd="addTodo"][data-bdt="${proj.id}"]`); if(again) again.focus();
   } else if(el.dataset.bd==='addSub' && ev.key==='Enter'){
     const name = el.value.trim(); if(!name) return;
     bdEnsure(); const pid = el.dataset.bdt;
@@ -4349,7 +4377,7 @@ document.addEventListener('click', ev=>{
   const el = ev.target.closest && ev.target.closest('[data-bd]'); if(!el) return;
   const k = el.dataset.bd;
   if(k==='navSearch' || k==='navResize' || k==='popSearch') return;
-  if(['set','check','search','filterPerson','filterStatus','addItem','labName','labMeaning','rowgrip','colresize','subName','addSub','fileInput'].includes(k)) return;
+  if(['set','check','search','filterPerson','filterStatus','addItem','labName','labMeaning','rowgrip','colresize','subName','addSub','fileInput','addTodo','todoDone'].includes(k)) return;
   if(k==='toggleHide') return;
   const b = activeBoard();
   const pop = state.bdPop;
