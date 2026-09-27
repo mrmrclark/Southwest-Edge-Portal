@@ -465,6 +465,8 @@
   .bd-nav-ic{flex:none;font-size:13px;}
   .bd-nav-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .bd-nav-count{font-size:10.5px;background:#E6E9EF;color:var(--ink-soft);border-radius:8px;padding:1px 6px;font-weight:600;}
+  .bd-nav-tag{font-size:10px;font-weight:600;padding:1px 6px;border-radius:8px;background:#E6F7EE;color:#037F4C;flex:none;}
+  .bd-nav-tag.mine{background:#EEF0F4;color:var(--ink-soft);}
   .bd-nav-add{color:var(--ink-soft);font-size:12.5px;}
   .bd-template-banner{background:#F3ECFD;border:1px solid #DCCBF7;color:#5B3B8C;border-radius:10px;padding:8px 12px;margin-bottom:10px;font-size:13px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
   .bd-template-banner .btn{margin-left:auto;}
@@ -3722,7 +3724,11 @@ function visibleBoards(){
   bdEnsure();
   const me = state.currentUser.id;
   const isAdmin = state.currentUser.role==='Admin';
-  return db.boards.filter(b=>b.kind==='open' && (b.isTemplate || isAdmin || b.createdBy===me || (b.userIds||[]).includes(me)))
+  // Templates: shared ones (visibility 'company') for everyone; personal ones only for their
+  // creator + people added — even Admins don't see others' personal templates (no clutter).
+  return db.boards.filter(b=>b.kind==='open' && (b.isTemplate
+      ? (b.visibility==='company' || b.createdBy===me || (b.userIds||[]).includes(me))
+      : (isAdmin || b.createdBy===me || (b.userIds||[]).includes(me))))
     .sort((a,b)=>(a.sortOrder-b.sortOrder) || a.name.localeCompare(b.name));
 }
 // Templates (Monday-style): any board can be flagged a Template → it's shown to everyone
@@ -3914,7 +3920,10 @@ function bdNavHtml(boards, b, legacy){
     <div class="bd-nav-head"><span>Projects</span>
       <span style="display:flex;gap:4px;"><button class="bd-nav-btn" data-bd="newBoard" title="New board">+</button><button class="bd-nav-btn" data-bd="navToggle" title="Hide this panel">«</button></span></div>
     <input class="bd-nav-search" data-bd="navSearch" placeholder="🔍 Search boards" value="${escapeAttr(state.bdNavSearch||'')}">
-    ${folder('templates', 'Templates', tShown.map(x=>`<div class="bd-nav-item ${b&&x.id===b.id?'active':''}" data-bd="tab" data-board="${x.id}" title="${escapeAttr(x.name)}"><span class="bd-nav-ic">🧩</span><span class="bd-nav-name">${escapeHtml(x.name)}</span></div>`).join('') + `<div class="bd-nav-item bd-nav-add" data-bd="newTemplate"><span class="bd-nav-ic">＋</span><span class="bd-nav-name">New template</span></div>`, temps.length)}
+    ${(()=>{ const item = x=>`<div class="bd-nav-item ${b&&x.id===b.id?'active':''}" data-bd="tab" data-board="${x.id}" title="${escapeAttr(x.name)}"><span class="bd-nav-ic">🧩</span><span class="bd-nav-name">${escapeHtml(x.name)}</span></div>`;
+      const office = tShown.filter(x=>x.visibility==='company'), mineT = tShown.filter(x=>x.visibility!=='company');
+      return folder('officeTemplates', 'Office Templates', office.map(item).join('') || '<div class="tiny bd-nav-soon">None yet.</div>', temps.filter(x=>x.visibility==='company').length)
+        + folder('myTemplates', 'My Templates', mineT.map(item).join('') + `<div class="bd-nav-item bd-nav-add" data-bd="newTemplate"><span class="bd-nav-ic">＋</span><span class="bd-nav-name">New template</span></div>`, temps.filter(x=>x.visibility!=='company').length); })()}
     ${folder('boards', 'My Boards', boardItems, mine.length)}
     ${folder('clients', 'Clients', `<div class="tiny bd-nav-soon">Client Projects will live here (Phase 4).</div>`)}
     ${folder('listings', 'Listings', `<div class="tiny bd-nav-soon">Listing Projects will live here (Phase 4).</div>`)}
@@ -4193,8 +4202,12 @@ function renderBoardModal(){
           ${copyable.some(x=>x.isTemplate) ? `<optgroup label="Templates">${copyable.filter(x=>x.isTemplate).map(x=>`<option value="${x.id}" ${m.fromId===x.id?'selected':''}>🧩 ${escapeHtml(x.name)}</option>`).join('')}</optgroup>` : ''}
           ${copyable.some(x=>!x.isTemplate) ? `<optgroup label="Copy one of my boards">${copyable.filter(x=>!x.isTemplate).map(x=>`<option value="${x.id}" ${m.fromId===x.id?'selected':''}>${escapeHtml(x.name)}</option>`).join('')}</optgroup>` : ''}</select>
         <div class="tiny" style="color:var(--ink-soft);margin-top:4px;">Copying brings over that board's columns, labels and groups — not its Projects.</div></div>
-      <div class="tiny" style="color:var(--ink-soft);">${m.asTemplate ? 'Templates are visible to everyone so anyone can start a board from them.' : 'Only you (and Admins) can see a new board until you add Users to it — same as a Client or Listing.'}</div>` : ''}
-      ${m.kind==='settings' && canManage ? `<label style="display:flex;gap:8px;align-items:center;margin-top:10px;font-weight:400;"><input type="checkbox" id="bmIsTemplate" style="width:auto;" ${b.isTemplate?'checked':''}> 🧩 This board is a <b>Template</b> — everyone can see it and start new boards from it</label>` : ''}
+      ${m.asTemplate ? `<div class="field"><label>Who can use this template?</label>
+        <label style="display:flex;gap:8px;align-items:center;margin:4px 0;font-weight:400;"><input type="radio" name="bmShare" value="private" style="width:auto;" checked> <b>My Templates</b> — just me (plus anyone I add under Users)</label>
+        <label style="display:flex;gap:8px;align-items:center;margin:4px 0;font-weight:400;"><input type="radio" name="bmShare" value="company" style="width:auto;"> <b>Office Templates</b> — everyone at Edge</label></div>`
+        : `<div class="tiny" style="color:var(--ink-soft);">Only you (and Admins) can see a new board until you add Users to it — same as a Client or Listing.</div>`}` : ''}
+      ${m.kind==='settings' && canManage ? `<label style="display:flex;gap:8px;align-items:center;margin-top:10px;font-weight:400;"><input type="checkbox" id="bmIsTemplate" style="width:auto;" ${b.isTemplate?'checked':''}> 🧩 This board is a <b>Template</b> (new boards can start from it)</label>
+        <label style="display:flex;gap:8px;align-items:center;margin:6px 0 0 24px;font-weight:400;"><input type="checkbox" id="bmShared" style="width:auto;" ${b.visibility==='company'?'checked':''}> Office Template — everyone at Edge (otherwise it's in My Templates)</label>` : ''}
       ${m.kind==='settings' && canManage ? `<div style="margin-top:20px;padding-top:14px;border-top:1px solid var(--line-soft);"><button class="btn danger sm" data-bm="delete">🗑️ Delete this board</button>
         <div class="tiny" style="color:var(--ink-soft);margin-top:6px;">Its Projects aren't deleted — they move to "Projects not on a board".</div></div>` : ''}`;
     foot = `<button class="btn secondary" data-bm="close">Cancel</button><button class="btn" data-bm="save">${m.kind==='new'?'Create Board':'Save'}</button>`;
@@ -4224,12 +4237,13 @@ function renderBoardModal(){
       const fromId = (overlay.querySelector('#bmFrom')||{}).value;
       const src = fromId && db.boards.find(x=>x.id===fromId);
       const clone = o=>JSON.parse(JSON.stringify(o));
-      const nb = {id:crypto.randomUUID(), name, kind:'open', clientId:null, columns: src ? clone(src.columns) : bdDefaultColumns(), groups: src ? clone(src.groups) : bdDefaultGroups(), subColumns: src ? clone(src.subColumns||[]) : [], visibility: m.asTemplate?'company':'private', isTemplate: !!m.asTemplate, defaultDueDays:0, createdBy:state.currentUser.id, sortOrder:Date.now()/1e12, userIds:[]};
+      const nb = {id:crypto.randomUUID(), name, kind:'open', clientId:null, columns: src ? clone(src.columns) : bdDefaultColumns(), groups: src ? clone(src.groups) : bdDefaultGroups(), subColumns: src ? clone(src.subColumns||[]) : [], visibility: (m.asTemplate && (overlay.querySelector('input[name="bmShare"]:checked')||{}).value==='company') ? 'company' : 'private', isTemplate: !!m.asTemplate, defaultDueDays:0, createdBy:state.currentUser.id, sortOrder:Date.now()/1e12, userIds:[]};
       db.boards.push(nb); setActiveBoard(nb.id); state.boardModal=null; render();
       await supaCreateBoard(nb); flashToast(`Board "${name}" created.`);
     } else {
       b.name=name;
-      const tEl = overlay.querySelector('#bmIsTemplate'); if(tEl){ b.isTemplate = tEl.checked; b.visibility = tEl.checked ? 'company' : 'private'; }
+      const tEl = overlay.querySelector('#bmIsTemplate'); const shEl = overlay.querySelector('#bmShared');
+      if(tEl){ b.isTemplate = tEl.checked; b.visibility = (tEl.checked && shEl && shEl.checked) ? 'company' : 'private'; }
       supaSaveBoard(b); state.boardModal=null; render();
     }
   });
