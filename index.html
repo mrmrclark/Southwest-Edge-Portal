@@ -9588,7 +9588,7 @@ function printClientMap(c){
 // public tile services, click a parcel for APN/owner) | LandVision (now "LightBox
 // Vision") — opens its login in a new tab until API access is approved.
 const MCA_GIS = 'https://gis.mcassessor.maricopa.gov/arcgis/rest/services';
-const LANDVISION_LOGIN_URL = 'https://www.lightboxre.com/login/';
+const LANDVISION_LOGIN_URL = 'https://login-spatialstream.prod.lightboxre.com/MemberPages/Login.aspx?ReturnUrl=%2fmemberpages%2fdefault.aspx%3fma%3dEDGE&ma=EDGE'; // Edge's LandVision account login
 function getBasemapPref(){ try{ return localStorage.getItem('edgeBasemap') || 'google'; }catch(e){ return 'google'; } }
 function setBasemapPref(v){ try{ localStorage.setItem('edgeBasemap', v); }catch(e){} }
 function mcaTileLayer(service, name){
