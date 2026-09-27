@@ -9582,6 +9582,79 @@ function printClientMap(c){
   img.onerror = ()=>{ flashToast('Could not load the map image for printing.'); cleanup(); };
   img.src = imgUrl;
 }
+
+// ---- Phase 6 (2026-09-26): Basemap picker on the Client/Listing map ----
+// Google (default) | Maricopa Co. Assessor (parcel lines + labels from the Assessor's
+// public tile services, click a parcel for APN/owner) | LandVision (now "LightBox
+// Vision") — opens its login in a new tab until API access is approved.
+const MCA_GIS = 'https://gis.mcassessor.maricopa.gov/arcgis/rest/services';
+const LANDVISION_LOGIN_URL = 'https://www.lightboxre.com/login/';
+function getBasemapPref(){ try{ return localStorage.getItem('edgeBasemap') || 'google'; }catch(e){ return 'google'; } }
+function setBasemapPref(v){ try{ localStorage.setItem('edgeBasemap', v); }catch(e){} }
+function mcaTileLayer(service, name){
+  return new google.maps.ImageMapType({
+    name, tileSize: new google.maps.Size(256,256), minZoom: 0, maxZoom: 22, opacity: 1,
+    getTileUrl: (c, z)=>{ if(z < 14) return null; const n = 1<<z; const x = ((c.x % n) + n) % n; return `${MCA_GIS}/${service}/MapServer/tile/${z}/${c.y}/${x}`; }
+  });
+}
+function applyBasemap(map, which, quiet){
+  const ov = map.overlayMapTypes;
+  for(let i=ov.getLength()-1; i>=0; i--){ const t = ov.getAt(i); if(t && t.__mca) ov.removeAt(i); }
+  map.__basemap = which;
+  if(which==='mca'){
+    const outline = mcaTileLayer('ParcelOutline','Parcels'); outline.__mca = true;
+    const labels = mcaTileLayer('ParcelLabel','Parcel labels'); labels.__mca = true;
+    ov.push(outline); ov.push(labels);
+    if(!quiet && map.getZoom() < 15){ map.setZoom(16); flashToast('Zoomed in — parcel lines show from street level in.'); }
+  }
+}
+async function mcaIdentifyParcel(map, latLng, infoWindow){
+  const url = `${MCA_GIS}/Parcels/MapServer/0/query?f=json&returnGeometry=false&outFields=APN_DASH,APN,OWNER_NAME,PHYSICAL_ADDRESS,PHYSICAL_CITY,LAND_SIZE,CITY_ZONING,JURISDICTION,SALE_DATE,SALE_PRICE&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&geometry=${latLng.lng()},${latLng.lat()}`;
+  try{
+    const r = await fetch(url); const j = await r.json();
+    const a = j && j.features && j.features[0] && j.features[0].attributes;
+    if(!a){ infoWindow.setContent('<div style="font-size:13px;">No parcel found here.</div>'); infoWindow.setPosition(latLng); infoWindow.open(map); return; }
+    const apn = a.APN_DASH || a.APN || '';
+    const sqft = a.LAND_SIZE ? Number(a.LAND_SIZE) : 0;
+    const size = sqft ? `${sqft.toLocaleString()} SF (${(sqft/43560).toFixed(2)} AC)` : '';
+    const sale = a.SALE_DATE ? `${escapeHtml(String(a.SALE_DATE))}${a.SALE_PRICE ? ' · $'+Number(a.SALE_PRICE).toLocaleString() : ''}` : '';
+    const row = (k,v)=> v ? `<div><span style="color:#666;">${k}:</span> ${v}</div>` : '';
+    infoWindow.setContent(`<div style="font-size:13px;line-height:1.5;max-width:280px;">
+      <b>APN ${escapeHtml(apn)}</b>
+      ${row('Owner', escapeHtml(a.OWNER_NAME||''))}
+      ${row('Address', escapeHtml([a.PHYSICAL_ADDRESS, a.PHYSICAL_CITY].filter(Boolean).join(', ')))}
+      ${row('Land', size)}
+      ${row('Zoning', escapeHtml([a.CITY_ZONING, a.JURISDICTION].filter(Boolean).join(' · ')))}
+      ${row('Last sale', sale)}
+      <a href="https://mcassessor.maricopa.gov/mcs/?q=${encodeURIComponent((a.APN||apn).replace(/-/g,''))}&mod=pd" target="_blank" rel="noopener" style="display:inline-block;margin-top:6px;color:var(--edge);font-weight:600;">Open on Assessor site ↗</a>
+    </div>`);
+    infoWindow.setPosition(latLng); infoWindow.open(map);
+  }catch(e){ console.error('Parcel lookup failed', e); flashToast('Could not look up that parcel right now.'); }
+}
+function addBasemapControl(map, infoWindow){
+  const box = document.createElement('div');
+  box.className = 'no-print';
+  box.style.cssText = 'margin:10px;background:#fff;border-radius:6px;box-shadow:0 1px 4px rgba(0,0,0,.3);padding:6px 8px;font:13px sans-serif;display:flex;align-items:center;gap:6px;';
+  box.innerHTML = `<span style="font-weight:600;color:#333;">Basemap</span>
+    <select data-basemap style="font-size:13px;padding:3px 4px;border:1px solid #ccc;border-radius:4px;">
+      <option value="google">Google</option>
+      <option value="mca">Maricopa Co. Assessor</option>
+      <option value="landvision">LandVision ↗</option>
+    </select>`;
+  const sel = box.querySelector('select');
+  sel.value = map.__basemap || 'google';
+  sel.onchange = ()=>{
+    if(sel.value==='landvision'){
+      window.open(LANDVISION_LOGIN_URL, '_blank', 'noopener');
+      flashToast('LandVision opened in a new tab. It will show inside the map once their API access is approved.');
+      sel.value = map.__basemap || 'google';
+      return;
+    }
+    applyBasemap(map, sel.value); setBasemapPref(sel.value);
+  };
+  map.controls[google.maps.ControlPosition.RIGHT_TOP].push(box);
+  map.addListener('click', (ev)=>{ if(map.__basemap==='mca' && !state.placingDealId) mcaIdentifyParcel(map, ev.latLng, infoWindow); });
+}
 function renderClientMapModal(){
   const m = state.clientMapModal;
   const l = db.lists.find(x=>x.id===m.listId);
@@ -9655,6 +9728,8 @@ function renderClientMapModal(){
       saveMapTypePreference(map.getMapTypeId());
     });
     const infoWindow = new google.maps.InfoWindow();
+    applyBasemap(map, getBasemapPref()==='mca' ? 'mca' : 'google', true);
+    addBasemapControl(map, infoWindow);
     const items = (c.deals||[]).filter(d=>d.stage!=='dead' && !(d.commission1Paid && d.commission2Paid)).map(d=>({
       kind:'deal', listId:l.id, clientId:c.id, dealId:d.id, rec:d,
       addressText: stripCornerSuffix(d.building) || extractAddressFromName(d.name),
