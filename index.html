@@ -9626,33 +9626,37 @@ async function mcaIdentifyParcel(map, latLng, infoWindow){
       ${row('Land', size)}
       ${row('Zoning', escapeHtml([a.CITY_ZONING, a.JURISDICTION].filter(Boolean).join(' · ')))}
       ${row('Last sale', sale)}
-      <a href="https://mcassessor.maricopa.gov/mcs/?q=${encodeURIComponent((a.APN||apn).replace(/-/g,''))}&mod=pd" target="_blank" rel="noopener" style="display:inline-block;margin-top:6px;color:var(--edge);font-weight:600;">Open on Assessor site ↗</a>
+      <div style="margin-top:6px;display:flex;gap:12px;flex-wrap:wrap;">
+        <a href="https://maps.mcassessor.maricopa.gov/?esearch=${encodeURIComponent(apn)}&slayer=0&exprnum=0" target="_blank" rel="noopener" style="color:var(--edge);font-weight:600;">Assessor Map ↗</a>
+        <a href="https://mcassessor.maricopa.gov/mcs/?q=${encodeURIComponent((a.APN||apn).replace(/-/g,''))}&mod=pd" target="_blank" rel="noopener" style="color:var(--edge);font-weight:600;">Parcel Record ↗</a>
+      </div>
     </div>`);
     infoWindow.setPosition(latLng); infoWindow.open(map);
   }catch(e){ console.error('Parcel lookup failed', e); flashToast('Could not look up that parcel right now.'); }
 }
-function addBasemapControl(map, infoWindow){
-  const box = document.createElement('div');
-  box.className = 'no-print';
-  box.style.cssText = 'margin:10px;background:#fff;border-radius:6px;box-shadow:0 1px 4px rgba(0,0,0,.3);padding:6px 8px;font:13px sans-serif;display:flex;align-items:center;gap:6px;';
-  box.innerHTML = `<span style="font-weight:600;color:#333;">Basemap</span>
-    <select data-basemap style="font-size:13px;padding:3px 4px;border:1px solid #ccc;border-radius:4px;">
-      <option value="google">Google</option>
-      <option value="mca">Maricopa Co. Assessor</option>
-      <option value="landvision">LandVision ↗</option>
+function basemapSelectHtml(){
+  const v = getBasemapPref()==='mca' ? 'mca' : 'google';
+  return `<select data-basemap title="Basemap" style="width:auto;flex:none;font-weight:600;font-size:12.5px;padding:5px 6px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink);">
+      <option value="google" ${v==='google'?'selected':''}>Basemap: Google</option>
+      <option value="mca" ${v==='mca'?'selected':''}>Basemap: Maricopa Co. Assessor</option>
+      <option value="landvision">Basemap: LandVision ↗</option>
     </select>`;
-  const sel = box.querySelector('select');
-  sel.value = map.__basemap || 'google';
+}
+function wireBasemapSelect(sel){
+  if(!sel) return;
   sel.onchange = ()=>{
+    const map = state._activeClientMap;
+    const cur = (map && map.__basemap) || (getBasemapPref()==='mca' ? 'mca' : 'google');
     if(sel.value==='landvision'){
       window.open(LANDVISION_LOGIN_URL, '_blank', 'noopener');
       flashToast('LandVision opened in a new tab. It will show inside the map once their API access is approved.');
-      sel.value = map.__basemap || 'google';
-      return;
+      sel.value = cur; return;
     }
-    applyBasemap(map, sel.value); setBasemapPref(sel.value);
+    setBasemapPref(sel.value);
+    if(map) applyBasemap(map, sel.value);
   };
-  map.controls[google.maps.ControlPosition.RIGHT_TOP].push(box);
+}
+function wireParcelClick(map, infoWindow){
   map.addListener('click', (ev)=>{ if(map.__basemap==='mca' && !state.placingDealId) mcaIdentifyParcel(map, ev.latLng, infoWindow); });
 }
 function renderClientMapModal(){
@@ -9669,6 +9673,7 @@ function renderClientMapModal(){
       ${c && !keyNotSet ? `
         <button class="btn secondary sm" data-action="printClientMap" style="margin-left:auto;">🖨️ Print</button>
         <button class="btn secondary sm" data-action="exportClientMapKml">⬇️ Export KML</button>
+        ${basemapSelectHtml()}
       ` : ''}
       <button class="modal-close" data-action="closeClientMap">✕</button>
     </div>
@@ -9691,6 +9696,7 @@ function renderClientMapModal(){
   if(legendEl) wireMapLegendHandlers(legendEl);
   const printBtn = overlay.querySelector('[data-action="printClientMap"]'); if(printBtn) printBtn.onclick=()=>printClientMap(c);
   const exportBtn = overlay.querySelector('[data-action="exportClientMapKml"]'); if(exportBtn) exportBtn.onclick=()=>exportMapAsKml(c);
+  wireBasemapSelect(overlay.querySelector('[data-basemap]'));
   const sideListToggle = overlay.querySelector('#mapSideListToggle'); if(sideListToggle) sideListToggle.onclick=()=>{
     state.mapSideListCollapsed = !state.mapSideListCollapsed;
     const wrapper = document.getElementById('mapSideListWrapper');
@@ -9729,7 +9735,7 @@ function renderClientMapModal(){
     });
     const infoWindow = new google.maps.InfoWindow();
     applyBasemap(map, getBasemapPref()==='mca' ? 'mca' : 'google', true);
-    addBasemapControl(map, infoWindow);
+    wireParcelClick(map, infoWindow);
     const items = (c.deals||[]).filter(d=>d.stage!=='dead' && !(d.commission1Paid && d.commission2Paid)).map(d=>({
       kind:'deal', listId:l.id, clientId:c.id, dealId:d.id, rec:d,
       addressText: stripCornerSuffix(d.building) || extractAddressFromName(d.name),
