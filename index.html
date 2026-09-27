@@ -9640,7 +9640,7 @@ function basemapSelectHtml(){
   return `<select data-basemap title="Basemap" style="width:auto;flex:none;font-weight:600;font-size:12.5px;padding:5px 6px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink);">
       <option value="google" ${v==='google'?'selected':''}>Basemap: Google</option>
       <option value="mca" ${v==='mca'?'selected':''}>Basemap: Maricopa Co. Assessor</option>
-      <option value="landvision">Basemap: LandVision (in Portal)</option>
+      <option value="landvision">LandVision ↗ (opens new tab)</option>
     </select>`;
 }
 
@@ -9680,7 +9680,7 @@ function wireBasemapSelect(sel){
     const map = state._activeClientMap;
     const cur = (map && map.__basemap) || (getBasemapPref()==='mca' ? 'mca' : 'google');
     if(sel.value==='landvision'){
-      openLandVisionWindow();
+      window.open(LANDVISION_LOGIN_URL, '_blank', 'noopener');
       sel.value = cur; return;
     }
     setBasemapPref(sel.value);
