@@ -736,6 +736,7 @@ const EDGE_LOGO_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAARgAAA
 // normal for this specific key type; Google expects it to be visible in page source and
 // restricted by domain, via HTTP referrer restriction in Google Cloud Console, not hidden
 // like the other secrets in this app). Replace once Michael has generated a real key.
+const APP_BUILD = '2026-09-26 auto-update';
 const GOOGLE_MAPS_JS_KEY = 'AIzaSyBMlIjvH2bpZK6mYJeNZSkQvM8TXQkCjDE';
 const CATEGORY_ORANGE_ICONS = ['💲','🏢','🎯','📋','☁️','🔧','✈️','🏛️','💎','📄','⭐','🗂️'];
 
@@ -5749,7 +5750,7 @@ function renderSidebar(){
     </div>` : ''}
     <div class="sidebar-footer">
       <div style="font-size:11px;color:var(--ink-soft);line-height:1.5;">Southwest Edge Portal · prototype build</div>
-      <div style="font-size:10px;color:var(--edge);font-weight:700;margin-top:2px;">Build: 2026-09-26 map-buttons</div>
+      <div style="font-size:10px;color:var(--edge);font-weight:700;margin-top:2px;">Build: ${APP_BUILD}</div>
     </div>
   </div>`;
 }
@@ -16839,6 +16840,40 @@ async function bootOffline(){
     state.screen='login'; render();
   }
 })();
+
+// ---- Auto-update check (9/26): the browser's saved copy of the Portal was showing old
+// versions after uploads. Every load, every 5 minutes and whenever the tab regains focus,
+// quietly fetch the live page from the server (cache-busted) and compare its APP_BUILD.
+// If it differs, show a banner; "Reload now" clears the saved copy and loads the new one.
+async function checkForNewBuild(){
+  try{
+    if(location.protocol==='file:') return;
+    const r = await fetch(location.pathname + '?buildcheck=' + Date.now(), {cache:'no-store'});
+    if(!r.ok) return;
+    const html = await r.text();
+    const m = html.match(/const APP_BUILD = '([^']+)'/);
+    if(m && m[1] !== APP_BUILD) showNewBuildBanner(m[1]);
+  }catch(e){ /* offline — try again later */ }
+}
+function showNewBuildBanner(newBuild){
+  if(document.getElementById('newBuildBanner')) return;
+  const b = document.createElement('div');
+  b.id = 'newBuildBanner';
+  b.style.cssText = 'position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:100000;background:#1f2937;color:#fff;padding:10px 14px;border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.3);font:600 13.5px sans-serif;display:flex;gap:12px;align-items:center;';
+  b.innerHTML = `<span>A newer version of the Portal is ready.</span>
+    <button style="background:#e4561c;color:#fff;border:none;border-radius:6px;padding:6px 12px;font-weight:700;cursor:pointer;">Reload now</button>`;
+  b.querySelector('button').onclick = forceFreshReload;
+  document.body.appendChild(b);
+}
+async function forceFreshReload(){
+  try{
+    if('serviceWorker' in navigator){ const regs = await navigator.serviceWorker.getRegistrations(); for(const reg of regs){ try{ await reg.update(); }catch(e){} } }
+    if(window.caches){ const keys = await caches.keys(); await Promise.all(keys.map(k=>caches.delete(k))); }
+  }catch(e){}
+  location.replace(location.pathname + location.search.replace(/([?&])buildcheck=\d+&?/,'$1'));
+}
+window.addEventListener('load', ()=>{ setTimeout(checkForNewBuild, 4000); setInterval(checkForNewBuild, 5*60*1000); });
+window.addEventListener('focus', ()=>checkForNewBuild());
 
 // Register the service worker so this can be "Added to Home Screen" as an installable
 // app, and — critically now — so the app shell itself (this page plus the two CDN scripts
