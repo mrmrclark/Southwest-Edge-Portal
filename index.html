@@ -449,6 +449,8 @@
   .bd-nav-resize{position:absolute;top:0;right:0;bottom:0;width:7px;cursor:col-resize;z-index:3;border-radius:0 12px 12px 0;}
   .bd-nav-resize:hover{background:var(--edge);opacity:.35;}
   .bd-scroll{overflow:auto !important;max-height:calc(100vh - 215px);}
+  /* 9/27: on phones the board is NOT its own scroll box (a scroll-inside-a-scroll was unusable) — the page scrolls; the table only slides sideways. */
+  @media (max-width:820px){ .bd-scroll{max-height:none !important;overflow-y:visible !important;overflow-x:auto !important;} }
   .bd-table thead th{position:sticky;top:0;z-index:2;}
   .bd-table thead th.bd-title-th,.bd-table thead th.bd-grip-th{z-index:4;}
   .bd-nav.collapsed{width:34px;padding:8px 0;display:flex;justify-content:center;}
@@ -749,7 +751,7 @@ const EDGE_LOGO_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAARgAAA
 // normal for this specific key type; Google expects it to be visible in page source and
 // restricted by domain, via HTTP referrer restriction in Google Cloud Console, not hidden
 // like the other secrets in this app). Replace once Michael has generated a real key.
-const APP_BUILD = '2026-09-27 phone-dates';
+const APP_BUILD = '2026-09-27 phone-board-scroll';
 const GOOGLE_MAPS_JS_KEY = 'AIzaSyBMlIjvH2bpZK6mYJeNZSkQvM8TXQkCjDE';
 const CATEGORY_ORANGE_ICONS = ['💲','🏢','🎯','📋','☁️','🔧','✈️','🏛️','💎','📄','⭐','🗂️'];
 
