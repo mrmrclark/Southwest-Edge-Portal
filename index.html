@@ -534,6 +534,10 @@
   .bd-person:hover{background:var(--edge-lighter);}
   .bd-form-cell .bd-person{justify-content:flex-start;}
   .bd-person-name{font-size:13px;}
+  .bd-avatars{display:inline-flex;}
+  .bd-avatars .bd-avatar + .bd-avatar{margin-left:-8px;}
+  .bd-avatar.more{background:#EEF0F4;color:var(--ink-soft);font-size:10px;}
+  .bd-list-banner{background:#EEF6FF;border:1px solid #CFE3FA;color:#1F5DB8;border-radius:10px;padding:8px 12px;margin-bottom:10px;font-size:13px;}
   .bd-avatar{flex:none;width:28px;height:28px;border-radius:50%;background:var(--edge);color:#fff;font-size:11px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;box-shadow:0 0 0 2px #fff;}
   .bd-avatar.empty{background:transparent;border:1.5px solid #C5C7D0;color:#C5C7D0;box-shadow:none;}
   .bd-tool{border:none;background:transparent;padding:6px 10px;border-radius:6px;font-size:13.5px;color:var(--ink);cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-weight:400;}
@@ -1166,7 +1170,8 @@ function clientRowToLocal(r){
           elaEndDate: r.ela_end_date ? new Date(r.ela_end_date+'T00:00:00') : null,
           archivedAt: r.archived_at ? new Date(r.archived_at) : null,
           latitude: r.latitude||null, longitude: r.longitude||null, geocodeFailed: !!r.geocode_failed,
-          listingExpirationDate: r.listing_expiration_date||null, commissionSummary: r.commission_summary||null};
+          listingExpirationDate: r.listing_expiration_date||null, commissionSummary: r.commission_summary||null,
+          fieldValues: r.field_values || {}};
 }
 function clientLocalToRow(c, listId){
   return {id:c.id, list_id:listId, name:c.name, primary_contact_id:c.primary||null, created_by: localUserIdToAuthId(c.createdBy),
@@ -1175,7 +1180,10 @@ function clientLocalToRow(c, listId){
           ela_end_date: c.elaEndDate ? toLocalDateStr(c.elaEndDate) : null,
           archived_at: c.archivedAt ? c.archivedAt.toISOString() : null,
           latitude: c.latitude||null, longitude: c.longitude||null, geocode_failed: !!c.geocodeFailed,
-          listing_expiration_date: c.listingExpirationDate||null, commission_summary: c.commissionSummary||null};
+          listing_expiration_date: c.listingExpirationDate||null, commission_summary: c.commissionSummary||null,
+          // only sent when loaded — a client object without it (e.g. from an older offline
+          // cache) must never blank out the board values saved on the server
+          ...(c.fieldValues ? {field_values: c.fieldValues} : {})};
 }
 function dealRowToLocal(r){
   return {id:r.id, name:r.name, complete:r.complete, activeDeal:r.active_deal, caExecuted:r.ca_executed,
@@ -3244,7 +3252,10 @@ function smartListTodosRaw(key){
   const t = db.todos.filter(td=>(td.type||'task')==='task'); // missing/null type defaults to task, same convention as todoLocalToRow
   const me = state.currentUser.id;
   switch(key){
-    case 'todayMe': return t.filter(td=>!td.completed && td.assignedTo===me && dueStatus(td.dueDate)==='today');
+    // 2026-09-26 (Phase 5): Today Me = my single To-Dos due today or overdue, PLUS my
+    // To-Dos that belong to a Project and are due by this coming Friday (Sat/Sun → next
+    // Friday) or overdue. No due date → hidden. Rendered grouped under each Project.
+    case 'todayMe': { const cut = addDays(todayMeFriday(), 1); return t.filter(td=>!td.completed && td.assignedTo===me && td.dueDate && (td.projectId ? td.dueDate < cut : ['today','overdue'].includes(dueStatus(td.dueDate)))); }
     case 'todayAll': return t.filter(td=>!td.completed && inMySphere(td) && dueStatus(td.dueDate)==='today');
     case 'overdueMe': return t.filter(td=>!td.completed && td.assignedTo===me && dueStatus(td.dueDate)==='overdue');
     case 'overdueAll': return t.filter(td=>!td.completed && inMySphere(td) && dueStatus(td.dueDate)==='overdue');
@@ -3403,6 +3414,7 @@ function render(){
   if(state.taskfireImport) renderTaskFireImportModal();
   if(state.mapsImport) renderMapsImportModal();
   if(state.boardModal) renderBoardModal();
+  if(state.kickoffEditor) renderKickoffEditor();
   wireTodoRowHandlers(app);
   renderPortalChatWidget();
   if(state.undoToast) renderUndoToast();
@@ -3651,6 +3663,84 @@ function bdDefaultGroups(){
   return [{id:'g_todo', name:'Active', color:'#00C875'}];
 }
 
+/* ---------- Phase 4 part 2: Client / Listing Projects + Kickoff Projects ----------
+   Each Client/Listing gets its own Project board (kind 'client_board', client_id) the
+   first time a Project is made for it. "Kickoff Project" = a Project pre-loaded with the
+   standard To-Do list stored on the All Clients / All Listings board (board.kickoff),
+   one per Client/Listing (todos.is_standard). */
+function accountBoardFor(clientId){ bdEnsure(); return db.boards.find(b=>b.kind==='client_board' && b.clientId===clientId) || null; }
+async function ensureAccountBoard(listId, c){
+  let b = accountBoardFor(c.id); if(b) return b;
+  b = {id:crypto.randomUUID(), name:c.name, kind:'client_board', clientId:c.id, columns:bdDefaultColumns(), groups:bdDefaultGroups(), subColumns:[],
+       visibility:'private', isTemplate:false, defaultDueDays:0, createdBy:state.currentUser.id, sortOrder:0, userIds:[], kickoff:[]};
+  db.boards.push(b); await supaCreateBoard(b); return b;
+}
+function accountProjects(c){ return db.todos.filter(t=>t.type==='project' && t.clientId===c.id).filter(visibleTodo); }
+function kickoffListFor(listId){ const lb = listBoards().find(x=>bdListIdFor(x)===listId); return lb ? (lb.kickoff||[]) : []; }
+function renderAccountProjectsSection(l, c, canEdit){
+  const projs = accountProjects(c);
+  const kick = projs.find(p=>p.isStandard);
+  const singular = l.id==='listings' ? 'Listing' : 'Client';
+  const row = p=>{ const kids = projectTodos(p.id); const open = kids.filter(x=>!x.completed).length;
+    return `<div class="row-card" data-bd="open" data-bdt="${p.id}" style="cursor:pointer;">
+      <div class="nav-icon" style="font-size:18px;">${p.isStandard?'🚀':'📁'}</div>
+      <div class="row-body"><div class="row-title">${escapeHtml(p.title)}${p.completed?' <span class="pill gray">Done</span>':''}</div>
+      <div class="row-meta">${kids.length?`<span class="pill gray">${open} open of ${kids.length} To-Do${kids.length===1?'':'s'}</span>`:'<span class="tiny">No To-Dos yet</span>'}${p.dueDate?` <span class="due">${fmtDate(p.dueDate)}</span>`:''}</div></div></div>`; };
+  if(!canEdit && !projs.length) return '';
+  return `<div class="section-label">Projects</div>
+    ${canEdit ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+      <button class="btn sm" data-bd="acctNewProject" data-listid="${l.id}" data-client="${c.id}">+ New Project</button>
+      ${kick ? `<button class="btn secondary sm" data-bd="open" data-bdt="${kick.id}">🚀 Open Kickoff Project</button>`
+             : `<button class="btn secondary sm" data-bd="acctKickoff" data-listid="${l.id}" data-client="${c.id}" title="A Project pre-loaded with the standard ${singular} To-Dos">🚀 Kickoff Project</button>`}
+      ${accountBoardFor(c.id) ? `<button class="btn secondary sm" data-bd="openListBoard" data-board="${accountBoardFor(c.id).id}">▦ Board</button>` : ''}
+    </div>` : ''}
+    ${projs.length ? projs.sort((a,b)=>(!!b.isStandard - !!a.isStandard) || (!!a.completed - !!b.completed)).map(row).join('') : '<div class="tiny" style="color:var(--ink-soft);margin-bottom:12px;">No Projects yet.</div>'}`;
+}
+async function createKickoffProject(listId, clientId){
+  const l = db.lists.find(x=>x.id===listId); const c = l && l.clients.find(x=>x.id===clientId); if(!c) return;
+  if(accountProjects(c).some(p=>p.isStandard)){ flashToast('This one already has a Kickoff Project.'); return; }
+  const b = await ensureAccountBoard(listId, c);
+  const t = bdCreateProject(b, b.groups[0].id, `${c.name} — Kickoff`);
+  Object.assign(t, {clientId:c.id, listId, isStandard:true}); supaUpdateTodo(t);
+  const steps = kickoffListFor(listId);
+  steps.forEach((k,i)=>{
+    const td = {id:crypto.randomUUID(), title:k.title, category:'', status:'Not Started', dueDate:null, assignedTo:state.currentUser.id, createdBy:state.currentUser.id,
+      type:'task', private:false, completed:false, notes:'', isNew:false, attachments:[], checklistItems:[], listId, clientId:c.id, dealId:null, entryId:null, projectId:t.id, createdAt:new Date(Date.now()+i)};
+    db.todos.push(td); supaCreateTodo(td);
+  });
+  flashToast(`Kickoff Project created with ${steps.length} To-Do${steps.length===1?'':'s'}.`);
+  openTodoDetail(t.id); render();
+}
+async function openAccountNewProject(listId, clientId){
+  const l = db.lists.find(x=>x.id===listId); const c = l && l.clients.find(x=>x.id===clientId); if(!c) return;
+  const b = await ensureAccountBoard(listId, c);
+  openNewTodoModal({type:'project', boardId:b.id, groupId:b.groups[0]&&b.groups[0].id, dueInput:'', listId, clientId:c.id});
+  render();
+}
+/* Kickoff list editor (on the All Clients / All Listings board) */
+function renderKickoffEditor(){
+  const m = state.kickoffEditor; if(!m) return;
+  const b = db.boards.find(x=>x.id===m.boardId); if(!b){ state.kickoffEditor=null; return; }
+  const items = b.kickoff || (b.kickoff=[]);
+  const overlay = document.createElement('div'); overlay.className='modal-overlay'; overlay.style.zIndex=220;
+  overlay.innerHTML = `<div class="modal-card" style="width:520px;"><div class="modal-head"><div class="modal-title">🚀 Kickoff Project To-Dos — ${b.kind==='listing_template'?'Listings':'Clients'}</div><button class="modal-close" data-kk="close">✕</button></div>
+    <div class="modal-body"><div class="tiny" style="color:var(--ink-soft);margin-bottom:10px;">Every new Kickoff Project gets these To-Dos. Changing this list doesn't touch Kickoff Projects already created.</div>
+      ${items.map((k,i)=>`<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;">
+        <span class="tiny" style="width:18px;color:var(--ink-soft);">${i+1}</span>
+        <input data-kk="title" data-i="${i}" value="${escapeAttr(k.title)}" style="flex:1;">
+        <button class="bd-mini" data-kk="up" data-i="${i}" title="Move up">↑</button><button class="bd-mini" data-kk="down" data-i="${i}" title="Move down">↓</button>
+        <button class="row-trash" data-kk="del" data-i="${i}" title="Remove">✕</button></div>`).join('')}
+      <button class="btn secondary sm" data-kk="add" style="margin-top:6px;">+ Add To-Do</button></div>
+    <div class="modal-foot"><button class="btn" data-kk="close">Done</button></div></div>`;
+  document.getElementById('app').appendChild(overlay);
+  const save = ()=>supaSaveBoard(b);
+  overlay.querySelectorAll('[data-kk="close"]').forEach(x=>x.onclick=()=>{ state.kickoffEditor=null; render(); });
+  overlay.querySelectorAll('[data-kk="title"]').forEach(x=>x.onchange=()=>{ items[+x.dataset.i].title = x.value.trim() || items[+x.dataset.i].title; save(); });
+  overlay.querySelectorAll('[data-kk="del"]').forEach(x=>x.onclick=()=>{ items.splice(+x.dataset.i,1); save(); renderPreservingScroll('.modal-body'); });
+  overlay.querySelectorAll('[data-kk="up"],[data-kk="down"]').forEach(x=>x.onclick=()=>{ const i=+x.dataset.i, j = x.dataset.kk==='up'?i-1:i+1; if(j<0||j>=items.length) return; [items[i],items[j]]=[items[j],items[i]]; save(); renderPreservingScroll('.modal-body'); });
+  const add = overlay.querySelector('[data-kk="add"]'); add.onclick=()=>{ items.push({id:bdUid('k'), title:'New To-Do'}); save(); renderPreservingScroll('.modal-body'); const ins = overlay.ownerDocument.querySelectorAll('[data-kk="title"]'); const last = ins[ins.length-1]; if(last){ last.focus(); last.select(); } };
+}
+
 /* ---------- data ---------- */
 function bdEnsure(){ if(!db.boards) db.boards = []; if(!db.projectComments) db.projectComments = []; if(!db.subitems) db.subitems = []; if(!state.boardPrefs) state.boardPrefs = {}; if(!state.bdExpanded) state.bdExpanded = {}; }
 function subitemRowToLocal(r){ return {id:r.id, projectId:r.project_id, name:r.name||'', fieldValues:r.field_values||{}, sortOrder:r.sort_order||0, createdBy: authIdToLocalUserId(r.created_by)||r.created_by, createdAt:new Date(r.created_at)}; }
@@ -3670,11 +3760,11 @@ function subitemsOf(projectId){ bdEnsure(); return db.subitems.filter(x=>x.proje
 function boardRowToLocal(r){
   return {id:r.id, name:r.name, kind:r.kind, clientId:r.client_id, columns:r.columns||[], groups:r.groups||[],
     visibility:r.visibility, defaultDueDays:r.default_due_days, createdBy: authIdToLocalUserId(r.created_by)||r.created_by,
-    sortOrder:r.sort_order||0, userIds:[], subColumns: r.sub_columns || [], isTemplate: !!r.is_template};
+    sortOrder:r.sort_order||0, userIds:[], subColumns: r.sub_columns || [], isTemplate: !!r.is_template, kickoff: r.kickoff || []};
 }
 function boardLocalToRow(b){
   return {id:b.id, name:b.name, kind:b.kind||'open', client_id:b.clientId||null, columns:b.columns, groups:b.groups,
-    visibility:b.visibility||'private', default_due_days:b.defaultDueDays||0, sort_order:b.sortOrder||0, sub_columns: b.subColumns || [], is_template: !!b.isTemplate};
+    visibility:b.visibility||'private', default_due_days:b.defaultDueDays||0, sort_order:b.sortOrder||0, sub_columns: b.subColumns || [], is_template: !!b.isTemplate, kickoff: b.kickoff || []};
 }
 async function fetchBoardsFromSupabase(){
   try {
@@ -3739,6 +3829,7 @@ function activeBoard(){
   const boards = visibleBoards();
   let id = state.activeBoardId;
   if(!id){ try { id = localStorage.getItem('edgeActiveBoard_'+state.currentUser.id); } catch(e){} }
+  const lb = listBoards().find(b=>b.id===id) || db.boards.find(b=>b.kind==='client_board' && b.id===id); if(lb) return lb;
   return boards.find(b=>b.id===id) || boards.find(b=>!b.isTemplate) || boards[0] || null;
 }
 function setActiveBoard(id){
@@ -3746,6 +3837,8 @@ function setActiveBoard(id){
   try { localStorage.setItem('edgeActiveBoard_'+state.currentUser.id, id); } catch(e){}
 }
 function boardProjects(b, includeCompleted){
+  if(bdIsListBoard(b)) return bdListRows(b);
+  if(b.kind==='client_board') return db.todos.filter(t=>t.type==='project' && (t.boardId===b.id || (!t.boardId && t.clientId===b.clientId)) && (includeCompleted ? true : !t.completed));
   return db.todos.filter(t=>t.type==='project' && t.boardId===b.id && (includeCompleted ? true : !t.completed));
 }
 function bdCol(b, colId){ return (b.columns||[]).find(c=>c.id===colId); }
@@ -3753,6 +3846,12 @@ function bdStatusCol(b){ return (b.columns||[]).find(c=>c.builtin==='status'); }
 
 /* ---------- values ---------- */
 function bdGetValue(t, col){
+  if(t && t.type==='clientRow' && col.builtin){
+    const c = t._client;
+    if(col.builtin==='clientNotes') return c.notes||'';
+    if(col.builtin==='commissionSummary') return c.commissionSummary||'';
+    if(col.builtin==='elaEndDate') return c.elaEndDate ? toLocalDateStr(c.elaEndDate) : '';
+  }
   switch(col.builtin){
     case 'assignedTo': return t.assignedTo||'';
     case 'requesterId': return t.requesterId||'';
@@ -3767,7 +3866,13 @@ function bdGetValue(t, col){
   return v==null ? '' : v;
 }
 function bdSetValue(t, col, v){
-  const d = v ? new Date(v+'T00:00:00') : null;
+  const d = (typeof v==='string' && v) ? new Date(v+'T00:00:00') : null;
+  if(t && t.type==='clientRow' && col.builtin){
+    const c = t._client;
+    if(col.builtin==='clientNotes'){ c.notes = v||''; return; }
+    if(col.builtin==='commissionSummary'){ c.commissionSummary = v||null; return; }
+    if(col.builtin==='elaEndDate'){ c.elaEndDate = d; return; }
+  }
   switch(col.builtin){
     case 'assignedTo': t.assignedTo = v || state.currentUser.id; return;
     case 'requesterId': t.requesterId = v || null; return;
@@ -3803,6 +3908,7 @@ function bdRestore(t){ t.completed = false; t.outcome = null; t.completedAt = nu
 /* ---------- cell rendering ---------- */
 const BD_AVATAR_COLORS = ['#E1531A','#579BFC','#00A86B','#A25DDC','#FDAB3D','#E2445C','#037F4C','#784BD1','#FF7575','#0086C0'];
 function bdAvatarColor(uid){ let h=0; String(uid||'').split('').forEach(c=>{ h=(h*31+c.charCodeAt(0))>>>0; }); return BD_AVATAR_COLORS[h % BD_AVATAR_COLORS.length]; }
+function bdPersonIds(v){ if(Array.isArray(v)) return v.filter(Boolean); return v ? [v] : []; }
 function bdPersonBadge(uid){
   const u = USERS.find(x=>x.id===uid);
   if(!u) return `<span class="bd-avatar empty" title="Unassigned">👤</span>`;
@@ -3821,8 +3927,13 @@ function bdCellHtml(b, t, col, mode, isSub){
       return `<div class="bd-status" ${k} data-bd="status" style="background:${lab?lab.color:'#C4C4C4'};">${lab?escapeHtml(lab.label):''}</div>`;
     }
     case 'person': {
-      const u = USERS.find(x=>x.id===v);
-      return `<div class="bd-person" data-bd="personPick" ${k} title="${u?escapeAttr(u.name):'Click to assign'}">${bdPersonBadge(v)}${mode==='form' ? `<span class="bd-person-name">${u?escapeHtml(u.name):'<span style="color:var(--ink-soft);">Unassigned</span>'}</span>` : ''}</div>`;
+      // Built-in person columns (Person, Requester) hold one person; custom person
+      // columns (Broker(s), Lead Broker...) can hold several, like Monday.
+      const ids = bdPersonIds(v);
+      const users = ids.map(id=>USERS.find(x=>x.id===id)).filter(Boolean);
+      const names = users.map(u=>u.name).join(', ');
+      const badges = users.length ? `<span class="bd-avatars">${users.slice(0,3).map(u=>bdPersonBadge(u.id)).join('')}${users.length>3?`<span class="bd-avatar more">+${users.length-3}</span>`:''}</span>` : bdPersonBadge(null);
+      return `<div class="bd-person" data-bd="personPick" ${k} title="${names?escapeAttr(names):'Click to assign'}">${badges}${mode==='form' ? `<span class="bd-person-name">${names?escapeHtml(names):'<span style="color:var(--ink-soft);">Unassigned</span>'}</span>` : ''}</div>`;
     }
     case 'date': return `<input type="date" class="bd-in" ${k} data-bd="set" value="${escapeAttr(v)}">`;
     case 'number': return `<input type="text" inputmode="decimal" class="bd-in bd-num" ${k} data-bd="set" value="${escapeAttr(v)}">`;
@@ -3847,7 +3958,8 @@ function bdFilterRows(b, rows){
     const hay = [t.title, t.notes, ...Object.values(t.fieldValues||{}).map(v=>Array.isArray(v)?v.map(f=>f.name).join(' '):v)].join(' ').toLowerCase();
     return q.split(/\s+/).every(w=>hay.includes(w));
   });
-  if(p.person) rows = rows.filter(t=>t.assignedTo===p.person || t.requesterId===p.person);
+  if(p.person) rows = rows.filter(t=>t.assignedTo===p.person || t.requesterId===p.person ||
+    (b.columns||[]).some(c=>c.type==='person' && !c.builtin && bdPersonIds(bdGetValue(t,c)).includes(p.person)));
   if(p.status){ const sc = bdStatusCol(b); rows = rows.filter(t=>(t.status||'')===(p.status==='__blank'?'':p.status)); }
   return rows;
 }
@@ -3863,7 +3975,7 @@ function bdSortRows(b, rows){
     const v = bdGetValue(t, col);
     if(col.type==='number') return parseFloat(String(v).replace(/[$,\s]/g,'')) || 0;
     if(col.type==='file') return Array.isArray(v) ? v.length : 0;
-    if(col.type==='person'){ const u = USERS.find(x=>x.id===v); return u ? u.name.toLowerCase() : '~'; }
+    if(col.type==='person'){ const u = USERS.find(x=>x.id===bdPersonIds(v)[0]); return u ? u.name.toLowerCase() : '~'; }
     if(col.type==='status'){ const i = (col.labels||[]).findIndex(l=>l.id===v||l.label===v); return i<0 ? 999 : i; }
     return String(v||'~').toLowerCase();
   };
@@ -3874,7 +3986,7 @@ function bdSortRows(b, rows){
 function renderProjectsBoardsMain(){
   const boards = visibleBoards();
   const b = activeBoard();
-  const legacy = visibleProjectsList().filter(p=>!p.boardId && !p.completed);
+  const legacy = visibleProjectsList().filter(p=>!p.boardId && !p.completed && !p.clientId);
   const tabs = `
   <div class="bd-tabs">
     ${boards.map(x=>`<button class="bd-tab ${b&&x.id===b.id?'active':''}" data-bd="tab" data-board="${x.id}">${escapeHtml(x.name)}</button>`).join('')}
@@ -3925,8 +4037,11 @@ function bdNavHtml(boards, b, legacy){
       return folder('officeTemplates', 'Office Templates', office.map(item).join('') || '<div class="tiny bd-nav-soon">None yet.</div>', temps.filter(x=>x.visibility==='company').length)
         + folder('myTemplates', 'My Templates', mineT.map(item).join('') + `<div class="bd-nav-item bd-nav-add" data-bd="newTemplate"><span class="bd-nav-ic">＋</span><span class="bd-nav-name">New template</span></div>`, temps.filter(x=>x.visibility!=='company').length); })()}
     ${folder('boards', 'My Boards', boardItems, mine.length)}
-    ${folder('clients', 'Clients', `<div class="tiny bd-nav-soon">Client Projects will live here (Phase 4).</div>`)}
-    ${folder('listings', 'Listings', `<div class="tiny bd-nav-soon">Listing Projects will live here (Phase 4).</div>`)}
+    ${(()=>{ const lb = k=>listBoards().find(x=>x.kind===k); const item = (x, ic)=> x ? `<div class="bd-nav-item ${b&&x.id===b.id?'active':''}" data-bd="tab" data-board="${x.id}"><span class="bd-nav-ic">${ic}</span><span class="bd-nav-name">${escapeHtml(x.name)}</span><span class="bd-nav-count">${bdListRows(x).length}</span></div>` : '<div class="tiny bd-nav-soon">Not set up.</div>';
+      const acct = listId => db.boards.filter(x=>x.kind==='client_board' && db.lists.some(l=>l.id===listId && (l.clients||[]).some(c=>c.id===x.clientId)))
+        .filter(x=>!q || x.name.toLowerCase().includes(q)).sort((a,c)=>a.name.localeCompare(c.name))
+        .map(x=>{ const n = boardProjects(x,false).length; return `<div class="bd-nav-item ${b&&x.id===b.id?'active':''}" data-bd="tab" data-board="${x.id}" title="${escapeAttr(x.name)}"><span class="bd-nav-ic">📁</span><span class="bd-nav-name">${escapeHtml(x.name)}</span>${n?`<span class="bd-nav-count">${n}</span>`:''}</div>`; }).join('');
+      return folder('clients', 'Clients', item(lb('client_template'),'💲') + acct('clients')) + folder('listings', 'Listings', item(lb('listing_template'),'🏢') + acct('listings')); })()}
     ${legacy.length ? folder('older', 'Older Projects', legacyItems, legacy.length) : ''}
     <button class="btn secondary sm" data-bd="newBoard" style="margin:12px 10px 0;">+ New Board</button>
   </div>`;
@@ -3955,16 +4070,19 @@ function bdToolbarHtml(b){
   const archivedCount = boardProjects(b, true).filter(t=>t.completed).length;
   const hiddenCount = (p.hidden||[]).length;
   return `
+  ${bdIsListBoard(b) ? `<div class="bd-list-banner">${b.kind==='client_template'?'💲':'🏢'} Every Portal ${b.kind==='client_template'?'Client':'Listing'} you can see is a row here automatically. The columns are the ${b.kind==='client_template'?'Client':'Listing'} template — add, rename or re-label them any time. Click a name to open it. <button class="btn secondary sm" data-bd="editKickoff" data-board="${b.id}" style="margin-left:6px;">🚀 Edit Kickoff To-Dos (${(b.kickoff||[]).length})</button></div>` : ''}
   ${b.isTemplate ? `<div class="bd-template-banner">🧩 <b>Template.</b> Its columns, labels and groups are copied into new boards — Projects added here stay here. <button class="btn sm" data-bd="useTemplate">Use this template →</button></div>` : ''}
   <div class="bd-head">
-    <div class="bd-title" data-bd="renameBoard" title="Click to rename">${b.isTemplate?'🧩 ':''}${escapeHtml(b.name)}</div>
-    <button class="btn secondary sm" data-bd="share">👥 Users${b.userIds && b.userIds.length ? ` (${b.userIds.length+1})` : ''}</button>
+    <div class="bd-title" ${(bdIsListBoard(b) || b.kind==='client_board')?'':'data-bd="renameBoard" title="Click to rename"'}>${b.isTemplate?'🧩 ':''}${escapeHtml(b.name)}</div>
+    ${b.kind==='client_board' ? `<span class="tiny" style="color:var(--ink-soft);">Projects for this ${db.lists.find(l=>l.id==='listings' && (l.clients||[]).some(c=>c.id===b.clientId))?'Listing':'Client'} · same access as the ${db.lists.find(l=>l.id==='listings' && (l.clients||[]).some(c=>c.id===b.clientId))?'Listing':'Client'}</span>
+      <span style="flex:1;"></span><button class="btn secondary sm" data-bd="archive">🗄️ Archive</button>` : ''}
+    ${(bdIsListBoard(b) || b.kind==='client_board') ? '' : `<button class="btn secondary sm" data-bd="share">👥 Users${b.userIds && b.userIds.length ? ` (${b.userIds.length+1})` : ''}</button>
     <button class="btn secondary sm" data-bd="settings">⚙️ Settings</button>
     <span style="flex:1;"></span>
-    <button class="btn secondary sm" data-bd="archive">🗄️ Archive (${archivedCount})</button>
+    <button class="btn secondary sm" data-bd="archive">🗄️ Archive (${archivedCount})</button>`}
   </div>
   <div class="bd-toolbar">
-    <button class="btn sm" data-bd="newProject">+ New Project</button>
+    ${bdIsListBoard(b) ? '' : `<button class="btn sm" data-bd="newProject">+ New Project</button>`}
     <label class="bd-tool bd-tool-search ${p.search?'on':''}">🔍<input data-bd="search" placeholder="Search" value="${escapeAttr(p.search||'')}"></label>
     <button class="bd-tool ${p.person?'on':''}" data-bd="filterPersonMenu">${p.person ? bdPersonBadge(p.person) : '👤'} Person</button>
     ${sc ? `<button class="bd-tool ${p.status?'on':''}" data-bd="filterStatusMenu">⏷ Filter${p.status?' · 1':''}</button>` : ''}
@@ -4000,24 +4118,25 @@ function bdBoardHtml(b){
       <table class="bd-table" style="--gc:${g.color};">
         <thead><tr>
           <th class="bd-th bd-grip-th"></th>
-          <th class="bd-th bd-title-th" data-bd="colhead" data-bdc="__title"><span class="bd-th-name">Project${arrow('__title')}</span></th>
+          <th class="bd-th bd-title-th" data-bd="colhead" data-bdc="__title"><span class="bd-th-name">${b.kind==='client_template'?'Client':b.kind==='listing_template'?'Listing':'Project'}${arrow('__title')}</span></th>
           ${headCells}
           <th class="bd-th bd-add-th"><button data-bd="addCol" title="Add a column">+</button></th>
         </tr></thead>
         <tbody data-bd="tbody" data-bdg="${g.id}">
           ${rows.map(t=>{
             const cc = (db.projectComments||[]).filter(c=>c.projectId===t.id).length;
-            const kids = projectTodos(t.id); const openKids = kids.filter(x=>!x.completed).length;
-            const open = !!state.bdExpanded[t.id];
+            const isList = bdIsListBoard(b);
+            const kids = isList ? [] : projectTodos(t.id); const openKids = kids.filter(x=>!x.completed).length;
+            const open = !isList && !!state.bdExpanded[t.id];
             return `<tr class="bd-row" data-bdrow="${t.id}" data-bdg="${g.id}">
               <td class="bd-grip" draggable="${sorted?'false':'true'}" data-bd="rowgrip" data-bdt="${t.id}" title="${sorted?'Clear the sort to drag':'Drag to move'}">⋮⋮</td>
-              <td class="bd-title-td" draggable="${sorted?'false':'true'}" data-bd="rowgrip" data-bdt="${t.id}"><div class="bd-title-inner"><span class="bd-subcaret" data-bd="toggleSubs" data-bdt="${t.id}" title="${open?'Hide':'Show'} this Project's To-Dos">${open?'▾':'▸'}</span><span class="bd-name" data-bd="open" data-bdt="${t.id}">${escapeHtml(t.title)}</span>${kids.length?`<span class="bd-subcount" data-bd="toggleSubs" data-bdt="${t.id}" title="${openKids} open To-Do${openKids===1?'':'s'} of ${kids.length}">${openKids}/${kids.length}</span>`:''}
-                <span class="bd-bubble" data-bd="open" data-bdt="${t.id}" data-focus="comments" title="Comments">💬${cc?`<b>${cc}</b>`:''}</span></div></td>
+              <td class="bd-title-td" draggable="${sorted?'false':'true'}" data-bd="rowgrip" data-bdt="${t.id}"><div class="bd-title-inner">${isList?'':`<span class="bd-subcaret" data-bd="toggleSubs" data-bdt="${t.id}" title="${open?'Hide':'Show'} this Project's To-Dos">${open?'▾':'▸'}</span>`}<span class="bd-name" data-bd="open" data-bdt="${t.id}">${escapeHtml(t.title)}</span>${kids.length?`<span class="bd-subcount" data-bd="toggleSubs" data-bdt="${t.id}" title="${openKids} open To-Do${openKids===1?'':'s'} of ${kids.length}">${openKids}/${kids.length}</span>`:''}
+                ${isList?'':`<span class="bd-bubble" data-bd="open" data-bdt="${t.id}" data-focus="comments" title="Comments">💬${cc?`<b>${cc}</b>`:''}</span>`}</div></td>
               ${cols.map(c=>`<td class="bd-td bd-td-${c.type}">${bdCellHtml(b,t,c)}</td>`).join('')}
               <td></td>
             </tr>${open ? bdSubitemsHtml(b, t, cols.length) : ''}`;
           }).join('')}
-          <tr class="bd-addrow"><td></td><td colspan="${cols.length+2}"><input class="bd-in" data-bd="addItem" data-bdg="${g.id}" placeholder="+ Add project"></td></tr>
+          ${bdIsListBoard(b) ? '' : `<tr class="bd-addrow"><td></td><td colspan="${cols.length+2}"><input class="bd-in" data-bd="addItem" data-bdg="${g.id}" placeholder="+ Add project"></td></tr>`}
         </tbody>
         <tfoot><tr><td></td><td></td>${cols.map(c=>`<td class="bd-sum">${bdSummaryHtml(c, rows)}</td>`).join('')}<td></td></tr></tfoot>
       </table>`}
@@ -4076,8 +4195,47 @@ function bdArchiveHtml(b){
 
 /* ---------- popovers (status palette, column menus, etc.) ---------- */
 function bdPopCol(b, p){ return bdTodoCol(p.colId) || (p.sub ? bdSubCols(b) : b.columns).find(c=>c.id===p.colId); }
-function bdPopTarget(p){ bdEnsure(); return p.subId ? db.subitems.find(x=>x.id===p.subId) : db.todos.find(x=>x.id===p.todoId); }
-function bdSaveTarget(x){ if(x && x.projectId && !('type' in x)) supaUpdateSubitem(x); else if(x) supaUpdateTodo(x); }
+function bdPopTarget(p){ bdEnsure(); return p.subId ? db.subitems.find(x=>x.id===p.subId) : bdRowById(p.todoId); }
+function bdSaveTarget(x){
+  if(!x) return;
+  if(x.type==='clientRow'){ supaUpdateClientContact(x._client, x._listId); return; }
+  if(x.projectId && !('type' in x)) supaUpdateSubitem(x); else supaUpdateTodo(x);
+}
+/* ---------- Phase 4: Clients board / Listings board ----------
+   Boards of kind client_template / listing_template show every real Portal Client /
+   Listing as a row. The board's columns are the template; values live on the client
+   (clients.field_values), a few map to real client fields (Notes, Commission Summary,
+   Listing Expiration = ELA end date). Group + drag order live in field_values too. */
+function bdIsListBoard(b){ return !!b && (b.kind==='client_template' || b.kind==='listing_template'); }
+function bdListIdFor(b){ return b.kind==='client_template' ? 'clients' : 'listings'; }
+function listBoards(){ bdEnsure(); return db.boards.filter(bdIsListBoard); }
+const bdRowCache = new Map();
+function bdClientRow(c, listId){
+  let r = bdRowCache.get(c.id);
+  if(r && r._client===c) return r;
+  if(!c.fieldValues) c.fieldValues = {};
+  r = {type:'clientRow', id:c.id, _client:c, _listId:listId, completed:false, createdAt:c.createdAt||0,
+    get title(){ return c.name; },
+    get fieldValues(){ if(!c.fieldValues) c.fieldValues={}; return c.fieldValues; },
+    set fieldValues(v){ c.fieldValues = v; },
+    get groupId(){ return (c.fieldValues||{}).__group || null; },
+    set groupId(v){ if(!c.fieldValues) c.fieldValues={}; c.fieldValues.__group = v; },
+    get sortOrder(){ return (c.fieldValues||{}).__sort; },
+    set sortOrder(v){ if(!c.fieldValues) c.fieldValues={}; c.fieldValues.__sort = v; },
+    get notes(){ return c.notes||''; } };
+  bdRowCache.set(c.id, r);
+  return r;
+}
+function bdListRows(b){
+  const l = db.lists.find(x=>x.id===bdListIdFor(b)); if(!l) return [];
+  return (l.clients||[]).filter(c=>!c.archivedAt).map(c=>bdClientRow(c, l.id));
+}
+function bdRowById(id){
+  const t = db.todos.find(x=>x.id===id); if(t) return t;
+  if(bdRowCache.has(id)) return bdRowCache.get(id);
+  for(const l of db.lists){ const c = (l.clients||[]).find(x=>x.id===id); if(c) return bdClientRow(c, l.id); }
+  return null;
+}
 function bdFileOwnerId(x){ return (x && x.projectId && !('type' in x)) ? x.projectId : x.id; }
 function bdOpenPop(kind, anchorEl, extra){
   const r = anchorEl.getBoundingClientRect();
@@ -4113,17 +4271,20 @@ function renderBoardPopover(){
     }
   } else if(p.kind==='person'){
     const col = bdPopCol(b, p); const t = bdPopTarget(p); if(!col||!t){ state.bdPop=null; return; }
-    const cur = bdGetValue(t, col);
+    const curIds = bdPersonIds(bdGetValue(t, col));
+    const multi = !col.builtin;
     const q = (p.q||'').toLowerCase();
     html = `<input class="bd-pop-search" data-bd="popSearch" placeholder="Search people" value="${escapeAttr(p.q||'')}">
-      ${usersSortedByMe().filter(u=>!q || u.name.toLowerCase().includes(q)).map(u=>`<div class="bd-menu-item ${u.id===cur?'on':''}" data-bd="pickPerson" data-user="${u.id}">${bdPersonBadge(u.id)} ${escapeHtml(u.name)}${u.id===state.currentUser.id?' <span class="tiny">(me)</span>':''}${u.id===cur?' <span style="margin-left:auto;">✓</span>':''}</div>`).join('')}
-      ${cur && col.builtin!=='assignedTo' ? `<div class="bd-menu-item" data-bd="pickPerson" data-user="" style="color:var(--ink-soft);border-top:1px solid var(--line-soft);margin-top:4px;">✕ Remove</div>` : ''}`;
+      ${multi ? '<div class="tiny" style="color:var(--ink-soft);margin:0 4px 4px;">Pick one or more.</div>' : ''}
+      ${usersSortedByMe().filter(u=>!q || u.name.toLowerCase().includes(q)).map(u=>`<div class="bd-menu-item ${curIds.includes(u.id)?'on':''}" data-bd="pickPerson" data-user="${u.id}">${bdPersonBadge(u.id)} ${escapeHtml(u.name)}${u.id===state.currentUser.id?' <span class="tiny">(me)</span>':''}${curIds.includes(u.id)?' <span style="margin-left:auto;">✓</span>':''}</div>`).join('')}
+      ${curIds.length && col.builtin!=='assignedTo' ? `<div class="bd-menu-item" data-bd="pickPerson" data-user="" style="color:var(--ink-soft);border-top:1px solid var(--line-soft);margin-top:4px;">✕ ${multi?'Clear all':'Remove'}</div>` : ''}
+      ${multi ? `<button class="btn sm" data-bd="closePop" style="margin-top:6px;float:right;">Done</button>` : ''}`;
   } else if(p.kind==='filterPerson'){
     const cur = bdPrefs(b.id).person;
     html = `<div class="bd-pop-title">Show Projects for</div>
       <div class="bd-menu-item ${!cur?'on':''}" data-bd="setFilterPerson" data-user="">👥 Everyone</div>
       ${usersSortedByMe().map(u=>`<div class="bd-menu-item ${u.id===cur?'on':''}" data-bd="setFilterPerson" data-user="${u.id}">${bdPersonBadge(u.id)} ${escapeHtml(u.name)}</div>`).join('')}
-      <div class="tiny" style="color:var(--ink-soft);margin:6px 4px 0;">Matches Person or Requester.</div>`;
+      <div class="tiny" style="color:var(--ink-soft);margin:6px 4px 0;">Matches anyone in a people column.</div>`;
   } else if(p.kind==='filterStatus'){
     const sc = bdStatusCol(b); const cur = bdPrefs(b.id).status;
     html = `<div class="bd-pop-title">Filter by Status</div>
@@ -4289,6 +4450,7 @@ function bdCreateProject(b, groupId, title){
   const t = Object.assign({id:crypto.randomUUID(), title, category:'', status:'', assignedTo:state.currentUser.id, createdBy:state.currentUser.id,
     type:'project', private:false, completed:false, notes:'', isNew:false, attachments:[], checklistItems:[], listId:null, clientId:null, dealId:null, entryId:null, projectId:null,
     requesterId:null, sortOrder: bdNextSortOrder(b, d.groupId), createdAt:new Date(), authorizedUserIds:[]}, d);
+  if(b.kind==='client_board'){ t.clientId = b.clientId; const hl = db.lists.find(l=>(l.clients||[]).some(c=>c.id===b.clientId)); t.listId = hl ? hl.id : null; }
   db.todos.push(t); supaCreateTodo(t);
   return t;
 }
@@ -4302,7 +4464,11 @@ function bdFind(el){
     const sb = proj && db.boards.find(x=>x.id===proj.boardId);
     return {b:sb, t:sub, col: (sb && el.dataset.bdc) ? bdSubCols(sb).find(c=>c.id===el.dataset.bdc) : null, isSub:true};
   }
-  const t = el.dataset.bdt ? db.todos.find(x=>x.id===el.dataset.bdt) : null;
+  const t = el.dataset.bdt ? bdRowById(el.dataset.bdt) : null;
+  if(t && t.type==='clientRow'){
+    const lb = listBoards().find(x=>bdListIdFor(x)===t._listId);
+    return {b:lb, t, col: (lb && el.dataset.bdc) ? bdCol(lb, el.dataset.bdc) : null};
+  }
   if(t && el.dataset.bdc && bdTodoCol(el.dataset.bdc)){
     const parent = db.todos.find(x=>x.id===t.projectId);
     const pb = (parent && db.boards.find(x=>x.id===parent.boardId)) || activeBoard();
@@ -4399,6 +4565,10 @@ document.addEventListener('click', ev=>{
   switch(k){
     case 'closePop': state.bdPop=null; render(); return;
     case 'tab': setActiveBoard(el.dataset.board); render(); return;
+    case 'openListBoard': setActiveBoard(el.dataset.board); state.mainView={type:'projects'}; state.modalStack=[]; render(); return;
+    case 'acctNewProject': openAccountNewProject(el.dataset.listid, el.dataset.client); return;
+    case 'acctKickoff': createKickoffProject(el.dataset.listid, el.dataset.client); return;
+    case 'editKickoff': state.kickoffEditor = {boardId: el.dataset.board}; render(); return;
     case 'newBoard': state.boardModal={kind:'new'}; render(); return;
     case 'newTemplate': state.boardModal={kind:'new', asTemplate:true}; render(); return;
     case 'useTemplate': state.boardModal={kind:'new', fromId:b.id}; render(); return;
@@ -4410,7 +4580,11 @@ document.addEventListener('click', ev=>{
     case 'navFolder': { const k = el.dataset.folder; state.bdNavClosed = state.bdNavClosed||{}; state.bdNavClosed[k] = !state.bdNavClosed[k]; render(); return; }
     case 'toggleLegacy': state.bdLegacyOpen = !bdLegacyOpen(); try { localStorage.setItem('edgeLegacyOpen', state.bdLegacyOpen?'1':'0'); } catch(e){} render(); return;
     case 'restore': { const t = db.todos.find(x=>x.id===el.dataset.bdt); if(t){ bdRestore(t); supaUpdateTodo(t); flashToast(`"${t.title}" is back on the board.`); render(); } return; }
-    case 'open': { ev.preventDefault(); if(el.dataset.focus==='comments') state.bdFocusComments = true; openTodoDetail(el.dataset.bdt); render(); return; }
+    case 'open': {
+      ev.preventDefault();
+      const row = bdRowById(el.dataset.bdt);
+      if(row && row.type==='clientRow'){ openClientModal(row._listId, row._client.id, 'all'); render(); return; }
+      if(el.dataset.focus==='comments') state.bdFocusComments = true; openTodoDetail(el.dataset.bdt); render(); return; }
     case 'adoptLegacy': { const t = db.todos.find(x=>x.id===el.dataset.bdt); if(t && b){ Object.assign(t, {boardId:b.id, groupId:b.groups[0]&&b.groups[0].id, sortOrder:bdNextSortOrder(b, b.groups[0]&&b.groups[0].id)}); if(!t.startDate) t.startDate = t.createdAt || todayDate(); if(!t.office) t.office='Phoenix'; supaUpdateTodo(t); render(); } return; }
     case 'newProject': { openNewTodoModal({type:'project', boardId:b.id, groupId:b.groups[0]&&b.groups[0].id, dueInput:''}); render(); return; }
     case 'collapse': { const p = bdPrefs(b.id); const c = p.collapsed||(p.collapsed=[]); const g = el.dataset.bdg; p.collapsed = c.includes(g) ? c.filter(x=>x!==g) : c.concat(g); bdSavePrefs(b.id); render(); return; }
@@ -4424,10 +4598,17 @@ document.addEventListener('click', ev=>{
       const g = gs.find(x=>x.id===pop.groupId); const rows = boardProjects(popBoard, true).filter(t=>t.groupId===g.id);
       if(!confirm(`Delete the group "${g.name}"?${rows.length?` Its ${rows.length} Project(s) move to "${gs.find(x=>x.id!==g.id).name}".`:''}`)) return;
       popBoard.groups = gs.filter(x=>x.id!==g.id); const dest = popBoard.groups[0].id;
-      rows.forEach(t=>{ t.groupId = dest; supaUpdateTodo(t); }); supaSaveBoard(popBoard); state.bdPop=null; render(); return;
+      rows.forEach(t=>{ t.groupId = dest; bdSaveTarget(t); }); supaSaveBoard(popBoard); state.bdPop=null; render(); return;
     }
     case 'personPick': { const f = bdFind(el); if(f.b && f.t) bdOpenPop('person', el, f.isSub ? {boardId:f.b.id, subId:f.t.id, sub:true, colId:el.dataset.bdc} : {boardId:f.b.id, todoId:f.t.id, colId:el.dataset.bdc}); return; }
-    case 'pickPerson': { const col = bdPopCol(popBoard, pop); const t = bdPopTarget(pop); bdSetValue(t, col, el.dataset.user); bdSaveTarget(t); state.bdPop=null; renderPreservingScroll('.content'); return; }
+    case 'pickPerson': {
+      const col = bdPopCol(popBoard, pop); const t = bdPopTarget(pop);
+      if(!col.builtin){
+        const cur = bdPersonIds(bdGetValue(t, col)); const u = el.dataset.user;
+        const next = !u ? [] : (cur.includes(u) ? cur.filter(x=>x!==u) : cur.concat(u));
+        bdSetValue(t, col, next.length ? next : ''); bdSaveTarget(t); renderPreservingScroll('.content'); return; // stays open
+      }
+      bdSetValue(t, col, el.dataset.user); bdSaveTarget(t); state.bdPop=null; renderPreservingScroll('.content'); return; }
     case 'filterPersonMenu': bdOpenPop('filterPerson', el, {boardId:b.id}); return;
     case 'filterStatusMenu': bdOpenPop('filterStatus', el, {boardId:b.id}); return;
     case 'sortMenu': bdOpenPop('sortMenu', el, {boardId:b.id}); return;
@@ -4491,7 +4672,7 @@ document.addEventListener('click', ev=>{
         supaSaveBoard(popBoard); state.bdPop=null; render(); return;
       }
       popBoard.columns = popBoard.columns.filter(c=>c.id!==col.id);
-      boardProjects(popBoard, true).forEach(t=>{ if(t.fieldValues && col.id in t.fieldValues){ delete t.fieldValues[col.id]; supaUpdateTodo(t); } });
+      boardProjects(popBoard, true).forEach(t=>{ if(t.fieldValues && col.id in t.fieldValues){ delete t.fieldValues[col.id]; bdSaveTarget(t); } });
       supaSaveBoard(popBoard); state.bdPop=null; render(); return;
     }
   }
@@ -4561,12 +4742,12 @@ document.addEventListener('drop', ev=>{
     supaSaveBoard(b); renderPreservingScroll('.content'); return;
   }
   if(bdDrag.kind==='row'){
-    const t = db.todos.find(x=>x.id===bdDrag.id); bdDrag=null; if(!t) return;
+    const t = bdRowById(bdDrag.id); bdDrag=null; if(!t) return;
     const tr = ev.target.closest('tr.bd-row');
     const gHead = ev.target.closest('[data-bd="groupdrop"]');
     const addRow = ev.target.closest('tr.bd-addrow');
     let groupId, before=null;
-    if(tr){ groupId = tr.dataset.bdg; before = db.todos.find(x=>x.id===tr.dataset.bdrow); }
+    if(tr){ groupId = tr.dataset.bdg; before = bdRowById(tr.dataset.bdrow); }
     else if(addRow){ groupId = addRow.closest('tbody').dataset.bdg; }
     else if(gHead){ groupId = gHead.dataset.bdg; }
     if(!groupId || (before && before.id===t.id)){ render(); return; }
@@ -4576,7 +4757,7 @@ document.addEventListener('drop', ev=>{
     const idx = before ? ordered.findIndex(x=>x.id===before.id) : ordered.length;
     ordered.splice(idx<0?ordered.length:idx, 0, t);
     t.groupId = groupId;
-    ordered.forEach((x,i)=>{ if(x.sortOrder!==i+1 || x===t){ x.sortOrder=i+1; supaUpdateTodo(x); } });
+    ordered.forEach((x,i)=>{ if(x.sortOrder!==i+1 || x===t){ x.sortOrder=i+1; bdSaveTarget(x); } });
     renderPreservingScroll('.content');
   } else {
     const th = ev.target.closest('th[data-bd="colhead"]'); const id = bdDrag.id; bdDrag=null;
@@ -7229,6 +7410,7 @@ function renderMainContent(){
   const archiveBar = id==='completed' && list.length ?
     `<button class="btn secondary sm" data-action="archiveAllCompleted" style="margin-bottom:12px;">🗄️ Archive All Completed (${list.length})</button>` : '';
   if(!list.length && searchQ) return `<div class="empty-state"><div class="big">No matches for "${escapeHtml(searchQ)}".</div><div class="tiny">Try a different search, or clear it to see everything.</div></div>`;
+  if(id==='todayMe') return renderBulkBar() + renderTodayMeMain(list);
   return archiveBar + renderBulkBar() + renderTodoList(list, false, id==='allMe');
 }
 function renderArchivedClientsMain(){
@@ -7376,6 +7558,46 @@ function renderBulkBar(){
   </div>`;
 }
 function smartListTodosVisible(id){ return smartListTodos(id).filter(visibleTodo); }
+// This coming Friday (today if it's Friday); on Saturday it's the following Friday.
+function todayMeFriday(){ const t=todayDate(), d=t.getDay(); return addDays(t, d===6 ? 6 : 5-d); }
+function tmSortDue(a,b){
+  if(!!a.completed !== !!b.completed) return a.completed ? 1 : -1;
+  return (a.dueDate||0)-(b.dueDate||0);
+}
+function renderTodayMeMain(list){
+  const singles = list.filter(td=>!td.projectId);
+  const byProj = new Map();
+  list.filter(td=>td.projectId).forEach(td=>{ if(!byProj.has(td.projectId)) byProj.set(td.projectId, []); byProj.get(td.projectId).push(td); });
+  const fri = todayMeFriday();
+  const groups = [...byProj.entries()].map(([pid, items])=>({pid, proj: db.todos.find(x=>x.id===pid) || (db.archivedTodos||[]).find(x=>x.id===pid), items: items.slice().sort(tmSortDue)}))
+    .sort((a,b)=>tmSortDue(a.items[0], b.items[0]));
+  const projHtml = groups.map(g=>{
+    const p = g.proj;
+    const st = p && p.dueDate ? dueStatus(p.dueDate) : 'none';
+    const dueCls = st==='overdue' ? 'overdue' : (st==='today' ? 'today' : '');
+    return `
+    <div style="margin:10px 0 4px;">
+      <div class="row-card" ${p?`data-openproject="${p.id}"`:''} style="background:var(--line-soft);">
+        <div class="nav-icon" style="font-size:20px;">🗂️</div>
+        <div class="row-body">
+          <div class="row-title">${escapeHtml(p ? p.title : 'Project')}</div>
+          <div class="row-meta">
+            ${p ? `<span class="due ${dueCls}">Project due ${p.dueDate ? fmtDate(p.dueDate) : '— no date'}</span>` : ''}
+            ${p && (p.clientId||p.dealId||p.entryId||p.listId) ? `<span class="tiny">${escapeHtml(getTodoLinkSummary(p))}</span>` : ''}
+            <span class="pill gray">${g.items.length} of mine</span>
+          </div>
+        </div>
+      </div>
+      <div style="margin-left:26px;">${g.items.map(td=>renderTodoRow(td)).join('')}</div>
+    </div>`;
+  }).join('');
+  const label = (txt)=>`<div class="section-label" style="margin-top:14px;">${txt}</div>`;
+  if(!singles.length && !groups.length) return renderTodoList([], false);
+  return label(`My To-Do's — due today &amp; overdue (${singles.length})`)
+    + (singles.length ? renderTodoList(singles, true, true) : `<div class="tiny" style="color:var(--ink-soft);padding:6px 0;">Nothing due today.</div>`)
+    + label(`My Project To-Do's — due by Fri ${fmtDate(fri)} (${list.length-singles.length})`)
+    + (groups.length ? projHtml : `<div class="tiny" style="color:var(--ink-soft);padding:6px 0;">No Project To-Do's due this week.</div>`);
+}
 
 function assigneeRank(td){
   const me = state.currentUser.id;
@@ -7565,7 +7787,8 @@ function renderListMain(listId){
   }
   const singular = l.name.endsWith('s') ? l.name.slice(0,-1) : l.name;
   if(l.type==='deep'){
-    const addBtn = `<button class="btn sm" data-action="addClient" data-listid="${l.id}" style="margin-bottom:14px;">+ New ${singular}</button>`;
+    const lbForList = (l.id==='clients'||l.id==='listings') ? listBoards().find(x=>bdListIdFor(x)===l.id) : null;
+    const addBtn = `<button class="btn sm" data-action="addClient" data-listid="${l.id}" style="margin-bottom:14px;">+ New ${singular}</button>${lbForList ? ` <button class="btn secondary sm" data-bd="openListBoard" data-board="${lbForList.id}" style="margin-bottom:14px;" title="See every ${singular} as a Monday-style table">▦ Board view</button>` : ''}`;
     if(!l.clients.length) return addBtn + (searchQ ? `<div class="empty-state"><div class="big">No matches for "${escapeHtml(searchQ)}".</div><div class="tiny">Try a different search, or clear it to see everything.</div></div>` : `<div class="empty-state"><div class="big">No ${l.name.toLowerCase()} yet.</div><div class="tiny">Add your first one to get moving.</div></div>`);
     const renderRow = (c)=>{
       const dealCount = c.deals.length;
@@ -11792,9 +12015,10 @@ function renderClientModalBody(l,c,viewMode,pendingDel){
       ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="pickContact" data-client="${c.id}" data-slot="third">${c.thirdContactId? 'Change contact':'Add Contact / Create New Contact'}</button>` : ''}
     </div>` : ''}
   </div>
-  <div class="section-label">General To-Do's <span style="font-weight:400;color:var(--ink-soft);">(not tied to a specific site)</span></div>
+  ${renderAccountProjectsSection(l, c, canEdit)}
+  <div class="section-label">General To-Do's <span style="font-weight:400;color:var(--ink-soft);">(not tied to a specific site or Project)</span></div>
   ${canEdit ? `<button class="btn sm" data-action="newAccountTodo" data-listid="${l.id}" data-client="${c.id}" style="margin-bottom:10px;">+ New To-Do</button>` : ''}
-  ${renderTodoList(db.todos.filter(t=>t.clientId===c.id && !t.dealId).filter(visibleTodo), true)}
+  ${renderTodoList(db.todos.filter(t=>t.clientId===c.id && !t.dealId && t.type!=='project' && !t.projectId).filter(visibleTodo), true)}
   <div class="section-label" style="margin-top:18px;">Sites / Deals</div>
   ${canEdit ? `<button class="btn sm" data-action="addDeal" data-client="${c.id}" style="margin-bottom:10px;">+ Add site / deal</button>` : ''}
   ${renderDealGroupsInClient(l,c)}
@@ -14239,8 +14463,8 @@ function renderNewTodoPickerModal(){
     title = 'New Project — what is it for?';
     body = `
     <div style="display:flex;flex-direction:column;gap:10px;">
-      <button class="btn secondary" disabled style="text-align:left;padding:16px;font-size:14px;opacity:.55;">🏢 Listing <span class="tiny">— coming in Phase 4</span></button>
-      <button class="btn secondary" disabled style="text-align:left;padding:16px;font-size:14px;opacity:.55;">💲 Client <span class="tiny">— coming in Phase 4</span></button>
+      <button class="btn secondary" data-action="ntpProjectAccount" data-kind="listings" style="text-align:left;padding:16px;font-size:14px;">🏢 Listing</button>
+      <button class="btn secondary" data-action="ntpProjectAccount" data-kind="clients" style="text-align:left;padding:16px;font-size:14px;">💲 Client</button>
       <button class="btn secondary" data-action="ntpProjectOpen" style="text-align:left;padding:16px;font-size:14px;">📋 Open — goes on one of your Project boards</button>
     </div>`;
   } else if(p.step==='chooseBoard'){
@@ -14253,7 +14477,8 @@ function renderNewTodoPickerModal(){
   } else if(p.step==='chooseAccount'){
     title = 'Which Client or Listing?';
     const query = (p.accountQuery||'').trim().toLowerCase();
-    const matches = accountsFlatForPicker().filter(a=>!query || a.name.toLowerCase().includes(query)).slice(0,50);
+    const matches = accountsFlatForPicker().filter(a=>(!p.forProject || a.listId===p.accountKind) && (!query || a.name.toLowerCase().includes(query))).slice(0,50);
+    if(p.forProject) title = p.accountKind==='listings' ? 'New Project — which Listing?' : 'New Project — which Client?';
     body = `
       <input id="ntpAccountSearch" placeholder="🔍 Search clients and listings…" value="${escapeAttr(p.accountQuery||'')}" style="margin-bottom:10px;">
       <div id="ntpAccountList" style="max-height:320px;overflow-y:auto;">${renderNtpAccountListHtml(matches)}</div>`;
@@ -14303,7 +14528,8 @@ function renderNewTodoPickerModal(){
   overlay.querySelectorAll('[data-action="closeNewTodoPicker"]').forEach(b=>b.onclick=()=>{ state.newTodoPicker=null; render(); });
   const backBtn = overlay.querySelector('[data-action="ntpBack"]');
   if(backBtn) backBtn.onclick=()=>{
-    if(p.step==='chooseAccount' || p.step==='chooseEntryType') p.step='chooseType';
+    if(p.step==='chooseAccount' && p.forProject){ p.step='chooseProjectKind'; p.forProject=false; }
+    else if(p.step==='chooseAccount' || p.step==='chooseEntryType') p.step='chooseType';
     else if(p.step==='chooseDealOrStop') p.step='chooseAccount';
     else if(p.step==='chooseEntry') p.step='chooseEntryType';
     else if(p.step==='chooseProjectKind') p.step='chooseType';
@@ -14312,6 +14538,7 @@ function renderNewTodoPickerModal(){
   };
   const projStepBtn = overlay.querySelector('[data-action="ntpProjectStep"]'); if(projStepBtn) projStepBtn.onclick=()=>{ p.step='chooseProjectKind'; render(); };
   const projOpenBtn = overlay.querySelector('[data-action="ntpProjectOpen"]'); if(projOpenBtn) projOpenBtn.onclick=()=>{ p.step='chooseBoard'; render(); };
+  overlay.querySelectorAll('[data-action="ntpProjectAccount"]').forEach(btn=>btn.onclick=()=>{ p.step='chooseAccount'; p.accountQuery=''; p.forProject=true; p.accountKind=btn.dataset.kind; render(); });
   overlay.querySelectorAll('[data-action="ntpPickBoard"]').forEach(btn=>btn.onclick=()=>{
     const b = db.boards.find(x=>x.id===btn.dataset.board); if(!b) return;
     state.newTodoPicker=null;
@@ -14332,12 +14559,13 @@ function renderNewTodoPickerModal(){
   if(acctSearchEl) acctSearchEl.oninput=()=>{
     p.accountQuery = acctSearchEl.value;
     const q = p.accountQuery.trim().toLowerCase();
-    const newMatches = accountsFlatForPicker().filter(a=>!q || a.name.toLowerCase().includes(q)).slice(0,50);
+    const newMatches = accountsFlatForPicker().filter(a=>(!p.forProject || a.listId===p.accountKind) && (!q || a.name.toLowerCase().includes(q))).slice(0,50);
     const listBox = document.getElementById('ntpAccountList');
     if(listBox){
       listBox.innerHTML = renderNtpAccountListHtml(newMatches);
       listBox.querySelectorAll('[data-action="ntpPickAccount"]').forEach(b=>b.onclick=()=>{
         p.pickedAccount = accountsFlatForPicker().find(a=>a.id===b.dataset.accountid);
+        if(p.forProject){ const a = p.pickedAccount; state.newTodoPicker=null; openAccountNewProject(a.listId, a.id); return; }
         p.step='chooseDealOrStop'; p.dealQuery='';
         render();
       });
@@ -14345,6 +14573,7 @@ function renderNewTodoPickerModal(){
   };
   overlay.querySelectorAll('[data-action="ntpPickAccount"]').forEach(b=>b.onclick=()=>{
     p.pickedAccount = accountsFlatForPicker().find(a=>a.id===b.dataset.accountid);
+    if(p.forProject){ const a = p.pickedAccount; state.newTodoPicker=null; openAccountNewProject(a.listId, a.id); return; }
     p.step='chooseDealOrStop'; p.dealQuery='';
     render();
   });
@@ -14723,6 +14952,7 @@ function renderNewTodoModal(){
     if(ctxBoard){
       Object.assign(newTd, {boardId:ctxBoard.id, groupId: ctx.groupId || (ctxBoard.groups[0]&&ctxBoard.groups[0].id), startDate: todayDate(), office:'Phoenix', fieldValues:{}, extraFields:[], requesterId:null, createdAt:new Date()});
       newTd.sortOrder = bdNextSortOrder(ctxBoard, newTd.groupId);
+      if(ctxBoard.kind==='client_board' && !newTd.clientId){ newTd.clientId = ctxBoard.clientId; const hl = db.lists.find(l=>(l.clients||[]).some(c=>c.id===ctxBoard.clientId)); newTd.listId = hl ? hl.id : null; }
       if(newTd.status==='Not Started') newTd.status='';
     }
     db.todos.push(newTd);
