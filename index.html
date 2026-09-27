@@ -5749,7 +5749,7 @@ function renderSidebar(){
     </div>` : ''}
     <div class="sidebar-footer">
       <div style="font-size:11px;color:var(--ink-soft);line-height:1.5;">Southwest Edge Portal · prototype build</div>
-      <div style="font-size:10px;color:var(--edge);font-weight:700;margin-top:2px;">Build: persistence-check-v3</div>
+      <div style="font-size:10px;color:var(--edge);font-weight:700;margin-top:2px;">Build: 2026-09-26 map-buttons</div>
     </div>
   </div>`;
 }
@@ -9511,12 +9511,21 @@ function exportMapAsKml(c){
     return `<Placemark><name>${escapeXml(d.name)}</name><description>${escapeXml(stageInfo?stageInfo.name:d.stage)}</description><Point><coordinates>${d.longitude},${d.latitude},0</coordinates></Point></Placemark>`;
   }).join('');
   const kml = `<?xml version="1.0" encoding="UTF-8"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${escapeXml(c.name)}</name>${placemarks}</Document></kml>`;
-  const blob = new Blob([kml], {type:'application/vnd.google-earth.kml+xml'});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = `${c.name.replace(/[^a-zA-Z0-9]/g,'_')}_map.kml`;
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  const base = c.name.replace(/[^a-zA-Z0-9]/g,'_') + '_map';
+  const save = (blob, name)=>{
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(()=>URL.revokeObjectURL(url), 1000);
+  };
+  // KMZ = the same KML zipped (doc.kml inside) — what Google Earth / MyMaps expect.
+  if(typeof JSZip === 'function'){
+    const zip = new JSZip(); zip.file('doc.kml', kml);
+    zip.generateAsync({type:'blob', mimeType:'application/vnd.google-earth.kmz'})
+      .then(b=>save(b, base+'.kmz'))
+      .catch(()=>save(new Blob([kml], {type:'application/vnd.google-earth.kml+xml'}), base+'.kml'));
+  } else save(new Blob([kml], {type:'application/vnd.google-earth.kml+xml'}), base+'.kml');
 }
 function escapeXml(str){
   return String(str==null?'':str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&apos;');
@@ -9607,7 +9616,9 @@ function applyBasemap(map, which, quiet){
     const outline = mcaTileLayer('ParcelOutline','Parcels'); outline.__mca = true;
     const labels = mcaTileLayer('ParcelLabel','Parcel labels'); labels.__mca = true;
     ov.push(outline); ov.push(labels);
-    if(!quiet && map.getZoom() < 15){ map.setZoom(16); flashToast('Zoomed in — parcel lines show from street level in.'); }
+    // Keep the exact same view as Google (no auto-zoom — Michael 9/26). Parcel lines only
+    // exist from neighborhood zoom in, so just say so when zoomed out.
+    if(!quiet && map.getZoom() < 14) flashToast('Zoom in to see parcel lines — they appear at neighborhood level.');
   }
 }
 function mcaClearHighlight(map){ if(map && map.__parcelHL){ map.__parcelHL.setMap(null); map.__parcelHL = null; } }
@@ -9615,15 +9626,27 @@ function mcaHighlightParcel(map, geom, infoWindow){
   mcaClearHighlight(map);
   if(!geom || !geom.rings || !geom.rings.length) return;
   const paths = geom.rings.map(r=>r.map(([x,y])=>({lat:y, lng:x})));
-  map.__parcelHL = new google.maps.Polygon({ paths, map, clickable:false, strokeColor:'#FFD400', strokeOpacity:1, strokeWeight:3, fillColor:'#FFD400', fillOpacity:0.25, zIndex:5 });
+  map.__parcelHL = new google.maps.Polygon({ paths, map, clickable:false, strokeColor:'#FFD400', strokeOpacity:1, strokeWeight:4, fillColor:'#FFD400', fillOpacity:0.3, zIndex:1000 });
   if(infoWindow && !infoWindow.__hlWired){ infoWindow.__hlWired = true; infoWindow.addListener('closeclick', ()=>mcaClearHighlight(map)); }
+}
+async function mcaHighlightFromGeoJson(map, latLng, infoWindow){
+  try{
+    const r = await fetch(`${MCA_GIS}/Parcels/MapServer/0/query?f=geojson&returnGeometry=true&outSR=4326&outFields=APN&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&geometry=${latLng.lng()},${latLng.lat()}`);
+    const gj = await r.json(); const g = gj && gj.features && gj.features[0] && gj.features[0].geometry;
+    if(!g) return;
+    const polys = g.type==='MultiPolygon' ? g.coordinates : [g.coordinates];
+    mcaHighlightParcel(map, {rings: polys.flat()}, infoWindow);
+  }catch(e){ console.error('Parcel outline lookup failed', e); }
 }
 async function mcaIdentifyParcel(map, latLng, infoWindow){
   const url = `${MCA_GIS}/Parcels/MapServer/0/query?f=json&returnGeometry=true&outSR=4326&outFields=APN_DASH,APN,OWNER_NAME,PHYSICAL_ADDRESS,PHYSICAL_CITY,LAND_SIZE,CITY_ZONING,JURISDICTION,SALE_DATE,SALE_PRICE&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&geometry=${latLng.lng()},${latLng.lat()}`;
   try{
     const r = await fetch(url); const j = await r.json();
     const a = j && j.features && j.features[0] && j.features[0].attributes;
-    mcaHighlightParcel(map, j && j.features && j.features[0] && j.features[0].geometry, infoWindow);
+    const g0 = j && j.features && j.features[0] && j.features[0].geometry;
+    if(g0 && g0.rings && g0.rings.length) mcaHighlightParcel(map, g0, infoWindow);
+    else if(a) mcaHighlightFromGeoJson(map, latLng, infoWindow);
+    else mcaClearHighlight(map);
     if(!a){ infoWindow.setContent('<div style="font-size:13px;">No parcel found here.</div>'); infoWindow.setPosition(latLng); infoWindow.open(map); return; }
     const apn = a.APN_DASH || a.APN || '';
     const sqft = a.LAND_SIZE ? Number(a.LAND_SIZE) : 0;
@@ -9712,9 +9735,13 @@ function renderClientMapModal(){
     <div class="modal-head no-print">
       <div class="modal-title">🗺️ ${escapeHtml(c?c.name:'Map')}</div>
       ${c && !keyNotSet ? `
-        <button class="btn secondary sm" data-action="printClientMap" style="margin-left:auto;">🖨️ Print</button>
-        <button class="btn secondary sm" data-action="exportClientMapKml">⬇️ Export KML</button>
-        ${basemapSelectHtml()}
+        <div style="margin-left:auto;display:flex;gap:6px;align-items:center;">
+          <button class="btn secondary sm" data-basemapbtn="google" style="font-weight:700;box-shadow:inset 0 0 0 2px var(--edge-dark,#8a2d0a);">🗺️ Google Maps</button>
+          <button class="btn secondary sm" data-basemapbtn="mca">📐 MCA Maps</button>
+          <button class="btn secondary sm" data-basemapbtn="landvision" title="Opens LandVision in a new tab">🛰️ LandVision ↗</button>
+          <button class="btn secondary sm" data-action="printClientMap">🖨️ Print</button>
+          <button class="btn secondary sm" data-action="exportClientMapKml">⬇️ Export KMZ</button>
+        </div>
       ` : ''}
       <button class="modal-close" data-action="closeClientMap">✕</button>
     </div>
@@ -9737,7 +9764,15 @@ function renderClientMapModal(){
   if(legendEl) wireMapLegendHandlers(legendEl);
   const printBtn = overlay.querySelector('[data-action="printClientMap"]'); if(printBtn) printBtn.onclick=()=>printClientMap(c);
   const exportBtn = overlay.querySelector('[data-action="exportClientMapKml"]'); if(exportBtn) exportBtn.onclick=()=>exportMapAsKml(c);
-  wireBasemapSelect(overlay.querySelector('[data-basemap]'));
+  const bmBtns = overlay.querySelectorAll('[data-basemapbtn]');
+  const markBm = (v)=>bmBtns.forEach(b=>{ const on = b.dataset.basemapbtn===v; b.style.fontWeight = on?'700':''; b.style.boxShadow = on?'inset 0 0 0 2px var(--edge-dark,#8a2d0a)':''; });
+  bmBtns.forEach(b=>b.onclick=()=>{
+    const v = b.dataset.basemapbtn;
+    if(v==='landvision'){ window.open(LANDVISION_LOGIN_URL, '_blank', 'noopener'); return; }
+    const map = state._activeClientMap;
+    if(map) applyBasemap(map, v);
+    markBm(v);
+  });
   const sideListToggle = overlay.querySelector('#mapSideListToggle'); if(sideListToggle) sideListToggle.onclick=()=>{
     state.mapSideListCollapsed = !state.mapSideListCollapsed;
     const wrapper = document.getElementById('mapSideListWrapper');
@@ -9775,7 +9810,7 @@ function renderClientMapModal(){
       saveMapTypePreference(map.getMapTypeId());
     });
     const infoWindow = new google.maps.InfoWindow();
-    applyBasemap(map, getBasemapPref()==='mca' ? 'mca' : 'google', true);
+    applyBasemap(map, 'google', true); // always opens on Google (Michael, 9/26)
     wireParcelClick(map, infoWindow);
     const items = (c.deals||[]).filter(d=>d.stage!=='dead' && !(d.commission1Paid && d.commission2Paid)).map(d=>({
       kind:'deal', listId:l.id, clientId:c.id, dealId:d.id, rec:d,
