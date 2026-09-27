@@ -9602,6 +9602,7 @@ function applyBasemap(map, which, quiet){
   const ov = map.overlayMapTypes;
   for(let i=ov.getLength()-1; i>=0; i--){ const t = ov.getAt(i); if(t && t.__mca) ov.removeAt(i); }
   map.__basemap = which;
+  if(which!=='mca') mcaClearHighlight(map);
   if(which==='mca'){
     const outline = mcaTileLayer('ParcelOutline','Parcels'); outline.__mca = true;
     const labels = mcaTileLayer('ParcelLabel','Parcel labels'); labels.__mca = true;
@@ -9609,11 +9610,20 @@ function applyBasemap(map, which, quiet){
     if(!quiet && map.getZoom() < 15){ map.setZoom(16); flashToast('Zoomed in — parcel lines show from street level in.'); }
   }
 }
+function mcaClearHighlight(map){ if(map && map.__parcelHL){ map.__parcelHL.setMap(null); map.__parcelHL = null; } }
+function mcaHighlightParcel(map, geom, infoWindow){
+  mcaClearHighlight(map);
+  if(!geom || !geom.rings || !geom.rings.length) return;
+  const paths = geom.rings.map(r=>r.map(([x,y])=>({lat:y, lng:x})));
+  map.__parcelHL = new google.maps.Polygon({ paths, map, clickable:false, strokeColor:'#FFD400', strokeOpacity:1, strokeWeight:3, fillColor:'#FFD400', fillOpacity:0.25, zIndex:5 });
+  if(infoWindow && !infoWindow.__hlWired){ infoWindow.__hlWired = true; infoWindow.addListener('closeclick', ()=>mcaClearHighlight(map)); }
+}
 async function mcaIdentifyParcel(map, latLng, infoWindow){
-  const url = `${MCA_GIS}/Parcels/MapServer/0/query?f=json&returnGeometry=false&outFields=APN_DASH,APN,OWNER_NAME,PHYSICAL_ADDRESS,PHYSICAL_CITY,LAND_SIZE,CITY_ZONING,JURISDICTION,SALE_DATE,SALE_PRICE&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&geometry=${latLng.lng()},${latLng.lat()}`;
+  const url = `${MCA_GIS}/Parcels/MapServer/0/query?f=json&returnGeometry=true&outSR=4326&outFields=APN_DASH,APN,OWNER_NAME,PHYSICAL_ADDRESS,PHYSICAL_CITY,LAND_SIZE,CITY_ZONING,JURISDICTION,SALE_DATE,SALE_PRICE&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&geometry=${latLng.lng()},${latLng.lat()}`;
   try{
     const r = await fetch(url); const j = await r.json();
     const a = j && j.features && j.features[0] && j.features[0].attributes;
+    mcaHighlightParcel(map, j && j.features && j.features[0] && j.features[0].geometry, infoWindow);
     if(!a){ infoWindow.setContent('<div style="font-size:13px;">No parcel found here.</div>'); infoWindow.setPosition(latLng); infoWindow.open(map); return; }
     const apn = a.APN_DASH || a.APN || '';
     const sqft = a.LAND_SIZE ? Number(a.LAND_SIZE) : 0;
