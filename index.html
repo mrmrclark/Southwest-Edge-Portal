@@ -721,6 +721,14 @@
   .mobile-back{display:none;background:none;border:none;color:#fff;font-size:20px;margin-right:6px;}
   @media (max-width:820px){ .mobile-back.show{display:block;} }
 .mw-busy iframe{pointer-events:none !important;}
+.cp-wrap{margin:8px 0 6px;}
+.cp-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft);margin-bottom:5px;}
+.cp-list{display:flex;flex-wrap:wrap;gap:6px;}
+.cp-pill{display:inline-flex;align-items:center;gap:3px;max-width:100%;border:1px solid var(--line);background:var(--canvas);color:var(--ink-soft);border-radius:999px;padding:4px 11px;font-size:12px;cursor:pointer;line-height:1.3;}
+.cp-pill:hover{border-color:var(--edge);color:var(--ink);}
+.cp-pill .cp-t{max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.cp-pill .cp-m{white-space:nowrap;opacity:.8;}
+
 /* Checklist dates: phones get item on line 1, Start · Due · Completed small on line 2 (9/27 — undo = delete this block) */
 .cl-lbl{display:none;}
 @media (max-width:820px){
@@ -751,7 +759,7 @@ const EDGE_LOGO_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAARgAAA
 // normal for this specific key type; Google expects it to be visible in page source and
 // restricted by domain, via HTTP referrer restriction in Google Cloud Console, not hidden
 // like the other secrets in this app). Replace once Michael has generated a real key.
-const APP_BUILD = '2026-09-27 phone-board-scroll';
+const APP_BUILD = '2026-10-02 completed-pills';
 const GOOGLE_MAPS_JS_KEY = 'AIzaSyBMlIjvH2bpZK6mYJeNZSkQvM8TXQkCjDE';
 const CATEGORY_ORANGE_ICONS = ['💲','🏢','🎯','📋','☁️','🔧','✈️','🏛️','💎','📄','⭐','🗂️'];
 
@@ -3694,6 +3702,32 @@ async function ensureAccountBoard(listId, c){
 }
 function accountProjects(c){ return db.todos.filter(t=>t.type==='project' && t.clientId===c.id).filter(visibleTodo); }
 function kickoffListFor(listId){ const lb = listBoards().find(x=>bdListIdFor(x)===listId); return lb ? (lb.kickoff||[]) : []; }
+
+// 10/2 (Michael): completed items fold into small gray pills at the bottom of a list —
+// open items stay as full cards; click a pill to open that item. Something checked off
+// just now stays as a full card until you leave (state.recentlyCompletedIds), same as lists.
+function cpInitials(uid){ const u = USERS.find(x=>x.id===uid); if(!u) return ''; return (u.name||'').split(/\s+/).filter(Boolean).map(w=>w[0]).join('').slice(0,2).toUpperCase(); }
+function completedPillsHtml(items, label){
+  if(!items.length) return '';
+  const pill = t=>{
+    const when = t.completedAt ? fmtDate(t.completedAt instanceof Date ? t.completedAt : new Date(t.completedAt)) : '';
+    const who = cpInitials(t.assignedTo);
+    const full = `${t.title}${when?' · done '+when:''}${who?' · '+who:''}`;
+    return `<button type="button" class="cp-pill" data-bd="open" data-bdt="${t.id}" title="${escapeAttr(full)}">✓ <span class="cp-t">${escapeHtml(t.title||'(untitled)')}</span>${when?` <span class="cp-m">· ${escapeHtml(when)}</span>`:''}${who?` <span class="cp-m">· ${escapeHtml(who)}</span>`:''}</button>`;
+  };
+  return `<div class="cp-wrap"><div class="cp-label">${label||'Completed'} (${items.length})</div><div class="cp-list">${items.map(pill).join('')}</div></div>`;
+}
+function splitCompleted(list){
+  const recent = new Set(state.recentlyCompletedIds||[]);
+  const done = list.filter(t=>t.completed && !recent.has(t.id))
+    .sort((a,b)=>(new Date(b.completedAt||0)) - (new Date(a.completedAt||0)));
+  const open = list.filter(t=>!(t.completed && !recent.has(t.id)));
+  return {open, done};
+}
+function todoListWithPills(list, emptyHtml){
+  const {open, done} = splitCompleted(list);
+  return (open.length ? renderTodoList(open, true) : emptyHtml) + completedPillsHtml(done);
+}
 function renderAccountProjectsSection(l, c, canEdit){
   const projs = accountProjects(c);
   const kick = projs.find(p=>p.isStandard);
@@ -3703,15 +3737,26 @@ function renderAccountProjectsSection(l, c, canEdit){
       <div class="nav-icon" style="font-size:18px;">${p.isStandard?'🚀':'📁'}</div>
       <div class="row-body"><div class="row-title">${escapeHtml(p.title)}${p.completed?' <span class="pill gray">Done</span>':''}</div>
       <div class="row-meta">${kids.length?`<span class="pill gray">${open} open of ${kids.length} To-Do${kids.length===1?'':'s'}</span>`:'<span class="tiny">No To-Dos yet</span>'}${p.dueDate?` <span class="due">${fmtDate(p.dueDate)}</span>`:''}</div></div></div>`; };
-  if(!canEdit && !projs.length) return '';
-  return `<div class="section-label">Projects</div>
-    ${canEdit ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+  // 10/2 (Michael): one row of buttons — New To-Do | New Project | Kickoff Project — then
+  // the lists underneath in that same order: To-Do's, Projects, Kickoff Project.
+  const todos = db.todos.filter(t=>t.clientId===c.id && !t.dealId && t.type!=='project' && !t.projectId).filter(visibleTodo);
+  const others = projs.filter(p=>!p.isStandard).sort((a,b)=>(!!a.completed - !!b.completed));
+  const lbl = (t, extra='')=>`<div class="section-label" style="margin-top:14px;">${t}${extra}</div>`;
+  return `
+    ${canEdit ? `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:4px 0 6px;">
+      <button class="btn sm" data-action="newAccountTodo" data-listid="${l.id}" data-client="${c.id}">+ New To-Do</button>
       <button class="btn sm" data-bd="acctNewProject" data-listid="${l.id}" data-client="${c.id}">+ New Project</button>
       ${kick ? `<button class="btn secondary sm" data-bd="open" data-bdt="${kick.id}">🚀 Open Kickoff Project</button>`
              : `<button class="btn secondary sm" data-bd="acctKickoff" data-listid="${l.id}" data-client="${c.id}" title="A Project pre-loaded with the standard ${singular} To-Dos">🚀 Kickoff Project</button>`}
       ${accountBoardFor(c.id) ? `<button class="btn secondary sm" data-bd="openListBoard" data-board="${accountBoardFor(c.id).id}">▦ Board</button>` : ''}
     </div>` : ''}
-    ${projs.length ? projs.sort((a,b)=>(!!b.isStandard - !!a.isStandard) || (!!a.completed - !!b.completed)).map(row).join('') : '<div class="tiny" style="color:var(--ink-soft);margin-bottom:12px;">No Projects yet.</div>'}`;
+    ${lbl("To-Do's", ' <span style="font-weight:400;color:var(--ink-soft);">(not tied to a specific site or Project)</span>')}
+    ${todoListWithPills(todos, '<div class="tiny" style="color:var(--ink-soft);padding:6px 0;">No open To-Dos.</div>')}
+    ${lbl('Projects')}
+    ${others.filter(p=>!p.completed).length ? others.filter(p=>!p.completed).map(row).join('') : '<div class="tiny" style="color:var(--ink-soft);padding:6px 0;">No open Projects.</div>'}
+    ${completedPillsHtml(others.filter(p=>p.completed), 'Completed Projects')}
+    ${lbl('Kickoff Project')}
+    ${kick ? (kick.completed ? completedPillsHtml([kick], 'Completed') : row(kick)) : `<div class="tiny" style="color:var(--ink-soft);padding:6px 0;">No Kickoff Project yet.</div>`}`;
 }
 async function createKickoffProject(listId, clientId){
   const l = db.lists.find(x=>x.id===listId); const c = l && l.clients.find(x=>x.id===clientId); if(!c) return;
@@ -12189,9 +12234,6 @@ function renderClientModalBody(l,c,viewMode,pendingDel){
     </div>` : ''}
   </div>
   ${renderAccountProjectsSection(l, c, canEdit)}
-  <div class="section-label">General To-Do's <span style="font-weight:400;color:var(--ink-soft);">(not tied to a specific site or Project)</span></div>
-  ${canEdit ? `<button class="btn sm" data-action="newAccountTodo" data-listid="${l.id}" data-client="${c.id}" style="margin-bottom:10px;">+ New To-Do</button>` : ''}
-  ${renderTodoList(db.todos.filter(t=>t.clientId===c.id && !t.dealId && t.type!=='project' && !t.projectId).filter(visibleTodo), true)}
   <div class="section-label" style="margin-top:18px;">Sites / Deals</div>
   ${canEdit ? `<button class="btn sm" data-action="addDeal" data-client="${c.id}" style="margin-bottom:10px;">+ Add site / deal</button>` : ''}
   ${renderDealGroupsInClient(l,c)}
@@ -12887,7 +12929,7 @@ function renderDealModalBody(l,c,d){
   </div>
   <div class="section-label">To-Do's</div>
   ${canEdit ? `<button class="btn sm" data-action="newTodoInDeal" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}" style="margin-bottom:10px;">+ New To-Do</button>` : ''}
-  ${todos.length? renderTodoList(todos, true) : `<div class="tiny" style="color:var(--ink-soft);padding:6px 0;">No to-do's yet — add the first action item for this site.</div>`}
+  ${todoListWithPills(todos, `<div class="tiny" style="color:var(--ink-soft);padding:6px 0;">No open to-do's — add the next action item for this site.</div>`)}
   <div class="contact-card" style="margin-top:18px;">
     <div class="label">Broker</div>
     ${brokerRow(d.brokerContactId)}
@@ -13751,7 +13793,7 @@ function renderEntryModalBody(l,e){
     <button class="btn secondary sm" style="margin-top:10px;" data-action="pickEntryContact" data-entry="${e.id}" data-listid="${l.id}">${e.contactId? 'Change contact':'Add Contact / Create New Contact'}</button>
   </div>
   <div class="section-label">To-Do's</div>
-  ${todos.length? renderTodoList(todos, true) : `<div class="tiny" style="color:var(--ink-soft);padding:6px 0;">No follow-up set — add a to-do to keep this prospect moving.</div>`}
+  ${todoListWithPills(todos, `<div class="tiny" style="color:var(--ink-soft);padding:6px 0;">No follow-up set — add a to-do to keep this prospect moving.</div>`)}
   <div class="contact-card" style="margin-top:18px;">
     <div class="label">Prospect Details${owner?` · Owner: ${escapeHtml(owner.name)}`:''}</div>
     <div class="field" style="margin-top:8px;"><label>Client Name</label><input value="${escapeAttr(e.name)}" data-edit="name" data-entry="${e.id}" data-listid="${l.id}"></div>
