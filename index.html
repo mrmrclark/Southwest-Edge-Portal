@@ -759,7 +759,7 @@ const EDGE_LOGO_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAARgAAA
 // normal for this specific key type; Google expects it to be visible in page source and
 // restricted by domain, via HTTP referrer restriction in Google Cloud Console, not hidden
 // like the other secrets in this app). Replace once Michael has generated a real key.
-const APP_BUILD = '2026-10-02 completed-pills';
+const APP_BUILD = '2026-10-02 completed-pills-2';
 const GOOGLE_MAPS_JS_KEY = 'AIzaSyBMlIjvH2bpZK6mYJeNZSkQvM8TXQkCjDE';
 const CATEGORY_ORANGE_ICONS = ['💲','🏢','🎯','📋','☁️','🔧','✈️','🏛️','💎','📄','⭐','🗂️'];
 
@@ -3718,10 +3718,11 @@ function completedPillsHtml(items, label){
   return `<div class="cp-wrap"><div class="cp-label">${label||'Completed'} (${items.length})</div><div class="cp-list">${items.map(pill).join('')}</div></div>`;
 }
 function splitCompleted(list){
-  const recent = new Set(state.recentlyCompletedIds||[]);
-  const done = list.filter(t=>t.completed && !recent.has(t.id))
+  // 10/2: checked = straight to a pill (Michael: completed full cards lingering looked broken;
+  // the pill stays right there, so a mis-click is still one click to undo).
+  const done = list.filter(t=>t.completed)
     .sort((a,b)=>(new Date(b.completedAt||0)) - (new Date(a.completedAt||0)));
-  const open = list.filter(t=>!(t.completed && !recent.has(t.id)));
+  const open = list.filter(t=>!t.completed);
   return {open, done};
 }
 function todoListWithPills(list, emptyHtml){
