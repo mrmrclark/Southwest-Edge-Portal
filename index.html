@@ -721,6 +721,12 @@
   .mobile-back{display:none;background:none;border:none;color:#fff;font-size:20px;margin-right:6px;}
   @media (max-width:700px){ .mobile-back.show{display:block;} }
 .mw-busy iframe{pointer-events:none !important;}
+.bd-note{box-sizing:border-box;height:34px;line-height:34px;padding:0 8px;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:text;}
+.bd-note:hover{background:rgba(0,0,0,.03);}
+.bd-note-wrap{height:auto;min-height:34px;line-height:1.4;padding:7px 8px;white-space:pre-wrap;word-break:break-word;}
+.bd-note-ph{color:var(--ink-soft);opacity:.55;font-size:12px;}
+.bd-note-tip{position:fixed;z-index:3000;max-width:380px;max-height:320px;overflow:auto;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,.22);padding:10px 12px;font-size:13px;line-height:1.45;white-space:pre-wrap;word-break:break-word;pointer-events:none;}
+
 /* 10/5 iPad / touch: drag handles work with a finger (no page scroll stealing the drag),
    bigger grab areas on touch screens, collapse arrow always visible. */
 .sb-resize,.mw-h,.bd-nav-resize,.bd-colresize,.mw-draggable{touch-action:none;}
@@ -777,7 +783,7 @@ const EDGE_LOGO_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAARgAAA
 // normal for this specific key type; Google expects it to be visible in page source and
 // restricted by domain, via HTTP referrer restriction in Google Cloud Console, not hidden
 // like the other secrets in this app). Replace once Michael has generated a real key.
-const APP_BUILD = '2026-10-08 todo-close-to-list';
+const APP_BUILD = '2026-10-08 note-wrap';
 const GOOGLE_MAPS_JS_KEY = 'AIzaSyBMlIjvH2bpZK6mYJeNZSkQvM8TXQkCjDE';
 const CATEGORY_ORANGE_ICONS = ['💲','🏢','🎯','📋','☁️','🔧','✈️','🏛️','💎','📄','⭐','🗂️'];
 
@@ -3996,6 +4002,46 @@ function bdPersonBadge(uid){
   if(!u) return `<span class="bd-avatar empty" title="Unassigned">👤</span>`;
   return `<span class="bd-avatar" style="background:${bdAvatarColor(u.id)};" title="${escapeAttr(u.name)}">${escapeHtml(u.initials || u.name.split(' ').map(s=>s[0]).join('').slice(0,2))}</span>`;
 }
+
+// 10/8 (Michael, option C): long-text cells on the board. Each column has "Wrap text" On/Off
+// (column ▾ menu, saved on the board for everyone). Off = one line + a pop-up of the whole note
+// when you hover. On = the whole note wraps inside the row. Either way: click → bigger edit box.
+function bdNoteCellHtml(col, v, k, hover, w){
+  const txt = v==null ? '' : String(v);
+  const body = txt ? escapeHtml(txt) : '<span class="bd-note-ph">+ add</span>';
+  const ws = w ? ` style="width:${w}px;max-width:${w}px;"` : '';
+  return `<div class="bd-note${col.wrap?' bd-note-wrap':''}"${ws} data-bd="noteOpen" ${k}${hover && !col.wrap && txt ? ' data-notehover="1"' : ''}>${body}</div>`;
+}
+(function bdNoteHover(){
+  let tip = null, timer = null;
+  const hide = ()=>{ clearTimeout(timer); timer=null; if(tip){ tip.remove(); tip=null; } };
+  document.addEventListener('mouseover', ev=>{
+    let el = ev.target.closest && ev.target.closest('[data-notehover]');
+    if(!el){ return; }
+    if(tip && tip.__for===el) return;
+    hide();
+    if(window.matchMedia && window.matchMedia('(hover: none)').matches) return;
+    const sel = `[data-notehover][data-bdc="${el.dataset.bdc}"]` + (el.dataset.bdt ? `[data-bdt="${el.dataset.bdt}"]` : `[data-bds="${el.dataset.bds}"]`);
+    timer = setTimeout(()=>{
+      // the board may have re-rendered while waiting — find the same cell again
+      if(!document.body.contains(el)){ el = document.querySelector(sel); if(!el) return; }
+      const r = el.getBoundingClientRect();
+      tip = document.createElement('div'); tip.className = 'bd-note-tip'; tip.__for = el;
+      tip.textContent = el.textContent;
+      document.body.appendChild(tip);
+      const w = tip.offsetWidth, h = tip.offsetHeight;
+      let left = Math.min(r.left, window.innerWidth - w - 10); left = Math.max(10, left);
+      let top = r.bottom + 6; if(top + h > window.innerHeight - 10) top = Math.max(10, r.top - h - 6);
+      tip.style.left = left+'px'; tip.style.top = top+'px';
+    }, 280);
+  });
+  document.addEventListener('mouseout', ev=>{
+    const el = ev.target.closest && ev.target.closest('[data-notehover]');
+    if(el && !(ev.relatedTarget && el.contains(ev.relatedTarget))) hide();
+  });
+  document.addEventListener('mousedown', hide, true);
+  document.addEventListener('scroll', ()=>{ if(tip){ tip.remove(); tip=null; } }, true);
+})();
 function bdCellHtml(b, t, col, mode, isSub){
   const v = bdGetValue(t, col);
   const k = isSub ? `data-bds="${t.id}" data-bdc="${col.id}"` : `data-bdt="${t.id}" data-bdc="${col.id}"`;
@@ -4025,8 +4071,11 @@ function bdCellHtml(b, t, col, mode, isSub){
     case 'phone': return `<div class="bd-linkcell"><input class="bd-in" ${k} data-bd="set" value="${escapeAttr(v)}">${v?`<a href="tel:${escapeAttr(v)}" title="Call">☎</a>`:''}</div>`;
     case 'longtext': return mode==='form'
       ? `<textarea class="bd-in" rows="2" ${k} data-bd="set">${escapeHtml(v)}</textarea>`
-      : `<input class="bd-in" ${k} data-bd="set" value="${escapeAttr(v)}" title="${escapeAttr(v)}">`;
-    default: return `<input class="bd-in" ${k} data-bd="set" value="${escapeAttr(v)}">`;
+      : bdNoteCellHtml(col, v, k, true, bdColWidth(b, col));
+    default:
+      // 10/8: a plain text column with "Wrap text" on shows wrapped like a note (click to edit).
+      if(col.type==='text' && col.wrap && mode!=='form') return bdNoteCellHtml(col, v, k, false, bdColWidth(b, col));
+      return `<input class="bd-in" ${k} data-bd="set" value="${escapeAttr(v)}">`;
   }
 }
 
@@ -4388,6 +4437,14 @@ function renderBoardPopover(){
       ${files.map(f=>`<div class="bd-menu-item" style="cursor:default;"><a href="#" data-attpath="${escapeAttr(f.path)}" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">📎 ${escapeHtml(f.name)}</a><span class="tiny">${Math.max(1,Math.round((f.size||0)/1024))}KB</span><button class="row-trash" data-bd="fileRemove" data-fid="${f.id}" title="Remove">✕</button></div>`).join('') || '<div class="tiny" style="color:var(--ink-soft);margin:0 4px 8px;">No files yet.</div>'}
       ${state.bdUploading ? '<div class="tiny" style="margin:6px 4px;">Uploading…</div>' : `<label class="btn secondary sm" style="margin-top:6px;display:inline-block;cursor:pointer;">+ Add files<input type="file" multiple data-bd="fileInput" style="display:none;"></label>`}
       <div class="tiny" style="color:var(--ink-soft);margin:8px 4px 0;">Tip: you can also drag files onto the cell.</div>`;
+  } else if(p.kind==='note'){
+    const col = bdPopCol(b, p); const t = bdPopTarget(p); if(!col || !t){ state.bdPop=null; return; }
+    html = `<div class="bd-pop-title">${escapeHtml(col.name)}</div>
+      <textarea id="bdNoteTa" rows="8" style="width:100%;min-width:300px;font-size:13px;line-height:1.45;white-space:pre-wrap;resize:vertical;">${escapeHtml(bdGetValue(t, col)||'')}</textarea>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px;">
+        <button class="btn secondary sm" data-bd="closePop">Cancel</button>
+        <button class="btn sm" data-bd="noteSave">Save</button>
+      </div>`;
   } else if(p.kind==='colMenu' && p.sub){
     const col = bdPopCol(b, p); if(!col){ state.bdPop=null; return; }
     html = `<div class="bd-pop-title">${escapeHtml(col.name)} (subitems)</div>
@@ -4403,6 +4460,7 @@ function renderBoardPopover(){
       ${isTitle ? '' : `
       <div class="bd-menu-item" data-bd="renameCol">✏️ Rename</div>
       ${col.type==='status' ? `<div class="bd-menu-item" data-bd="editLabelsFromMenu">🎨 Edit labels</div>` : ''}
+      ${(col.type==='longtext' || col.type==='text') ? `<div class="bd-menu-item" data-bd="toggleWrap">↩️ Wrap text: <b>${col.wrap?'On':'Off'}</b> <span class="tiny" style="color:var(--ink-soft);">(click to turn ${col.wrap?'off':'on'})</span></div>` : ''}
       <div class="bd-menu-item" data-bd="hideCol">👁 Hide (just for me)</div>
       ${col.builtin ? `<div class="bd-menu-item tiny" style="color:var(--ink-soft);cursor:default;">Built-in column — can be hidden, not deleted</div>` : `<div class="bd-menu-item" data-bd="deleteCol" style="color:var(--bad);">🗑️ Delete column</div>`}`}`;
   } else if(p.kind==='hide'){
@@ -4682,6 +4740,7 @@ document.addEventListener('click', ev=>{
       popBoard.groups = gs.filter(x=>x.id!==g.id); const dest = popBoard.groups[0].id;
       rows.forEach(t=>{ t.groupId = dest; bdSaveTarget(t); }); supaSaveBoard(popBoard); state.bdPop=null; render(); return;
     }
+    case 'noteOpen': { const f = bdFind(el); if(f.b && f.t) bdOpenPop('note', el, f.isSub ? {boardId:f.b.id, subId:f.t.id, sub:true, colId:el.dataset.bdc} : {boardId:f.b.id, todoId:f.t.id, colId:el.dataset.bdc}); return; }
     case 'personPick': { const f = bdFind(el); if(f.b && f.t) bdOpenPop('person', el, f.isSub ? {boardId:f.b.id, subId:f.t.id, sub:true, colId:el.dataset.bdc} : {boardId:f.b.id, todoId:f.t.id, colId:el.dataset.bdc}); return; }
     case 'pickPerson': {
       const col = bdPopCol(popBoard, pop); const t = bdPopTarget(pop);
@@ -4743,6 +4802,12 @@ document.addEventListener('click', ev=>{
     case 'clearSort': { const bb = popBoard || b; bdPrefs(bb.id).sort = null; bdSavePrefs(bb.id); state.bdPop=null; render(); return; }
     case 'clearFilters': { const p = bdPrefs(b.id); p.search=''; p.person=null; p.status=null; bdSavePrefs(b.id); render(); return; }
     case 'renameCol': { const col = bdPopCol(popBoard, pop); bdPromptText('Rename column', col.name, v=>{ col.name=v; supaSaveBoard(popBoard); }); return; }
+    case 'toggleWrap': { const col = bdPopCol(popBoard, pop); if(col){ col.wrap = !col.wrap; supaSaveBoard(popBoard); } state.bdPop=null; render(); return; }
+    case 'noteSave': {
+      const col = bdPopCol(popBoard, pop); const t = bdPopTarget(pop); const ta = document.getElementById('bdNoteTa');
+      if(col && t && ta){ const v = ta.value.replace(/\s+$/,''); if(String(bdGetValue(t,col)||'')!==v){ bdSetValue(t, col, v); bdSaveTarget(t); } }
+      state.bdPop=null; render(); return;
+    }
     case 'hideCol': { const p = bdPrefs(popBoard.id); (p.hidden||(p.hidden=[])).push(pop.colId); bdSavePrefs(popBoard.id); state.bdPop=null; render(); return; }
     case 'hideMenu': bdOpenPop('hide', el, {boardId:b.id}); return;
     case 'deleteCol': {
