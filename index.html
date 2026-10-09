@@ -783,7 +783,7 @@ const EDGE_LOGO_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAARgAAA
 // normal for this specific key type; Google expects it to be visible in page source and
 // restricted by domain, via HTTP referrer restriction in Google Cloud Console, not hidden
 // like the other secrets in this app). Replace once Michael has generated a real key.
-const APP_BUILD = '2026-10-08 note-wrap';
+const APP_BUILD = '2026-10-09 active-count';
 const GOOGLE_MAPS_JS_KEY = 'AIzaSyBMlIjvH2bpZK6mYJeNZSkQvM8TXQkCjDE';
 const CATEGORY_ORANGE_ICONS = ['💲','🏢','🎯','📋','☁️','🔧','✈️','🏛️','💎','📄','⭐','🗂️'];
 
@@ -7939,14 +7939,14 @@ function renderListMain(listId){
     if(!l.clients.length) return addBtn + (searchQ ? `<div class="empty-state"><div class="big">No matches for "${escapeHtml(searchQ)}".</div><div class="tiny">Try a different search, or clear it to see everything.</div></div>` : `<div class="empty-state"><div class="big">No ${l.name.toLowerCase()} yet.</div><div class="tiny">Add your first one to get moving.</div></div>`);
     const renderRow = (c)=>{
       const dealCount = c.deals.length;
-      const openDeals = c.deals.filter(d=>!d.complete).length;
+      const openDeals = c.deals.filter(d=>!d.complete && d.stage!=='dead').length; // 10/9: dead deals don't count
       const isListingsRow = l.id==='listings' && !state.isMobile;
       return `
       <div class="row-card" data-openclient="${c.id}" data-listid="${l.id}">
         <div class="nav-icon" style="font-size:20px;">🏷️</div>
         <div class="row-body">
           <div class="row-title">${escapeHtml(c.name)}</div>
-          <div class="row-meta"><span>${openDeals} active of ${dealCount} site${dealCount===1?'':'s'}</span></div>
+          <div class="row-meta"><span>${openDeals} active site${openDeals===1?'':'s'}</span></div>
         </div>
         ${isListingsRow ? `
         <div style="display:flex;gap:6px;flex-shrink:0;" data-stopprop="1">
