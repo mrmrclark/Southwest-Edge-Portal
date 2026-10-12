@@ -721,6 +721,9 @@
   .mobile-back{display:none;background:none;border:none;color:#fff;font-size:20px;margin-right:6px;}
   @media (max-width:700px){ .mobile-back.show{display:block;} }
 .mw-busy iframe{pointer-events:none !important;}
+.csync-rv{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px;font-size:13px;}
+.csync-opt{display:flex;gap:5px;align-items:center;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
 .bd-note{box-sizing:border-box;height:34px;line-height:34px;padding:0 8px;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:text;}
 .bd-note:hover{background:rgba(0,0,0,.03);}
 .bd-note-wrap{height:auto;min-height:34px;line-height:1.4;padding:7px 8px;white-space:pre-wrap;word-break:break-word;}
@@ -783,7 +786,7 @@ const EDGE_LOGO_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAARgAAA
 // normal for this specific key type; Google expects it to be visible in page source and
 // restricted by domain, via HTTP referrer restriction in Google Cloud Console, not hidden
 // like the other secrets in this app). Replace once Michael has generated a real key.
-const APP_BUILD = '2026-10-09 active-count';
+const APP_BUILD = '2026-10-12 outlook-contacts';
 const GOOGLE_MAPS_JS_KEY = 'AIzaSyBMlIjvH2bpZK6mYJeNZSkQvM8TXQkCjDE';
 const CATEGORY_ORANGE_ICONS = ['💲','🏢','🎯','📋','☁️','🔧','✈️','🏛️','💎','📄','⭐','🗂️'];
 
@@ -3299,7 +3302,8 @@ function smartListTodosRaw(key){
   // conceptually; this is what actually enforces it. A checklist that lives *inside* a
   // Project is unaffected — that's the Project's own inline checklistItems section, not
   // a separate `db.todos` row, so nothing here touches it.
-  const t = db.todos.filter(td=>(td.type||'task')==='task'); // missing/null type defaults to task, same convention as todoLocalToRow
+  // 10/12 (Michael): Checklists show in the To-Do lists too (they used to vanish into Lists → Checklists only).
+  const t = db.todos.filter(td=>{ const ty = td.type||'task'; return ty==='task' || ty==='checklist'; }); // missing/null type defaults to task
   const me = state.currentUser.id;
   switch(key){
     // 2026-09-26 (Phase 5): Today Me = my single To-Dos due today or overdue, PLUS my
@@ -3315,7 +3319,7 @@ function smartListTodosRaw(key){
     case 'allMe': return t.filter(td=>!td.completed && inMySphere(td));
     case 'someday': return t.filter(td=>!td.completed && !td.dueDate && inMySphere(td));
     case 'completed': return t.filter(td=>td.completed && inMySphere(td));
-    case 'archived': return db.archivedTodos.filter(td=>inMySphere(td) && (td.type||'task')==='task');
+    case 'archived': return db.archivedTodos.filter(td=>inMySphere(td) && ['task','checklist'].includes(td.type||'task'));
     case 'everything': return t.filter(td=>!td.completed && inMySphere(td));
     case 'fullTeam': return t.filter(td=>!td.completed); // Admin-only, unrestricted — genuinely everyone
     default: {
@@ -3449,6 +3453,7 @@ function render(){
   if(state.pipelineView) renderPipelineModal();
   if(state.allTiersModalUserId) renderAllTiersModal();
   if(state.connectAssistantModalOpen) renderConnectAssistantModal();
+  if(state.csync) renderContactSyncModal();
   if(state.loiImport) renderLoiImportModal();
   if(state.clientMapModal) renderClientMapModal();
   if(state.geocodeIssuesOpen) renderGeocodeIssuesModal();
@@ -3471,6 +3476,7 @@ function render(){
   if(state.toast) showToastNow();
   if(state.bdPop) renderBoardPopover();
   restoreScrollPositions(__scrollSnap);
+  applyScrollPin();
 }
 
 /* ---------------- SCROLL PRESERVATION ----------------
@@ -3495,6 +3501,25 @@ function captureScrollPositions(){
     if(body) snap.modals.push({key: modalWindowKey(card), top: body.scrollTop});
   });
   return snap;
+}
+
+// 10/12 (Michael): after marking a deal Dead (or any stage change) and Save & Close, the page
+// "jerked" to the top. Save/stage changes fire extra async renders (stage-transition work,
+// syncing) after the window closes, and a section can collapse/shrink in between. A "scroll
+// pin" remembers where the page + the window underneath were and re-applies it on every render
+// for a couple of seconds, so you stay exactly where you were (same section, same spot).
+function setScrollPin(modalTop){
+  const ct = document.querySelector('.content');
+  state._scrollPin = { content: ct ? ct.scrollTop : null, modalTop: (typeof modalTop==='number') ? modalTop : null, until: Date.now()+2500 };
+}
+function applyScrollPin(){
+  const pin = state._scrollPin; if(!pin) return;
+  if(Date.now() > pin.until){ state._scrollPin = null; return; }
+  const go = ()=>{
+    const ct = document.querySelector('.content'); if(ct && pin.content!=null && ct.scrollTop!==pin.content) ct.scrollTop = pin.content;
+    if(pin.modalTop!=null){ const bodies = document.querySelectorAll('.modal-overlay .modal-body'); const top = bodies[bodies.length-1]; if(top && top.scrollTop!==pin.modalTop) top.scrollTop = pin.modalTop; }
+  };
+  go(); requestAnimationFrame(go);
 }
 function restoreScrollPositions(snap){
   if(!snap) return;
@@ -7522,13 +7547,150 @@ function renderArchivedDealsMain(){
   };
   return renderSection('clients', 'Clients') + renderSection('listings', 'Listings');
 }
+
+/* ---------------- OUTLOOK ↔ PORTAL CONTACT SYNC (10/12) ----------------
+   Your Outlook (main Contacts) ↔ the Portal contacts YOU added. Server: edge function
+   contacts-sync. First sync = Preview (counts, writes nothing) → Approve. Then Sync now + weekly. */
+async function csyncCall(body){
+  const { data, error } = await supabaseClient.functions.invoke('contacts-sync', { body });
+  if(error) return { error: error.message || 'Sync service unavailable.' };
+  return data || {};
+}
+async function csyncLoad(){
+  state.csync = { ...(state.csync||{}), loading:true };
+  render();
+  const d = await csyncCall({ action:'status' });
+  state.csync = { ...(state.csync||{}), loading:false, status:d };
+  render();
+}
+const CSYNC_FIELD_LABEL = {first:'First name', last:'Last name', company:'Company', email:'Email', phone:'Phone', mobile:'Mobile', website:'Website', address:'Street', city:'City', state:'State', zip:'Zip'};
+function csyncCountsHtml(c, preview){
+  if(!c) return '';
+  const row = (n, label)=> n ? `<div style="display:flex;justify-content:space-between;padding:3px 0;"><span>${label}</span><b>${n.toLocaleString()}</b></div>` : '';
+  return `<div style="border:1px solid var(--line);border-radius:10px;padding:10px 14px;font-size:13.5px;">
+    ${row(c.matched, 'Matched (already in both)')}
+    ${row(c.toPortalNew, preview?'New → will be added to the Portal':'Added to the Portal')}
+    ${row(c.toOutlookNew, preview?'New → will be added to your Outlook':'Added to your Outlook')}
+    ${row(c.portalUpdates, preview?'Portal contacts that get blanks filled in':'Portal contacts updated')}
+    ${row(c.outlookUpdates, preview?'Outlook contacts that get blanks filled in':'Outlook contacts updated')}
+    ${row(c.review, 'Need your review (below)')}
+    ${row(c.stoppedSyncing, 'Stopped syncing (deleted in Outlook, but on a deal — kept)')}
+    ${(!c.toPortalNew && !c.toOutlookNew && !c.portalUpdates && !c.outlookUpdates && !c.review) ? `<div class="tiny" style="color:var(--ink-soft);">Everything already matches.</div>` : ''}
+  </div>`;
+}
+function csyncReviewHtml(r){
+  const p = r.payload||{};
+  const nm = escapeHtml(p.name || '(no name)');
+  if(r.kind==='conflict'){
+    const fields = Object.entries(p.fields||{});
+    return `<div class="csync-rv" data-rv="${r.id}">
+      <div style="font-weight:700;margin-bottom:6px;">${nm} <span class="tiny" style="color:var(--ink-soft);font-weight:400;">— different in each place. Pick which one is right:</span></div>
+      ${fields.map(([f,v])=>`<div style="display:grid;grid-template-columns:90px 1fr 1fr;gap:6px;align-items:center;margin-bottom:4px;font-size:12.5px;">
+        <span style="color:var(--ink-soft);">${CSYNC_FIELD_LABEL[f]||f}</span>
+        <label class="csync-opt"><input type="radio" name="rv_${r.id}_${f}" value="portal" checked style="width:auto;"> Portal: <b>${escapeHtml(v.portal)}</b></label>
+        <label class="csync-opt"><input type="radio" name="rv_${r.id}_${f}" value="outlook" style="width:auto;"> Outlook: <b>${escapeHtml(v.outlook)}</b></label>
+      </div>`).join('')}
+      <button class="btn sm" data-csync="resolveConflict" data-id="${r.id}" style="margin-top:4px;">Save choice</button>
+    </div>`;
+  }
+  if(r.kind==='outlook_deleted') return `<div class="csync-rv"><div><b>${nm}</b> was deleted from your Outlook. Delete it from the Portal too?</div>
+      <div style="display:flex;gap:8px;margin-top:6px;"><button class="btn sm" data-csync="resolve" data-id="${r.id}" data-choice="delete">Delete in Portal</button><button class="btn secondary sm" data-csync="resolve" data-id="${r.id}" data-choice="keep">Keep in Portal (stop syncing it)</button></div></div>`;
+  if(r.kind==='portal_deleted') return `<div class="csync-rv"><div><b>${nm}</b> was deleted from the Portal. Delete it from your Outlook too?</div>
+      <div style="display:flex;gap:8px;margin-top:6px;"><button class="btn sm" data-csync="resolve" data-id="${r.id}" data-choice="delete">Delete in Outlook</button><button class="btn secondary sm" data-csync="resolve" data-id="${r.id}" data-choice="keep">Keep in Outlook (stop syncing it)</button></div></div>`;
+  if(r.kind==='maybe_match'){
+    const a = p.portal||{}, b = p.outlook||{};
+    const line = x=>escapeHtml([x.email, x.phone||x.mobile, x.company].filter(Boolean).join(' · ') || '—');
+    return `<div class="csync-rv"><div><b>${nm}</b> — same name, but email/phone don't match. Same person?</div>
+      <div class="tiny" style="margin:4px 0;color:var(--ink-soft);">Portal: ${line(a)}<br>Outlook: ${line(b)}</div>
+      <div style="display:flex;gap:8px;"><button class="btn sm" data-csync="resolve" data-id="${r.id}" data-choice="same">Same person — link them</button><button class="btn secondary sm" data-csync="resolve" data-id="${r.id}" data-choice="different">Different people</button></div></div>`;
+  }
+  return '';
+}
+function renderContactSyncModal(){
+  const m = state.csync; const st = m.status||{};
+  const overlay = document.createElement('div'); overlay.className='modal-overlay'; overlay.style.zIndex=215;
+  let body = '';
+  if(m.loading && !m.status) body = `<div class="tiny" style="padding:20px;">Checking your Outlook connection…</div>`;
+  else if(st.error) body = `<div style="font-size:14px;line-height:1.5;">Outlook contact sync is still being switched on behind the scenes — check back shortly.</div><div class="tiny" style="color:var(--ink-soft);margin-top:8px;">(${escapeHtml(st.error)})</div>`;
+  else if(!st.connected) body = `<div>First connect your Microsoft 365 account (Settings → Microsoft 365).</div><button class="btn sm" data-csync="reconnect" style="margin-top:10px;">📅 Connect Microsoft 365</button>`;
+  else if(st.needsReconnect) body = `<div>Your Microsoft 365 connection needs a one-time update to allow <b>contacts</b>.</div><div class="tiny" style="color:var(--ink-soft);margin:6px 0 10px;">You'll get a short code — sign in the same way you did before.</div><button class="btn sm" data-csync="reconnect">🔄 Reconnect Microsoft 365</button>`;
+  else {
+    const linked = st.state && st.state.status==='linked';
+    const revs = st.reviews||[];
+    body = `
+      <div class="tiny" style="color:var(--ink-soft);margin-bottom:12px;line-height:1.5;">Syncs <b>your</b> Outlook contacts with the contacts <b>you</b> added to the Portal — nobody else's. Blanks never overwrite anything, and nothing is deleted without asking you.</div>
+      ${m.msg ? `<div style="background:#EAF6EE;border:1px solid #BFE3CB;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:13px;">${m.msg}</div>` : ''}
+      ${m.busy ? `<div style="padding:10px 0;">⏳ ${escapeHtml(m.busy)}</div>` : ''}
+      ${!linked && !m.preview && !m.busy ? `<div style="margin-bottom:10px;">First sync: see what would happen before anything changes.</div><button class="btn" data-csync="preview">🔍 Preview first sync</button>` : ''}
+      ${m.preview && !m.busy ? `<div class="section-label">Preview — nothing has changed yet</div>${csyncCountsHtml(m.preview, true)}
+          <div style="display:flex;gap:8px;margin-top:12px;"><button class="btn" data-csync="approve">✓ Approve &amp; sync</button><button class="btn secondary" data-csync="cancelPreview">Cancel</button></div>` : ''}
+      ${linked && !m.preview && !m.busy ? `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+          <button class="btn sm" data-csync="syncNow">🔄 Sync now</button>
+          <span class="tiny" style="color:var(--ink-soft);">Last synced ${st.state.last_sync_at ? new Date(st.state.last_sync_at).toLocaleString() : '—'}</span>
+          <label class="tiny" style="margin-left:auto;display:flex;gap:6px;align-items:center;"><input type="checkbox" data-csync="weekly" ${st.state.weekly!==false?'checked':''} style="width:auto;"> Sync automatically every Sunday morning</label>
+        </div>
+        ${st.state.last_result ? `<div class="section-label" style="margin-top:14px;">Last sync</div>${csyncCountsHtml(st.state.last_result, false)}` : ''}` : ''}
+      ${revs.length ? `<div class="section-label" style="margin-top:16px;">Needs your review (${revs.length})</div>${revs.map(csyncReviewHtml).join('')}` : (linked ? `<div class="tiny" style="color:var(--ink-soft);margin-top:14px;">Nothing waiting for your review.</div>` : '')}`;
+  }
+  overlay.innerHTML = `<div class="modal-card" style="width:640px;">
+    <div class="modal-head"><div class="modal-title">🔄 Outlook ↔ Portal Contacts</div><button class="modal-close" data-csync="close">✕</button></div>
+    <div class="modal-body">${body}</div></div>`;
+  document.getElementById('app').appendChild(overlay);
+}
+async function csyncApplyLoop(firstMsg){
+  // a big first sync can take more than one round on the server — keep going until it's done
+  let total = null, rounds = 0;
+  while(rounds < 8){
+    rounds++;
+    state.csync.busy = rounds===1 ? firstMsg : `Still syncing (round ${rounds})…`; render();
+    const d = await csyncCall({ action:'apply' });
+    if(d.error){ state.csync.busy = null; state.csync.msg = null; flashToast('Sync stopped: ' + d.error); break; }
+    total = d.counts;
+    if(!d.partial) break;
+  }
+  state.csync.busy = null; state.csync.preview = null;
+  state.csync.msg = total ? `✅ Done — ${(total.toPortalNew||0)} added to the Portal, ${(total.toOutlookNew||0)} added to Outlook, ${(total.portalUpdates||0)+(total.outlookUpdates||0)} updated${total.review?`, ${total.review} to review`:''}.` : null;
+  await fetchContactsFromSupabase();
+  await csyncLoad();
+}
+document.addEventListener('click', async ev=>{
+  const el = ev.target.closest && ev.target.closest('[data-csync]'); if(!el) return;
+  const a = el.dataset.csync;
+  if(a==='weekly') return; // handled on change
+  ev.preventDefault();
+  if(a==='open'){ state.csync = {}; csyncLoad(); return; }
+  if(!state.csync) return;
+  if(a==='close'){ state.csync = null; render(); return; }
+  if(a==='reconnect'){ state.csync = null; state.notifSettingsOpen = true; render(); startMsGraphConnect(); return; }
+  if(a==='preview'){ state.csync.busy = 'Comparing your Outlook and Portal contacts… (can take a minute)'; state.csync.msg=null; render();
+    const d = await csyncCall({ action:'preview' }); state.csync.busy = null;
+    if(d.error){ flashToast(d.error); render(); return; }
+    state.csync.preview = d.counts; render(); return; }
+  if(a==='cancelPreview'){ state.csync.preview = null; render(); return; }
+  if(a==='approve'){ csyncApplyLoop('Syncing… (a first sync with thousands of contacts can take a few minutes)'); return; }
+  if(a==='syncNow'){ state.csync.msg=null; csyncApplyLoop('Syncing…'); return; }
+  if(a==='resolve' || a==='resolveConflict'){
+    const id = el.dataset.id; const picks = {};
+    if(a==='resolveConflict') document.querySelectorAll(`input[name^="rv_${id}_"]:checked`).forEach(i=>{ picks[i.name.split('_').pop()] = i.value; });
+    el.disabled = true;
+    const d = await csyncCall({ action:'resolve', id, choice: el.dataset.choice||'', picks });
+    if(d.error) flashToast(d.error);
+    await fetchContactsFromSupabase();
+    await csyncLoad(); return;
+  }
+});
+document.addEventListener('change', async ev=>{
+  const el = ev.target.closest && ev.target.closest('[data-csync="weekly"]'); if(!el) return;
+  await csyncCall({ action:'weekly', on: el.checked });
+  flashToast(el.checked ? 'Weekly sync is on (Sundays).' : 'Weekly sync is off — use Sync now.');
+});
 function renderContactsScreen(){
   const sub = state.contactsSubView || 'contacts';
   const toggle = `
   <div class="segmented" style="margin-bottom:14px;display:inline-flex;">
     <button class="${sub==='contacts'?'active':''}" data-contactssub="contacts">My Contacts (${db.contacts.length})</button>
     <button class="${sub==='brokers'?'active':''}" data-contactssub="brokers">Phoenix Brokers (${PHOENIX_BROKER_LIST.length})</button>
-  </div><div style="clear:both;"></div>`;
+  </div><button class="btn secondary sm" data-csync="open" style="margin-left:10px;vertical-align:top;margin-top:3px;">🔄 Outlook Sync</button><div style="clear:both;"></div>`;
   return toggle + (sub==='brokers' ? renderBrokerListMain() : renderContactsMain());
 }
 function renderMainContent(){
@@ -12044,6 +12206,7 @@ function closeModalStack(){
   // position (WIP, All Deals, a smart list, ...). Grab it before the stack is cleared, then
   // put it back once the page is showing again, so closing out fully doesn't snap back to top.
   const pageScrollTop = bottom && typeof bottom.pageScrollTop==='number' ? bottom.pageScrollTop : null;
+  setScrollPin(null); if(pageScrollTop!==null && state._scrollPin) state._scrollPin.content = pageScrollTop;
   state.modalStack=[]; state.reopenMapAfterDealClose=null; render();
   if(pageScrollTop!==null){
     requestAnimationFrame(()=>{
@@ -12076,6 +12239,7 @@ function closeTopModalFrame(){
         if(saveBtn) saveBtn.click();
       }
     }
+    setScrollPin(typeof closingFrame.parentScrollTop==='number' ? closingFrame.parentScrollTop : null);
     state.modalStack.pop();
     maybeReopenMapAfterDealClose(closingFrame);
     render();
@@ -13824,6 +13988,7 @@ function wireLSRProspectBodyHandlers(root, l, listing, p){
       handleStageTransition('prospects', p.id, listing.id, `${listing.name} — ${p.tenantName}`, p.dealType, oldStage, p.stage).then(render);
     }
     delete p._stageBeforeEdit;
+    { const bodies = document.querySelectorAll('.modal-overlay .modal-body'); const tb = bodies[bodies.length-1]; setScrollPin(tb ? tb.scrollTop : null); }
     flashToast('Saved.');
     render();
   };
@@ -13991,6 +14156,7 @@ function attachModalHandlers(root){
     const l=db.lists.find(x=>x.id===frame.listId); const c=l && l.clients.find(x=>x.id===frame.clientId);
     const d=c && c.deals.find(x=>x.id===frame.dealId);
     if(!l || !c || !d){ flashToast("Couldn't find this deal to save — it may have been moved or deleted."); render(); return; }
+    setScrollPin(typeof frame.parentScrollTop==='number' ? frame.parentScrollTop : null);
     saveDealTermsFromForm(l, c, d);
     state.modalStack.pop();
     maybeReopenMapAfterDealClose(frame);
