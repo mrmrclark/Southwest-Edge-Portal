@@ -823,7 +823,7 @@ const EDGE_LOGO_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAARgAAA
 // normal for this specific key type; Google expects it to be visible in page source and
 // restricted by domain, via HTTP referrer restriction in Google Cloud Console, not hidden
 // like the other secrets in this app). Replace once Michael has generated a real key.
-const APP_BUILD = '2026-10-12 tenant-expansion';
+const APP_BUILD = '2026-10-12 list-delete-fix';
 const GOOGLE_MAPS_JS_KEY = 'AIzaSyBMlIjvH2bpZK6mYJeNZSkQvM8TXQkCjDE';
 const CATEGORY_ORANGE_ICONS = ['💲','🏢','🎯','📋','☁️','🔧','✈️','🏛️','💎','📄','⭐','🗂️'];
 
@@ -1339,6 +1339,13 @@ async function fetchListsClientsDealsFromSupabase(){
     else list.clients.push(c);
   });
   db.lists = newLists;
+}
+// 2026-10-12 fix: deleting a custom List from the sidebar used to only remove it on screen —
+// the server row stayed, so it reappeared on the next reload (e.g. "Retail Live Austin 2026").
+// Now the row is deleted for real (its entries go with it via the database's cascade).
+async function supaDeleteList(id){
+  const { error } = await supabaseClient.from('lists').delete().eq('id', id);
+  if(error){ console.error('supaDeleteList error:', error); flashToast("Removed here, but deleting it on the server failed — it may come back. (" + error.message + ")"); render(); }
 }
 async function supaCreateList(list){
   const { error } = await supabaseClient.from('lists').insert({id:list.id, name:list.name, icon:list.icon, type:list.type, is_default:!!list.isDefault});
@@ -9235,7 +9242,7 @@ function attachShellHandlers(){
     const label = kind==='smart' ? smartListsArr.find(s=>s.id===id).name : db.lists.find(l=>l.id===id).name;
     if(confirm(`Delete "${label}"? This can't be undone.`)){
       if(kind==='smart'){ smartListsArr = smartListsArr.filter(s=>s.id!==id); supaDeleteSmartList(id); }
-      else { db.lists = db.lists.filter(l=>l.id!==id); sidebarListsOrder = sidebarListsOrder.filter(k=>k!==id); }
+      else { db.lists = db.lists.filter(l=>l.id!==id); sidebarListsOrder = sidebarListsOrder.filter(k=>k!==id); supaDeleteList(id); }
       if(state.mainView.type==='list' && state.mainView.id===id) state.mainView={type:'smart', id:'todayMe'};
       if(state.mainView.type==='smart' && state.mainView.id===id) state.mainView={type:'smart', id:'todayMe'};
     }
