@@ -442,6 +442,43 @@
   .mw-nw{top:0;left:0;cursor:nwse-resize;} .mw-se{bottom:0;right:0;cursor:nwse-resize;}
   body.mw-busy, body.mw-busy *{user-select:none !important;}
   @media (max-width:700px){ .mw-h{display:none;} .mw-draggable{cursor:auto;} }
+  /* ---------- TENANT EXPANSION REPORT ---------- */
+  .bd-table.ter-table .bd-title-td, .bd-table.ter-table .bd-title-th{left:0;box-shadow:-40px 0 0 #fff, 2px 0 0 var(--line-soft);}
+  .bd-table.ter-table thead .bd-title-th{box-shadow:-40px 0 0 var(--paper), 2px 0 0 var(--line-soft);}
+  .ter-table td{overflow:hidden;}
+  .ter-pill{height:36px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:600;font-size:12px;padding:0 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .ter-pill.inline{display:inline-flex;height:20px;border-radius:10px;padding:0 9px;font-size:11.5px;}
+  .ter-c{padding:0 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:36px;font-size:12.5px;}
+  .ter-num{text-align:right;font-variant-numeric:tabular-nums;}
+  .ter-tags{display:flex;gap:3px;align-items:center;padding:0 5px;height:36px;overflow:hidden;}
+  .ter-chip{background:#EEF0F4;color:var(--ink);border-radius:9px;padding:1px 7px;font-size:11px;white-space:nowrap;max-width:110px;overflow:hidden;text-overflow:ellipsis;}
+  .ter-chip.more{background:#E6F0FF;color:#1F5DB8;font-weight:600;}
+  .ter-src{font-size:10px;font-weight:700;border-radius:8px;padding:1px 6px;background:#EEF0F4;color:var(--ink-soft);white-space:nowrap;}
+  .ter-src.edge{background:#FFF1E0;color:#B5650D;}
+  .ter-azdot{font-size:9.5px;font-weight:700;background:#E6F7EE;color:#037F4C;border-radius:6px;padding:0 5px;}
+  .ter-link{color:var(--edge-darker);cursor:pointer;font-weight:600;font-size:12.5px;}
+  .ter-link:hover{text-decoration:underline;}
+  .ter-subrow > td{background:#F7F9FC !important;padding:0 !important;height:auto !important;}
+  .ter-sub{position:sticky;left:0;width:min(1500px, calc(100vw - var(--sbw, 260px) - 90px));padding:8px 10px 10px 30px;overflow-x:auto;box-sizing:border-box;}
+  .ter-subtable{border-collapse:collapse;font-size:12.5px;table-layout:fixed;background:#fff;border:1px solid var(--line-soft);}
+  .ter-subtable th{background:var(--paper);color:var(--ink-soft);font-weight:600;text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap;}
+  .ter-subtable td{padding:0 8px;border-bottom:1px solid var(--line-soft);height:34px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .ter-subtable .ter-tags{height:34px;padding:0;}
+  .ter-sumrow td{background:#fff;border-bottom:none;}
+  .ter-group-head{font-size:15px;}
+  .ter-toolbar select{border-radius:6px;}
+  .ter-toolbar .bd-tool-search input{width:200px;}
+  .ter-touch{background:#EAF6EE;border:1px solid #BFE3CB;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:13px;}
+  .ter-contact{display:flex;gap:12px;align-items:flex-start;padding:9px 2px;border-bottom:1px solid var(--line-soft);font-size:13.5px;}
+  .ter-details{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:2px 18px;}
+  .ter-dl{padding:6px 0;border-bottom:1px solid var(--line-soft);}
+  .ter-dt{font-size:11.5px;color:var(--ink-soft);margin-bottom:2px;}
+  .ter-dd{font-size:13.5px;word-break:break-word;}
+  .ter-blank{color:#bbb;}
+  .ter-form{display:grid;grid-template-columns:170px 1fr;gap:6px 12px;align-items:center;}
+  .ter-form label{font-size:12.5px;color:var(--ink-soft);}
+  .ter-form input,.ter-form select{width:100%;font-size:13px;padding:6px 8px;}
+  @media (max-width:700px){ .ter-form{grid-template-columns:1fr;} .ter-sub{width:calc(100vw - 30px);} }
   /* ---------- PROJECT BOARDS (Monday-style) ---------- */
   .bd-layout{display:flex;gap:18px;align-items:flex-start;}
   .bd-main{flex:1;min-width:0;}
@@ -786,7 +823,7 @@ const EDGE_LOGO_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAARgAAA
 // normal for this specific key type; Google expects it to be visible in page source and
 // restricted by domain, via HTTP referrer restriction in Google Cloud Console, not hidden
 // like the other secrets in this app). Replace once Michael has generated a real key.
-const APP_BUILD = '2026-10-12 outlook-contacts';
+const APP_BUILD = '2026-10-12 tenant-expansion';
 const GOOGLE_MAPS_JS_KEY = 'AIzaSyBMlIjvH2bpZK6mYJeNZSkQvM8TXQkCjDE';
 const CATEGORY_ORANGE_ICONS = ['💲','🏢','🎯','📋','☁️','🔧','✈️','🏛️','💎','📄','⭐','🗂️'];
 
@@ -1867,6 +1904,7 @@ async function fetchAllAppDataFromSupabase(){
   await fetchSignCallsFromSupabase();
   await fetchCommissionPlans();
   await fetchCommissionOnlyPeople();
+  fetchTerCount().then(()=>{ const n=document.querySelector('[data-nav="tenant-expansion"] .nav-count'); if(n) n.textContent=(db.terCount||0).toLocaleString(); }).catch(()=>{});
 }
 async function fetchCompanySettingsFromSupabase(){
   const { data, error } = await supabaseClient.from('company_settings').select('*').eq('id','default').single();
@@ -3224,6 +3262,7 @@ const SPECIAL_NAV_ITEMS = {
   // a standalone checklist is created/browsed from here now, though a checklist can still
   // live *inside* a Project (a Project's own inline checklist section is unaffected).
   checklists: {icon:'✅', label:'Checklists', navTarget:'checklists', getCount:()=>visibleChecklistsList().length},
+  'tenant-expansion': {icon:'🧭', label:'Tenant Expansion', navTarget:'tenant-expansion', getCount:()=>db.terCount||0},
   'archived-clients': {icon:'🗄️', label:'Archived', navTarget:'archived-clients', getCount:()=>(db.archivedClients||[]).length, adminOnly:true},
 };
 
@@ -3470,6 +3509,8 @@ function render(){
   if(state.mapsImport) renderMapsImportModal();
   if(state.boardModal) renderBoardModal();
   if(state.kickoffEditor) renderKickoffEditor();
+  if(state.terProfile) renderTerProfileModal();
+  if(state.terContactModal) renderTerContactModal();
   wireTodoRowHandlers(app);
   renderPortalChatWidget();
   if(state.undoToast) renderUndoToast();
@@ -5952,11 +5993,13 @@ function renderTopbar(){
     title='Dashboard'; eyebrow=state.currentUser.name;
   } else if(state.mainView.type==='wip'){
     title='Work in Progress'; eyebrow='Pipeline';
+  } else if(state.mainView.type==='tenant-expansion'){
+    title='Tenant Expansion'; eyebrow='Tenant Expansion Report';
   }
   const teamCapableIds = ['week','month'];
   const showTodoToggle = state.mainView.type==='smart' && teamCapableIds.includes(state.mainView.id);
   const showBack = state.isMobile && state.mobileScreen==='main';
-  const showListSearch = state.mainView.type!=='contacts' && state.mainView.type!=='dashboard' && state.mainView.type!=='wip';
+  const showListSearch = state.mainView.type!=='contacts' && state.mainView.type!=='dashboard' && state.mainView.type!=='wip' && state.mainView.type!=='tenant-expansion';
   return `
   <div class="topbar">
     ${state.isMobile ? `<button class="icon-btn" data-action="mobileRefresh" title="Refresh">↻</button>` : ''}
@@ -7690,7 +7733,7 @@ function renderContactsScreen(){
   <div class="segmented" style="margin-bottom:14px;display:inline-flex;">
     <button class="${sub==='contacts'?'active':''}" data-contactssub="contacts">My Contacts (${db.contacts.length})</button>
     <button class="${sub==='brokers'?'active':''}" data-contactssub="brokers">Phoenix Brokers (${PHOENIX_BROKER_LIST.length})</button>
-  </div><button class="btn secondary sm" data-csync="open" style="margin-left:10px;vertical-align:top;margin-top:3px;">🔄 Outlook Sync</button><div style="clear:both;"></div>`;
+  </div>`;
   return toggle + (sub==='brokers' ? renderBrokerListMain() : renderContactsMain());
 }
 function renderMainContent(){
@@ -7700,6 +7743,7 @@ function renderMainContent(){
   if(state.mainView.type==='archived-clients') return renderArchivedClientsMain();
   if(state.mainView.type==='projects') return renderProjectsBoardsMain();
   if(state.mainView.type==='checklists') return renderChecklistsListMain();
+  if(state.mainView.type==='tenant-expansion') return renderTenantExpansionMain();
   if(state.mainView.type==='list') return renderListMain(state.mainView.id);
   // smart list
   const id = state.mainView.id;
@@ -8302,7 +8346,7 @@ function renderShell(){
       : `<div class="sb-wrap" style="${hideSidebar?'display:none;':''}">${renderSidebar()}${state.isMobile?'':`<div class="sb-resize" data-sb="resize" title="Drag to resize"></div><button class="sb-toggle sb-toggle-in" data-sb="toggle" title="Hide the sidebar">«</button>`}</div>`}
     <div class="main" style="${hideMain?'display:none;':''}position:relative;">
       ${renderTopbar()}
-      <div class="content"><div class="content-flex"><div class="content-inner${(state.mainView.type==='dashboard'||state.mainView.type==='wip'||state.mainView.type==='projects')?' wide':''}${state.mainView.type==='projects'?' full':''}" id="mainContentInner">${renderMainContent()}</div>${(state.mainView.type==='wip'||state.mainView.type==='projects') ? '' : renderSidePanel()}</div></div>
+      <div class="content"><div class="content-flex"><div class="content-inner${(state.mainView.type==='dashboard'||state.mainView.type==='wip'||state.mainView.type==='projects'||state.mainView.type==='tenant-expansion')?' wide':''}${(state.mainView.type==='projects'||state.mainView.type==='tenant-expansion')?' full':''}" id="mainContentInner">${renderMainContent()}</div>${(state.mainView.type==='wip'||state.mainView.type==='projects'||state.mainView.type==='tenant-expansion') ? '' : renderSidePanel()}</div></div>
     </div>
   </div>
   <button class="fab" data-action="newTodo" title="New To-Do">+</button>
@@ -8343,6 +8387,639 @@ function renderAdminMenu(){
   </div>`;
 }
 
+
+/* ---------------- TENANT EXPANSION REPORT (TER) ---------------- */
+// Added 2026-10-12 — Collin's Tenant Expansion Report (formerly two monday.com boards),
+// pulled once into Supabase (ter_tenants + ter_contacts). Supabase is now the source;
+// Collin's quarterly updates get merged in by hand, and anything an Edge user adds or edits
+// is recorded in edge_fields so an update never overwrites it.
+const TER_STATUS_COLORS = {'TBD':'#fdab3d','Expanding':'#00c875','HOT':'#df2f4a','Contracting':'#007eb5','Flat':'#9d50dd','Bankruptcy':'#579bfc','Out of Business':'#cab641'};
+const TER_OWN_COLORS = {'Private':'#fdab3d','TBD':'#00c875','Public':'#df2f4a','Private Equity':'#007eb5','N/A':'#9d50dd','Foreign':'#579bfc'};
+const TER_DT_COLORS = {'Optional':'#fdab3d','YES':'#00c875','NO':'#df2f4a','TBD':'#c4c4c4'};
+const TER_IND_COLORS = {'QSR':'#037f4c','Fitness':'#00c875','Fast Casual':'#66ccff','Casual Dining':'#757575','Grocery':'#ff6d3b','Discount':'#579bfc','Apparel':'#ffcb00','Books':'#bb3354','Arts & Crafts':'#e484bd','Other':'#bda8f9','Health & Wellness':'#7e3b8a','Pet':'#9aadbd','Fine Dining':'#ffadad','Entertainment':'#faa1f1','Personal Care/Beauty':'#4eccc6','Jewelry':'#5559df','Automotive':'#df2f4a','Banks':'#333333','Home Improvement':'#ff7575','Home Furnishings/Decor':'#74afcc','Education':'#225091','Electronics':'#784bd1','Sporting Goods/Outdoor':'#9cd326','Convenience':'#7f5347','Department Stores':'#cab641','Drugstore':'#ff007f','Shoes/Footwear':'#ff5ac4','Warehouse Retailer':'#401694','Office Supply':'#563e3e',"Women's Apparel":'#007eb5',"Men's Apparel":'#216edf',"Children's Apparel":'#a9bee8','Clothing':'#9d50dd'};
+const TER_GROUP_PALETTE = ['#579bfc','#00c875','#fdab3d','#df2f4a','#9d50dd','#037f4c','#ff6d3b','#66ccff','#bb3354','#7e3b8a','#4eccc6','#5559df','#ff7575','#225091','#9cd326','#7f5347','#cab641','#ff5ac4','#784bd1','#74afcc'];
+const TER_STATES = ['Alabama','Alaska','Arizona','Arkansas','California','Colorado','Connecticut','Delaware','Florida','Georgia','Hawaii','Idaho','Illinois','Indiana','Iowa','Kansas','Kentucky','Louisiana','Maine','Maryland','Massachusetts','Michigan','Minnesota','Mississippi','Missouri','Montana','Nebraska','Nevada','New Hampshire','New Jersey','New Mexico','New York','North Carolina','North Dakota','Ohio','Oklahoma','Oregon','Pennsylvania','Rhode Island','South Carolina','South Dakota','Tennessee','Texas','Utah','Vermont','Virginia','Washington','West Virginia','Wisconsin','Wyoming'];
+// Board columns (the tenant name column is separate and sticky on the left).
+const TER_COLS = [
+  {k:'status', label:'Status', w:110, type:'pill', colors:TER_STATUS_COLORS},
+  {k:'az', label:'Arizona', w:118, type:'az'},
+  {k:'contacts', label:'Contacts', w:78, type:'count'},
+  {k:'industry_type', label:'Industry', w:130, type:'pill', colors:TER_IND_COLORS},
+  {k:'sf', label:'SF Range', w:120, type:'sf'},
+  {k:'locations', label:'# Locations', w:96, type:'num', sum:true},
+  {k:'num_states', label:'# States', w:110, type:'text'},
+  {k:'exp_2026_min', label:'2026 Exp', w:84, type:'num', sum:true},
+  {k:'exp_2025', label:'2025 Exp', w:84, type:'num', sum:true},
+  {k:'exp_2024', label:'2024 Exp', w:84, type:'num', sum:true},
+  {k:'exp_2023', label:'2023 Exp', w:84, type:'num', sum:true},
+  {k:'drive_thru', label:'Drive Thru', w:96, type:'pill', colors:TER_DT_COLORS},
+  {k:'bldg_type', label:'Building', w:150, type:'tags'},
+  {k:'lease_type', label:'Lease Type', w:150, type:'tags'},
+  {k:'min_acreage', label:'Min Acres', w:86, type:'num', range:true, dec:2},
+  {k:'min_traffic', label:'Min Traffic', w:96, type:'num', range:true},
+  {k:'pop_req_3mi', label:'Pop (3 mi)', w:96, type:'num', range:true},
+  {k:'income_req', label:'Income', w:96, type:'money', range:true},
+  {k:'avg_sales_gross', label:'Avg Sales', w:100, type:'money', avg:true},
+  {k:'avg_sales_psf', label:'Sales / SF', w:90, type:'money', avg:true},
+  {k:'parking_min', label:'Parking', w:80, type:'num', range:true},
+  {k:'drive_thru_stack', label:'DT Stack', w:80, type:'num', range:true},
+  {k:'frontage_ft', label:'Frontage', w:84, type:'num', range:true},
+  {k:'ownership_type', label:'Ownership', w:118, type:'pill', colors:TER_OWN_COLORS},
+  {k:'ownership_group', label:'Owner / Parent', w:160, type:'text'},
+  {k:'industry_sub', label:'Sub-Industry', w:150, type:'tags'},
+  {k:'tags', label:'Tags', w:130, type:'tags'},
+  {k:'hq', label:'HQ', w:150, type:'text'},
+  {k:'current_states', label:'Current States', w:200, type:'tags'},
+  {k:'geo_targets_2026', label:'2026 Targets', w:200, type:'tags'},
+  {k:'cotenancy', label:'Co-Tenancy', w:150, type:'tags'},
+  {k:'franchising', label:'Franchising', w:90, type:'bool'},
+  {k:'website', label:'Website', w:70, type:'link'},
+  {k:'files', label:'Files', w:70, type:'files'},
+];
+// Fields shown/edited on the tenant profile.
+const TER_FIELDS = [
+  {k:'name', label:'Tenant name', t:'text'},
+  {k:'grp', label:'Category', t:'grp'},
+  {k:'status', label:'Status', t:'sel', opts:Object.keys(TER_STATUS_COLORS)},
+  {k:'industry_type', label:'Industry', t:'text'},
+  {k:'industry_sub', label:'Sub-industry', t:'arr'},
+  {k:'tags', label:'Tags', t:'arr'},
+  {k:'website', label:'Website', t:'text'},
+  {k:'hq', label:'HQ', t:'text'},
+  {k:'ownership_type', label:'Ownership', t:'sel', opts:Object.keys(TER_OWN_COLORS)},
+  {k:'ownership_group', label:'Owner / parent', t:'text'},
+  {k:'sf_low', label:'SF low', t:'num'},
+  {k:'sf_high', label:'SF high', t:'num'},
+  {k:'locations', label:'# Locations', t:'num'},
+  {k:'num_states', label:'# States', t:'text'},
+  {k:'current_states', label:'Current states', t:'arr'},
+  {k:'geo_targets_2026', label:'2026 target states', t:'arr'},
+  {k:'exp_2026_min', label:'2026 expansion (min)', t:'num'},
+  {k:'exp_2025', label:'2025 expansion', t:'num'},
+  {k:'exp_2024', label:'2024 expansion', t:'num'},
+  {k:'exp_2023', label:'2023 expansion', t:'num'},
+  {k:'drive_thru', label:'Drive thru', t:'sel', opts:Object.keys(TER_DT_COLORS)},
+  {k:'drive_thru_stack', label:'Drive-thru stack (cars)', t:'num'},
+  {k:'bldg_type', label:'Building type', t:'arr'},
+  {k:'lease_type', label:'Lease type', t:'arr'},
+  {k:'min_acreage', label:'Min acreage', t:'num'},
+  {k:'min_traffic', label:'Min traffic (VPD)', t:'num'},
+  {k:'pop_req_3mi', label:'Population (3 mi)', t:'num'},
+  {k:'income_req', label:'Income requirement', t:'num', money:true},
+  {k:'parking_min', label:'Parking (min)', t:'num'},
+  {k:'frontage_ft', label:'Frontage (ft)', t:'num'},
+  {k:'avg_sales_gross', label:'Avg sales (gross)', t:'num', money:true},
+  {k:'avg_sales_psf', label:'Avg sales / SF', t:'num', money:true},
+  {k:'cotenancy', label:'Co-tenancy', t:'arr'},
+  {k:'franchising', label:'Franchising', t:'bool'},
+  {k:'franchise_page', label:'Franchise page', t:'text'},
+];
+const TER_CONTACT_FIELDS = [
+  {k:'name', label:'Name', t:'text'},
+  {k:'title', label:'Title', t:'text'},
+  {k:'email', label:'Email', t:'text'},
+  {k:'phone', label:'Phone', t:'text'},
+  {k:'based', label:'Based in', t:'text'},
+  {k:'geo_tags', label:'Territory (states covered)', t:'arr'},
+  {k:'resident_state', label:'Lives in (state)', t:'arr'},
+  {k:'responsibility', label:'Responsibility', t:'arr'},
+  {k:'linkedin', label:'LinkedIn', t:'text'},
+  {k:'verified', label:'Verified', t:'bool'},
+  {k:'verified_date', label:'Verified date', t:'date'},
+];
+const TER_RESP_LABELS = {CSuite:'C-Suite', HeadofRE:'Head of RE', SiteSelection:'Site Selection', LeaseAdmin:'Lease Admin', PropMgmt:'Property Mgmt'};
+function terState(){
+  if(!state.ter) state.ter = {loaded:false, loading:false, tenants:[], counts:{}, contacts:{}, exp:{}, open:{}, fopen:{}, showN:{}, q:'', az:'all', status:'', dt:'', sf:'', sort:'name', contactHits:null};
+  return state.ter;
+}
+async function fetchTerCount(){
+  const { count, error } = await supabaseClient.from('ter_tenants').select('id', {count:'exact', head:true});
+  if(!error){ db.terCount = count||0; }
+}
+async function terEnsureLoaded(){
+  const T = terState();
+  if(T.loaded || T.loading) return;
+  T.loading = true;
+  try{
+    const all = [];
+    for(let from=0; from<20000; from+=1000){
+      const { data, error } = await supabaseClient.from('ter_tenants').select('*').order('name').range(from, from+999);
+      if(error) throw error;
+      all.push(...data);
+      if(data.length<1000) break;
+    }
+    T.tenants = all;
+    const counts = {};
+    for(let from=0; from<60000; from+=1000){
+      const { data, error } = await supabaseClient.from('ter_contacts').select('tenant_id').order('id').range(from, from+999);
+      if(error) throw error;
+      data.forEach(r=>{ counts[r.tenant_id] = (counts[r.tenant_id]||0)+1; });
+      if(data.length<1000) break;
+    }
+    T.counts = counts;
+    T.loaded = true; db.terCount = all.length;
+  }catch(err){
+    console.error('terEnsureLoaded error:', err);
+    T.error = err.message||String(err);
+  }
+  T.loading = false;
+  if(state.mainView.type==='tenant-expansion') terRender();
+}
+async function terLoadContacts(tenantId, force){
+  const T = terState();
+  if(T.contacts[tenantId] && !force) return;
+  const { data, error } = await supabaseClient.from('ter_contacts').select('*').eq('tenant_id', tenantId);
+  if(error){ console.error('terLoadContacts', error); flashToast("Couldn't load contacts: " + error.message); render(); return; }
+  T.contacts[tenantId] = data;
+  T.counts[tenantId] = data.length;
+}
+function terContactAz(c){ return (c.geo_tags||[]).includes('Arizona') || (c.resident_state||[]).includes('Arizona') || /\b(AZ|Arizona)\b/.test(c.based||''); }
+function terFmtPhone(p){ const s=String(p||'').trim(); const d=s.replace(/\D/g,''); if(/^\+?1?\d{10}$/.test(s.replace(/[\s().-]/g,'')) && (d.length===10 || (d.length===11 && d[0]==='1'))){ const x=d.slice(-10); return `(${x.slice(0,3)}) ${x.slice(3,6)}-${x.slice(6)}`; } return s; }
+function terSortedContacts(list){
+  const az = c=>terContactAz(c) ? 0 : 1;
+  return [...(list||[])].sort((a,b)=> az(a)-az(b) || (a.source==='Edge'?0:1)-(b.source==='Edge'?0:1) || (a.name||'').localeCompare(b.name||''));
+}
+// Re-render while keeping the board's (and an open profile's) scroll position in both directions.
+function terRender(){
+  const keep = ['.ter-scroll','.ter-modal-body','.content'].map(sel=>{ const els=document.querySelectorAll(sel); const el=els[els.length-1]; return el?{sel,top:el.scrollTop,left:el.scrollLeft}:null; }).filter(Boolean);
+  render();
+  keep.forEach(k=>{ const els=document.querySelectorAll(k.sel); const el=els[els.length-1]; if(el){ el.scrollTop=k.top; el.scrollLeft=k.left; } });
+}
+function terAz(t){
+  if((t.current_states||[]).includes('Arizona')) return 'in';
+  if((t.geo_targets_2026||[]).includes('Arizona')) return 'coming';
+  return 'not';
+}
+const TER_AZ_LABEL = {in:'In AZ', coming:'Coming to AZ', not:'Not in AZ'};
+const TER_AZ_COLOR = {in:'#00c875', coming:'#fdab3d', not:'#c4c4c4'};
+function terNorm(s){ return String(s||'').toLowerCase().replace(/&/g,'and').replace(/[^a-z0-9]/g,''); }
+function terNameMatch(a, b){
+  const x = terNorm(a), y = terNorm(b);
+  if(!x || !y) return false;
+  if(x===y) return true;
+  const [s, l] = x.length<=y.length ? [x,y] : [y,x];
+  return s.length>=5 && l.startsWith(s);
+}
+// Everywhere the Portal already touches a tenant (Clients / Listings, Listing prospects, Hit & Hot List entries).
+function terEdgeTouches(t){
+  const out = [];
+  (db.lists||[]).forEach(l=>{
+    (l.clients||[]).forEach(c=>{
+      if(terNameMatch(c.name, t.name)) out.push({kind:'client', label:`${l.name}: ${c.name}`, listId:l.id, clientId:c.id});
+      (c.prospects||[]).forEach(p=>{ if(terNameMatch(p.tenantName, t.name)) out.push({kind:'prospect', label:`Prospect on ${c.name}${p.stage?` (${p.stage})`:''}`, listId:l.id, clientId:c.id}); });
+    });
+    (l.entries||[]).forEach(e=>{ if(terNameMatch(e.name, t.name)) out.push({kind:'entry', label:`${l.name}: ${e.name}`}); });
+  });
+  return out;
+}
+function terEdgeIndex(){
+  const set = new Set();
+  (db.lists||[]).forEach(l=>{
+    (l.clients||[]).forEach(c=>{ set.add(terNorm(c.name)); (c.prospects||[]).forEach(p=>set.add(terNorm(p.tenantName))); });
+    (l.entries||[]).forEach(e=>set.add(terNorm(e.name)));
+  });
+  set.delete('');
+  return set;
+}
+function terFmtNum(n, dec){ if(n===null||n===undefined||n==='') return ''; const v=Number(n); if(isNaN(v)) return escapeHtml(n); return v.toLocaleString(undefined,{maximumFractionDigits:dec||0}); }
+function terFmtMoney(n){ if(n===null||n===undefined||n==='') return ''; const v=Number(n); if(isNaN(v)) return escapeHtml(n); if(Math.abs(v)>=1e6) return '$'+(v/1e6).toFixed(v>=1e7?1:2).replace(/\.?0+$/,'')+'M'; if(Math.abs(v)>=1e4) return '$'+Math.round(v/1000)+'K'; return '$'+Math.round(v).toLocaleString(); }
+function terSafeUrl(u){ const s=String(u||'').trim(); if(!s) return ''; if(/^https?:\/\//i.test(s)) return s; if(/^[\w.-]+\.[a-z]{2,}/i.test(s)) return 'https://'+s; return ''; }
+function terPill(val, colors){
+  if(!val) return `<div class="ter-pill" style="background:#e6e9ef;"></div>`;
+  const c = (colors && colors[val]) || '#c4c4c4';
+  return `<div class="ter-pill" style="background:${c};" title="${escapeAttr(val)}">${escapeHtml(val)}</div>`;
+}
+function terTags(arr, max){
+  const a = (arr||[]).filter(Boolean); if(!a.length) return '';
+  const m = max||2; const shown = a.slice(0,m);
+  const lab = x=>TER_RESP_LABELS[x]||x;
+  return `<div class="ter-tags" title="${escapeAttr(a.map(lab).join(', '))}">${shown.map(x=>`<span class="ter-chip">${escapeHtml(lab(x))}</span>`).join('')}${a.length>m?`<span class="ter-chip more">+${a.length-m}</span>`:''}</div>`;
+}
+function terGroupColor(name, idx){
+  const map = {'Apparel':'#ffcb00','Automotive':'#df2f4a','Banks & Financial Services':'#333333','Books/Arts & Crafts':'#bb3354','Casual Dining':'#757575','Convenience & Fuel':'#7f5347','Department Stores':'#cab641','Discount & Dollar':'#579bfc','Drugstores':'#ff007f','Education':'#225091','Electronics & Telecommunications':'#784bd1','Entertainment':'#faa1f1','Fast Casual':'#66ccff','Fine Dining':'#ffadad','Fitness':'#00c875','Grocery':'#ff6d3b','Health & Wellness':'#7e3b8a','Home Furnishings/Furniture':'#74afcc','Home Improvement':'#ff7575','Jewelry':'#5559df','New Retailers (Under Research)':'#a25ddc','Office, Print & Shipping':'#563e3e','Other':'#bda8f9','Personal Care/Beauty':'#4eccc6','Pet':'#9aadbd','Quick Service Restaurant':'#037f4c','Shoes/Footwear':'#ff5ac4','Sporting Goods/Outdoor':'#9cd326','Warehouse Retailer':'#401694'};
+  return map[name] || TER_GROUP_PALETTE[idx % TER_GROUP_PALETTE.length];
+}
+function terFilterActive(){ const T=terState(); return !!((T.q||'').trim() || T.az!=='all' || T.status || T.dt || T.sf); }
+function terFiltered(){
+  const T = terState();
+  const q = (T.q||'').trim().toLowerCase();
+  const sf = parseFloat(String(T.sf||'').replace(/,/g,''));
+  const hits = T.contactHits;
+  let list = T.tenants.filter(t=>{
+    if(T.az!=='all' && terAz(t)!==T.az) return false;
+    if(T.status && t.status!==T.status) return false;
+    if(T.dt && t.drive_thru!==T.dt) return false;
+    if(!isNaN(sf) && sf>0){
+      const lo = t.sf_low!=null ? Number(t.sf_low) : null, hi = t.sf_high!=null ? Number(t.sf_high) : null;
+      if(lo===null && hi===null) return false;
+      if(lo!==null && sf < lo*0.9) return false;
+      if(hi!==null && sf > hi*1.1) return false;
+    }
+    if(q){
+      const hay = [t.name, t.hq, t.ownership_group, t.industry_type, ...(t.industry_sub||[]), ...(t.tags||[])].join(' ').toLowerCase();
+      if(!q.split(/\s+/).every(w=>hay.includes(w)) && !(hits && hits.has(t.id))) return false;
+    }
+    return true;
+  });
+  const by = {
+    name:(a,b)=>(a.name||'').localeCompare(b.name||''),
+    locations:(a,b)=>(Number(b.locations)||0)-(Number(a.locations)||0),
+    exp:(a,b)=>(Number(b.exp_2026_min)||0)-(Number(a.exp_2026_min)||0),
+    sf:(a,b)=>(a.sf_low==null?1e12:Number(a.sf_low))-(b.sf_low==null?1e12:Number(b.sf_low)),
+    status:(a,b)=>{ const o={HOT:0,Expanding:1,TBD:2,Flat:3,Contracting:4}; return (o[a.status]??9)-(o[b.status]??9) || (a.name||'').localeCompare(b.name||''); },
+  }[T.sort] || ((a,b)=>0);
+  return list.sort(by);
+}
+function terCell(t, col){
+  const T = terState();
+  const v = t[col.k];
+  switch(col.type){
+    case 'pill': return terPill(v, col.colors);
+    case 'az': { const a=terAz(t); return `<div class="ter-pill" style="background:${TER_AZ_COLOR[a]};${a==='not'?'color:#555;':''}">${TER_AZ_LABEL[a]}</div>`; }
+    case 'count': { const n=T.counts[t.id]||0; return `<div class="ter-c ter-num" style="text-align:center;">${n||'<span style="color:#ccc;">0</span>'}</div>`; }
+    case 'sf': { const lo=t.sf_low, hi=t.sf_high; if(lo==null&&hi==null) return ''; return `<div class="ter-c ter-num" style="text-align:center;">${lo!=null&&hi!=null&&Number(lo)!==Number(hi) ? `${terFmtNum(lo)}–${terFmtNum(hi)}` : terFmtNum(lo!=null?lo:hi)}</div>`; }
+    case 'num': return `<div class="ter-c ter-num">${terFmtNum(v, col.dec)}</div>`;
+    case 'money': return `<div class="ter-c ter-num">${terFmtMoney(v)}</div>`;
+    case 'text': return `<div class="ter-c" title="${escapeAttr(v||'')}">${escapeHtml(v||'')}</div>`;
+    case 'tags': return terTags(v, 2);
+    case 'bool': return `<div class="ter-c" style="text-align:center;">${v===true?'✓':(v===false?'<span style="color:#bbb;">—</span>':'')}</div>`;
+    case 'link': { const u=terSafeUrl(v); return u?`<div class="ter-c" style="text-align:center;"><a href="${escapeAttr(u)}" target="_blank" rel="noopener" title="${escapeAttr(u)}">🔗</a></div>`:''; }
+    case 'files': { const n=(v||[]).length; return n?`<div class="ter-c" style="text-align:center;"><span class="ter-link" data-ter="profile" data-id="${t.id}" title="Open the profile to see the files">📎 ${n}</span></div>`:''; }
+  }
+  return '';
+}
+function terSummaryCell(rows, col){
+  const T = terState();
+  const nums = k=>rows.map(r=>r[k]).filter(x=>x!==null&&x!==undefined&&x!=='').map(Number).filter(x=>!isNaN(x));
+  if(col.type==='pill' || col.type==='az'){
+    const counts = {};
+    rows.forEach(r=>{ const val = col.type==='az' ? terAz(r) : (r[col.k]||''); counts[val]=(counts[val]||0)+1; });
+    const total = rows.length||1;
+    const segs = Object.entries(counts).sort((a,b)=>b[1]-a[1]).map(([val,n])=>{
+      const color = col.type==='az' ? TER_AZ_COLOR[val] : (val ? ((col.colors||{})[val]||'#c4c4c4') : '#e6e9ef');
+      const label = col.type==='az' ? TER_AZ_LABEL[val] : (val||'Blank');
+      return `<div style="width:${(n/total*100).toFixed(2)}%;background:${color};" title="${escapeAttr(label)}: ${n} (${Math.round(n/total*100)}%)"></div>`;
+    }).join('');
+    return `<div class="bd-sumbar">${segs}</div>`;
+  }
+  if(col.type==='count'){ const s = rows.reduce((a,r)=>a+(T.counts[r.id]||0),0); return `<div class="bd-sumnum">${s.toLocaleString()}<div class="tiny">contacts</div></div>`; }
+  if(col.type==='sf'){ const lo=nums('sf_low'), hi=nums('sf_high'); if(!lo.length&&!hi.length) return ''; const mn=Math.min(...lo,...hi), mx=Math.max(...lo,...hi); return `<div class="bd-sumnum">${terFmtNum(mn)}–${terFmtNum(mx)}<div class="tiny">range</div></div>`; }
+  if(col.type==='num' || col.type==='money'){
+    const a = nums(col.k); if(!a.length) return '';
+    const f = col.type==='money' ? terFmtMoney : (x=>terFmtNum(x, col.dec));
+    if(col.sum) return `<div class="bd-sumnum">${f(a.reduce((s,x)=>s+x,0))}<div class="tiny">sum</div></div>`;
+    if(col.avg) return `<div class="bd-sumnum">${f(a.reduce((s,x)=>s+x,0)/a.length)}<div class="tiny">avg</div></div>`;
+    const mn=Math.min(...a), mx=Math.max(...a);
+    return `<div class="bd-sumnum">${mn===mx?f(mn):`${f(mn)}–${f(mx)}`}<div class="tiny">range</div></div>`;
+  }
+  return '';
+}
+function terContactsSubHtml(t){
+  const T = terState();
+  const list = T.contacts[t.id];
+  if(!list) return `<div class="tiny" style="padding:10px 14px;color:var(--ink-soft);">Loading contacts…</div>`;
+  const rows = terSortedContacts(list);
+  const me = state.currentUser.authId;
+  const isAdmin = state.currentUser.role==='Admin';
+  return `<div class="ter-sub">
+    <table class="ter-subtable">
+      <thead><tr><th style="width:190px;">Name</th><th style="width:200px;">Title</th><th style="width:220px;">Email</th><th style="width:130px;">Phone</th><th style="width:140px;">Based</th><th style="width:170px;">Covers</th><th style="width:150px;">Responsibility</th><th style="width:60px;">LinkedIn</th><th style="width:96px;">Verified</th><th style="width:66px;">Source</th><th style="width:56px;"></th></tr></thead>
+      <tbody>
+      ${rows.length ? rows.map(c=>{
+        const azc = terContactAz(c);
+        const li = terSafeUrl(c.linkedin);
+        const canDel = c.source==='Edge' && (c.created_by===me || isAdmin);
+        const edited = c.edge_fields && Object.keys(c.edge_fields).length && c.source!=='Edge';
+        return `<tr>
+          <td><b>${escapeHtml(c.name)}</b>${azc?' <span class="ter-azdot" title="Covers Arizona">AZ</span>':''}</td>
+          <td title="${escapeAttr(c.title||'')}">${escapeHtml(c.title||'')}</td>
+          <td>${c.email?`<a href="mailto:${escapeAttr(c.email)}">${escapeHtml(c.email)}</a>`:''}</td>
+          <td>${c.phone?`<a href="tel:${escapeAttr(String(c.phone).replace(/[^\d+]/g,''))}">${escapeHtml(terFmtPhone(c.phone))}</a>`:''}</td>
+          <td title="${escapeAttr(c.based||'')}">${escapeHtml(c.based||'')}</td>
+          <td>${terTags(c.geo_tags, 3)}</td>
+          <td>${terTags(c.responsibility, 2)}</td>
+          <td style="text-align:center;">${li?`<a href="${escapeAttr(li)}" target="_blank" rel="noopener">in</a>`:''}</td>
+          <td>${c.verified?'✓ ':''}${c.verified_date?escapeHtml(fmtTerDate(c.verified_date)):''}</td>
+          <td><span class="ter-src ${c.source==='Edge'?'edge':''}">${c.source==='Edge'?'Edge':'TER'}</span>${edited?' <span title="Edited by Edge — quarterly updates won\'t overwrite the edited fields">✎</span>':''}</td>
+          <td style="white-space:nowrap;"><span class="ter-link" data-ter="editContact" data-tid="${t.id}" data-id="${c.id}" title="Edit">✎</span>${canDel?` <span class="ter-link" data-ter="delContact" data-tid="${t.id}" data-id="${c.id}" title="Delete" style="color:#c0392b;">✕</span>`:''}</td>
+        </tr>`;
+      }).join('') : `<tr><td colspan="11" class="tiny" style="color:var(--ink-soft);">No contacts in the report for this tenant yet.</td></tr>`}
+      </tbody>
+    </table>
+    <div style="padding:6px 4px 2px;"><span class="ter-link" data-ter="addContact" data-tid="${t.id}">+ Add Edge contact</span></div>
+  </div>`;
+}
+function fmtTerDate(d){ if(!d) return ''; const x = new Date(String(d).length===10 ? d+'T00:00:00' : d); return isNaN(x) ? String(d) : x.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}); }
+function renderTenantExpansionMain(){
+  const T = terState();
+  if(!T.loaded){
+    if(!T.loading && !T.error) setTimeout(terEnsureLoaded, 0);
+    return T.error
+      ? `<div class="empty-state"><div class="big">Couldn't load the Tenant Expansion Report.</div><div class="tiny">${escapeHtml(T.error)}</div><button class="btn sm" data-ter="retry" style="margin-top:10px;">Try again</button></div>`
+      : `<div class="empty-state"><div class="big">Loading the Tenant Expansion Report…</div><div class="tiny">About 2,800 tenants — this takes a few seconds the first time.</div></div>`;
+  }
+  const filtered = terFiltered();
+  const active = terFilterActive();
+  const groupsMap = {};
+  T.tenants.forEach(t=>{ groupsMap[t.grp||'Other'] = groupsMap[t.grp||'Other'] || []; });
+  filtered.forEach(t=>groupsMap[t.grp||'Other'].push(t));
+  const NEW = 'New Retailers (Under Research)';
+  const groupNames = Object.keys(groupsMap).sort((a,b)=> (a===NEW)-(b===NEW) || a.localeCompare(b));
+  const edgeIdx = terEdgeIndex();
+  const statusOpts = Object.keys(TER_STATUS_COLORS).filter(s=>!['Bankruptcy','Out of Business'].includes(s));
+  const totalW = 300 + TER_COLS.reduce((s,c)=>s+c.w,0);
+  const azCounts = {in:0, coming:0, not:0}; T.tenants.forEach(t=>azCounts[terAz(t)]++);
+  const toolbar = `
+  <div class="bd-toolbar ter-toolbar">
+    <div class="bd-tool bd-tool-search ${T.q?'on':''}">🔍 <input data-ter="search" placeholder="Search tenants or contacts" value="${escapeAttr(T.q||'')}"></div>
+    <select data-ter="az" title="Arizona">
+      <option value="all" ${T.az==='all'?'selected':''}>All states (${T.tenants.length.toLocaleString()})</option>
+      <option value="in" ${T.az==='in'?'selected':''}>In AZ (${azCounts.in.toLocaleString()})</option>
+      <option value="coming" ${T.az==='coming'?'selected':''}>Coming to AZ (${azCounts.coming})</option>
+      <option value="not" ${T.az==='not'?'selected':''}>Not in AZ (${azCounts.not.toLocaleString()})</option>
+    </select>
+    <select data-ter="status"><option value="">Any status</option>${statusOpts.map(s=>`<option ${T.status===s?'selected':''}>${s}</option>`).join('')}</select>
+    <select data-ter="dt"><option value="">Drive thru: any</option>${Object.keys(TER_DT_COLORS).map(s=>`<option value="${s}" ${T.dt===s?'selected':''}>Drive thru: ${s}</option>`).join('')}</select>
+    <div class="bd-tool ${T.sf?'on':''}" title="Show tenants whose size range fits this square footage">📐 <input data-ter="sf" inputmode="numeric" placeholder="Fits SF…" value="${escapeAttr(T.sf||'')}" style="border:none;background:transparent;width:80px;padding:0;font-size:13.5px;outline:none;box-shadow:none;"></div>
+    <select data-ter="sort">
+      ${[['name','Sort: A–Z'],['status','Sort: Status (HOT first)'],['exp','Sort: Most 2026 expansion'],['locations','Sort: Most locations'],['sf','Sort: Smallest SF first']].map(([v,l])=>`<option value="${v}" ${T.sort===v?'selected':''}>${l}</option>`).join('')}
+    </select>
+    ${active?`<button class="bd-tool" data-ter="clear">✕ Clear</button>`:''}
+    <span style="margin-left:auto;display:flex;gap:4px;">
+      <button class="bd-tool" data-ter="expandAll">⊞ Expand all</button>
+      <button class="bd-tool" data-ter="collapseAll">⊟ Collapse all</button>
+    </span>
+  </div>
+  ${active?`<div class="tiny" style="color:var(--ink-soft);margin:-6px 0 10px 2px;">${filtered.length.toLocaleString()} tenant${filtered.length===1?'':'s'} match${filtered.length===1?'es':''}${T.contactHits&&T.contactHits.size?` (including ${T.contactHits.size} matched by a contact's name, email or title)`:''}.</div>`:''}`;
+  const groupsHtml = groupNames.map((g, gi)=>{
+    const rows = groupsMap[g];
+    if(active && !rows.length) return '';
+    const open = active ? T.fopen[g]!==false : !!T.open[g];
+    const color = terGroupColor(g, gi);
+    const inAz = rows.filter(t=>terAz(t)==='in').length, coming = rows.filter(t=>terAz(t)==='coming').length;
+    const head = `<div class="bd-group-head ter-group-head" style="color:${color};">
+      <span class="bd-caret" data-ter="toggleGroup" data-g="${escapeAttr(g)}">${open?'▾':'▸'}</span>
+      <span class="bd-group-name" data-ter="toggleGroup" data-g="${escapeAttr(g)}">${escapeHtml(g)}</span>
+      <span class="tiny" style="color:var(--ink-soft);font-weight:400;">${rows.length.toLocaleString()} tenant${rows.length===1?'':'s'} · ${inAz} in AZ${coming?` · ${coming} coming`:''}</span>
+    </div>`;
+    if(!open) return `<div class="bd-group ter-group" style="--gc:${color};">${head}</div>`;
+    const cap = T.showN[g] || 100;
+    const shown = rows.slice(0, cap);
+    const body = shown.map(t=>{
+      const exp = !!T.exp[t.id];
+      const edgeEdited = t.source==='Edge' || (t.edge_fields && Object.keys(t.edge_fields).length);
+      const touched = edgeIdx.has(terNorm(t.name));
+      return `<tr class="bd-row">
+        <td class="bd-title-td ter-title-td"><div class="bd-title-inner">
+          <span class="bd-subcaret" data-ter="toggleTenant" data-id="${t.id}" title="${exp?'Hide':'Show'} contacts">${exp?'▾':'▸'}</span>
+          <span class="bd-name" data-ter="profile" data-id="${t.id}" title="${escapeAttr(t.name)}">${escapeHtml(t.name)}</span>
+          ${touched?`<span title="Already in the Portal (Client, Listing prospect, or Hit/Hot List)" style="font-size:12px;">🤝</span>`:''}
+          ${edgeEdited?`<span class="ter-src edge" title="${t.source==='Edge'?'Added by Edge':'Edited by Edge — protected from quarterly updates'}">${t.source==='Edge'?'Edge':'✎'}</span>`:''}
+        </div></td>
+        ${TER_COLS.map(c=>`<td>${terCell(t, c)}</td>`).join('')}
+      </tr>${exp?`<tr class="ter-subrow"><td colspan="${TER_COLS.length+1}">${terContactsSubHtml(t)}</td></tr>`:''}`;
+    }).join('');
+    const more = rows.length>cap ? `<tr><td colspan="${TER_COLS.length+1}" style="padding:8px 10px;"><span class="ter-link" data-ter="showMore" data-g="${escapeAttr(g)}" style="position:sticky;left:12px;">Show ${Math.min(100, rows.length-cap)} more of ${rows.length-cap} remaining…</span></td></tr>` : '';
+    const sum = `<tr class="ter-sumrow"><td class="bd-title-td" style="text-align:right;color:var(--ink-soft);font-size:12px;padding-right:10px !important;">${rows.length.toLocaleString()} tenant${rows.length===1?'':'s'}</td>${TER_COLS.map(c=>`<td class="bd-sum">${terSummaryCell(rows, c)}</td>`).join('')}</tr>`;
+    return `<div class="bd-group ter-group" style="--gc:${color};">${head}
+      <table class="bd-table ter-table" style="width:${totalW}px;">
+        <colgroup><col style="width:300px;">${TER_COLS.map(c=>`<col style="width:${c.w}px;">`).join('')}</colgroup>
+        <thead><tr><th class="bd-th bd-title-th ter-title-th">Tenant</th>${TER_COLS.map(c=>`<th class="bd-th" title="${escapeAttr(c.label)}">${escapeHtml(c.label)}</th>`).join('')}</tr></thead>
+        <tbody>${body}${more}${sum}</tbody>
+      </table></div>`;
+  }).join('');
+  return `<div class="ter-wrap">${toolbar}<div class="bd-scroll ter-scroll" data-keep-scroll="ter">${groupsHtml || `<div class="empty-state"><div class="big">No tenants match.</div><div class="tiny">Try clearing a filter.</div></div>`}</div></div>`;
+}
+
+/* ----- Tenant profile modal ----- */
+function terFindTenant(id){ return terState().tenants.find(t=>t.id===id); }
+function terUserName(authId){ const u = USERS.find(x=>x.authId===authId || x.id===authId); return u ? u.name : 'someone at Edge'; }
+function terFieldDisplay(t, f){
+  const v = t[f.k];
+  if(f.t==='arr') return (v&&v.length) ? escapeHtml(v.map(x=>TER_RESP_LABELS[x]||x).join(', ')) : '<span class="ter-blank">—</span>';
+  if(f.t==='bool') return v===true ? 'Yes' : (v===false ? 'No' : '<span class="ter-blank">—</span>');
+  if(f.t==='num') return (v===null||v===undefined) ? '<span class="ter-blank">—</span>' : (f.money ? '$'+Number(v).toLocaleString() : terFmtNum(v, 2));
+  if(f.t==='sel'){ const colors = f.k==='status'?TER_STATUS_COLORS:f.k==='ownership_type'?TER_OWN_COLORS:TER_DT_COLORS; return v ? `<span class="ter-pill inline" style="background:${colors[v]||'#c4c4c4'};">${escapeHtml(v)}</span>` : '<span class="ter-blank">—</span>'; }
+  if(f.k==='website' || f.k==='franchise_page'){ const u=terSafeUrl(v); return u ? `<a href="${escapeAttr(u)}" target="_blank" rel="noopener">${escapeHtml(v)}</a>` : (v?escapeHtml(v):'<span class="ter-blank">—</span>'); }
+  return v ? escapeHtml(v) : '<span class="ter-blank">—</span>';
+}
+function terFieldInput(t, f, prefix){
+  const v = t ? t[f.k] : null;
+  const id = `${prefix}_${f.k}`;
+  if(f.t==='sel') return `<select id="${id}"><option value=""></option>${f.opts.map(o=>`<option ${v===o?'selected':''}>${escapeHtml(o)}</option>`).join('')}</select>`;
+  if(f.t==='grp'){ const gs = [...new Set(terState().tenants.map(x=>x.grp).filter(Boolean))].sort(); return `<select id="${id}">${gs.map(o=>`<option ${v===o?'selected':''}>${escapeHtml(o)}</option>`).join('')}</select>`; }
+  if(f.t==='bool') return `<select id="${id}"><option value=""></option><option value="true" ${v===true?'selected':''}>Yes</option><option value="false" ${v===false?'selected':''}>No</option></select>`;
+  if(f.t==='arr') return `<input id="${id}" value="${escapeAttr((v||[]).join(', '))}" placeholder="Separate with commas">`;
+  if(f.t==='num') return `<input id="${id}" inputmode="decimal" value="${v===null||v===undefined?'':escapeAttr(v)}">`;
+  if(f.t==='date') return `<input id="${id}" type="date" value="${escapeAttr(v||'')}">`;
+  return `<input id="${id}" value="${escapeAttr(v||'')}">`;
+}
+function terReadInput(f, prefix){
+  const el = document.getElementById(`${prefix}_${f.k}`); if(!el) return undefined;
+  const raw = el.value.trim();
+  if(f.t==='arr') return raw ? raw.split(',').map(s=>s.trim()).filter(Boolean) : [];
+  if(f.t==='num'){ if(!raw) return null; const n = parseFloat(raw.replace(/[$,\s]/g,'')); return isNaN(n) ? null : n; }
+  if(f.t==='bool') return raw==='' ? null : raw==='true';
+  if(f.t==='date') return raw || null;
+  return raw || null;
+}
+function terSame(a, b){ return JSON.stringify(a===undefined?null:a) === JSON.stringify(b===undefined?null:b); }
+function renderTerProfileModal(){
+  const P = state.terProfile; const t = terFindTenant(P.id);
+  if(!t){ state.terProfile=null; return; }
+  const T = terState();
+  const contacts = T.contacts[t.id];
+  const ef = t.edge_fields||{};
+  const touches = terEdgeTouches(t);
+  const az = terAz(t);
+  const overlay = document.createElement('div'); overlay.className='modal-overlay'; overlay.style.zIndex=212;
+  overlay.innerHTML = `<div class="modal-card ter-profile" style="width:900px;max-width:96vw;">
+    <div class="modal-head">
+      <div style="flex:1;min-width:0;">
+        <div class="modal-title">${escapeHtml(t.name)}</div>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:4px;">
+          <span class="tiny" style="color:rgba(255,255,255,.9);">${escapeHtml(t.grp||'')}</span>
+          ${t.status?`<span class="ter-pill inline" style="background:${TER_STATUS_COLORS[t.status]||'#c4c4c4'};">${escapeHtml(t.status)}</span>`:''}
+          <span class="ter-pill inline" style="background:${TER_AZ_COLOR[az]};${az==='not'?'color:#555;':''}">${TER_AZ_LABEL[az]}</span>
+          <span class="ter-src ${t.source==='Edge'?'edge':''}">${t.source==='Edge'?'Added by Edge':'From TER'}</span>
+        </div>
+      </div>
+      <button class="modal-close" data-ter="closeProfile">✕</button>
+    </div>
+    <div class="modal-body ter-modal-body" style="max-height:76vh;overflow-y:auto;">
+      ${touches.length?`<div class="ter-touch"><b>🤝 Already in the Portal:</b> ${touches.map((x,i)=>x.clientId?`<span class="ter-link" data-ter="openTouch" data-i="${i}">${escapeHtml(x.label)}</span>`:escapeHtml(x.label)).join(' · ')}</div>`:''}
+      <div class="section-label" style="display:flex;align-items:center;gap:10px;">Contacts ${contacts?`(${contacts.length})`:''}
+        <span class="ter-link" data-ter="addContact" data-tid="${t.id}" style="margin-left:auto;text-transform:none;letter-spacing:0;">+ Add Edge contact</span></div>
+      ${contacts ? terProfileContactsHtml(t, contacts) : `<div class="tiny" style="color:var(--ink-soft);padding:6px 0;">Loading contacts…</div>`}
+      <div class="section-label" style="display:flex;align-items:center;gap:10px;margin-top:18px;">Details
+        ${P.edit ? '' : `<span class="ter-link" data-ter="editProfile" style="margin-left:auto;text-transform:none;letter-spacing:0;">✎ Edit</span>`}</div>
+      ${P.edit ? `
+        <div class="tiny" style="color:var(--ink-soft);margin-bottom:8px;">Anything you change is marked as Edge-edited, so Collin's quarterly updates won't overwrite it.</div>
+        <div class="ter-form">${TER_FIELDS.map(f=>`<label>${escapeHtml(f.label)}</label><div>${terFieldInput(t, f, 'terf')}</div>`).join('')}</div>
+        <div style="display:flex;gap:8px;margin-top:14px;"><button class="btn" data-ter="saveProfile">Save</button><button class="btn secondary" data-ter="cancelEdit">Cancel</button></div>`
+      : `<div class="ter-details">${TER_FIELDS.filter(f=>f.k!=='name').map(f=>{
+          const e = ef[f.k];
+          return `<div class="ter-dl"><div class="ter-dt">${escapeHtml(f.label)}${e?` <span class="ter-src edge" title="Edited by ${escapeAttr(terUserName(e.by))} on ${escapeAttr(fmtTerDate(e.at))} — protected from quarterly updates">✎ Edge</span>`:''}</div><div class="ter-dd">${terFieldDisplay(t, f)}</div></div>`;
+        }).join('')}</div>
+        ${(t.files||[]).length?`<div class="section-label" style="margin-top:16px;">Files (${t.files.length})</div>
+          <div class="tiny" style="color:var(--ink-soft);margin-bottom:6px;">These live in Collin's report — they open only if you're signed in to it.</div>
+          ${t.files.map(u=>{ const s=terSafeUrl(u); let n=''; try{ n=decodeURIComponent(String(u).split('/').pop()); }catch(e){ n=String(u).split('/').pop(); } return s?`<div style="padding:3px 0;">📎 <a href="${escapeAttr(s)}" target="_blank" rel="noopener">${escapeHtml(n)}</a></div>`:''; }).join('')}`:''}
+        <div class="tiny" style="color:var(--ink-soft);margin-top:16px;">Last updated ${escapeHtml(fmtTerDate(t.updated_at))}${t.updated_by?` by ${escapeHtml(terUserName(t.updated_by))}`:''}.</div>`}
+    </div></div>`;
+  overlay.addEventListener('mousedown', ev=>{ if(ev.target===overlay){ state.terProfile=null; terRender(); } });
+  document.getElementById('app').appendChild(overlay);
+}
+function terProfileContactsHtml(t, contacts){
+  const rows = terSortedContacts(contacts);
+  if(!rows.length) return `<div class="tiny" style="color:var(--ink-soft);padding:6px 0;">No contacts in the report for this tenant yet.</div>`;
+  const me = state.currentUser.authId, isAdmin = state.currentUser.role==='Admin';
+  return rows.map(c=>{
+    const azc = terContactAz(c);
+    const li = terSafeUrl(c.linkedin);
+    const canDel = c.source==='Edge' && (c.created_by===me || isAdmin);
+    return `<div class="ter-contact">
+      <div style="flex:1;min-width:0;">
+        <div><b>${escapeHtml(c.name)}</b>${c.title?` <span style="color:var(--ink-soft);">· ${escapeHtml(c.title)}</span>`:''} ${azc?'<span class="ter-azdot" title="Covers Arizona">AZ</span>':''} <span class="ter-src ${c.source==='Edge'?'edge':''}">${c.source==='Edge'?'Edge':'TER'}</span></div>
+        <div class="tiny" style="color:var(--ink-soft);margin-top:2px;display:flex;gap:12px;flex-wrap:wrap;">
+          ${c.email?`<a href="mailto:${escapeAttr(c.email)}">${escapeHtml(c.email)}</a>`:''}
+          ${c.phone?`<a href="tel:${escapeAttr(String(c.phone).replace(/[^\d+]/g,''))}">${escapeHtml(terFmtPhone(c.phone))}</a>`:''}
+          ${c.based?`<span>📍 ${escapeHtml(c.based)}</span>`:''}
+          ${li?`<a href="${escapeAttr(li)}" target="_blank" rel="noopener">LinkedIn</a>`:''}
+          ${(c.geo_tags||[]).length?`<span title="${escapeAttr(c.geo_tags.join(', '))}">Covers: ${escapeHtml(c.geo_tags.slice(0,6).join(', '))}${c.geo_tags.length>6?` +${c.geo_tags.length-6}`:''}</span>`:''}
+          ${(c.responsibility||[]).length?`<span>${escapeHtml(c.responsibility.map(x=>TER_RESP_LABELS[x]||x).join(', '))}</span>`:''}
+          ${c.verified_date?`<span>Verified ${escapeHtml(fmtTerDate(c.verified_date))}</span>`:''}
+        </div>
+      </div>
+      <div style="white-space:nowrap;"><span class="ter-link" data-ter="editContact" data-tid="${t.id}" data-id="${c.id}">✎ Edit</span>${canDel?` &nbsp;<span class="ter-link" data-ter="delContact" data-tid="${t.id}" data-id="${c.id}" style="color:#c0392b;">Delete</span>`:''}</div>
+    </div>`;
+  }).join('');
+}
+
+/* ----- Contact add / edit modal ----- */
+function renderTerContactModal(){
+  const M = state.terContactModal; const t = terFindTenant(M.tenantId);
+  if(!t){ state.terContactModal=null; return; }
+  const c = M.contactId ? (terState().contacts[t.id]||[]).find(x=>x.id===M.contactId) : null;
+  const overlay = document.createElement('div'); overlay.className='modal-overlay'; overlay.style.zIndex=216;
+  overlay.innerHTML = `<div class="modal-card" style="width:600px;max-width:96vw;">
+    <div class="modal-head"><div class="modal-title">${c?'Edit contact':'Add Edge contact'} — ${escapeHtml(t.name)}</div><button class="modal-close" data-ter="closeContact">✕</button></div>
+    <div class="modal-body">
+      <div class="tiny" style="color:var(--ink-soft);margin-bottom:10px;">${c ? (c.source==='Edge' ? 'Added by Edge.' : 'From the report. Whatever you change is marked as Edge-edited, so quarterly updates won\'t overwrite it.') : 'This contact is tagged "Edge" and is never overwritten or removed by Collin\'s quarterly updates.'}</div>
+      <div class="ter-form">${TER_CONTACT_FIELDS.map(f=>`<label>${escapeHtml(f.label)}${f.k==='name'?' *':''}</label><div>${terFieldInput(c, f, 'terc')}</div>`).join('')}</div>
+      <div class="tiny" style="color:var(--ink-soft);margin-top:6px;">For territory, use full state names separated by commas (e.g. Arizona, Nevada, Utah).</div>
+      <div style="display:flex;gap:8px;margin-top:14px;"><button class="btn" data-ter="saveContact">${c?'Save':'Add contact'}</button><button class="btn secondary" data-ter="closeContact">Cancel</button></div>
+    </div></div>`;
+  document.getElementById('app').appendChild(overlay);
+  setTimeout(()=>{ const n=document.getElementById('terc_name'); if(n && !c) n.focus(); }, 0);
+}
+async function terSaveContact(btn){
+  const M = state.terContactModal; const T = terState();
+  const t = terFindTenant(M.tenantId); if(!t) return;
+  const c = M.contactId ? (T.contacts[t.id]||[]).find(x=>x.id===M.contactId) : null;
+  const vals = {};
+  TER_CONTACT_FIELDS.forEach(f=>{ vals[f.k] = terReadInput(f, 'terc'); });
+  if(!vals.name){ flashToast('A contact needs a name.'); render(); return; }
+  ['geo_tags','resident_state'].forEach(k=>{ vals[k] = (vals[k]||[]).map(s=>/^az$/i.test(s)?'Arizona':s); });
+  if(btn) btn.disabled = true;
+  const me = state.currentUser.authId;
+  if(!c){
+    const row = {...vals, tenant_id:t.id, source:'Edge', created_by:me};
+    const { data, error } = await supabaseClient.from('ter_contacts').insert(row).select().single();
+    if(error){ flashToast("Couldn't add the contact: " + error.message); if(btn) btn.disabled=false; render(); return; }
+    (T.contacts[t.id] = T.contacts[t.id]||[]).push(data);
+    T.counts[t.id] = (T.counts[t.id]||0)+1;
+    flashToast(`Added ${data.name} to ${t.name}.`);
+  } else {
+    const patch = {}; const ef = {...(c.edge_fields||{})}; const now = new Date().toISOString();
+    Object.keys(vals).forEach(k=>{ if(!terSame(vals[k], c[k])){ patch[k]=vals[k]; ef[k]={by:me, at:now}; } });
+    if(!Object.keys(patch).length){ state.terContactModal=null; terRender(); return; }
+    patch.edge_fields = ef;
+    const { data, error } = await supabaseClient.from('ter_contacts').update(patch).eq('id', c.id).select().single();
+    if(error){ flashToast("Couldn't save: " + error.message); if(btn) btn.disabled=false; render(); return; }
+    Object.assign(c, data);
+    flashToast('Contact saved.');
+  }
+  state.terContactModal = null;
+  terRender();
+}
+async function terDeleteContact(tid, id){
+  const T = terState(); const list = T.contacts[tid]||[]; const c = list.find(x=>x.id===id); if(!c) return;
+  if(!confirm(`Delete ${c.name}? This can't be undone.`)) return;
+  const { error } = await supabaseClient.from('ter_contacts').delete().eq('id', id);
+  if(error){ flashToast("Couldn't delete: " + error.message); render(); return; }
+  T.contacts[tid] = list.filter(x=>x.id!==id);
+  T.counts[tid] = T.contacts[tid].length;
+  flashToast('Contact deleted.'); terRender();
+}
+async function terSaveProfile(btn){
+  const P = state.terProfile; const t = terFindTenant(P.id); if(!t) return;
+  const patch = {}; const ef = {...(t.edge_fields||{})}; const me = state.currentUser.authId; const now = new Date().toISOString();
+  TER_FIELDS.forEach(f=>{ const v = terReadInput(f, 'terf'); if(v===undefined) return; if(f.k==='name' && !v) return; if(!terSame(v, t[f.k])){ patch[f.k]=v; ef[f.k]={by:me, at:now}; } });
+  if(!Object.keys(patch).length){ P.edit=false; terRender(); return; }
+  patch.edge_fields = ef;
+  if(btn) btn.disabled = true;
+  const { data, error } = await supabaseClient.from('ter_tenants').update(patch).eq('id', t.id).select().single();
+  if(error){ flashToast("Couldn't save: " + error.message); if(btn) btn.disabled=false; render(); return; }
+  Object.assign(t, data);
+  P.edit = false;
+  flashToast('Saved — marked as Edge-edited.');
+  terRender();
+}
+let terSearchTimer = null;
+async function terContactSearch(q){
+  const T = terState();
+  const clean = q.replace(/[%,()*\\]/g,' ').trim();
+  if(clean.length<3){ T.contactHits = null; return; }
+  const { data, error } = await supabaseClient.from('ter_contacts').select('tenant_id').or(`name.ilike.%${clean}%,email.ilike.%${clean}%,title.ilike.%${clean}%`).limit(1000);
+  if(error){ console.error('terContactSearch', error); T.contactHits = null; return; }
+  if((T.q||'').trim()!==q) return; // a newer search has started
+  T.contactHits = new Set(data.map(r=>r.tenant_id));
+}
+function terRefocus(sel){
+  const el = document.querySelector(sel);
+  if(el){ el.focus(); const n = el.value.length; try{ el.setSelectionRange(n,n); }catch(e){} }
+}
+document.addEventListener('click', ev=>{
+  const el = ev.target.closest && ev.target.closest('[data-ter]'); if(!el) return;
+  const a = el.dataset.ter; const T = terState();
+  if(['search','az','status','dt','sf','sort'].includes(a)) return;
+  ev.preventDefault();
+  if(a==='retry'){ T.error=null; render(); return; }
+  if(a==='toggleGroup'){ const g = el.dataset.g; if(terFilterActive()) T.fopen[g] = T.fopen[g]===false; else T.open[g] = !T.open[g]; terRender(); return; }
+  if(a==='expandAll' || a==='collapseAll'){ const on = a==='expandAll'; [...new Set(T.tenants.map(t=>t.grp||'Other'))].forEach(g=>{ if(terFilterActive()) T.fopen[g]=on; else T.open[g]=on; }); terRender(); return; }
+  if(a==='showMore'){ const g = el.dataset.g; T.showN[g] = (T.showN[g]||100)+100; terRender(); return; }
+  if(a==='clear'){ T.q=''; T.az='all'; T.status=''; T.dt=''; T.sf=''; T.contactHits=null; T.fopen={}; terRender(); return; }
+  if(a==='toggleTenant'){ const id = el.dataset.id; T.exp[id] = !T.exp[id]; terRender(); if(T.exp[id] && !T.contacts[id]) terLoadContacts(id).then(terRender); return; }
+  if(a==='profile'){ const id = el.dataset.id; state.terProfile = {id, edit:false}; render(); if(!T.contacts[id]) terLoadContacts(id).then(terRender); return; }
+  if(a==='closeProfile'){ state.terProfile = null; terRender(); return; }
+  if(a==='editProfile'){ state.terProfile.edit = true; terRender(); return; }
+  if(a==='cancelEdit'){ state.terProfile.edit = false; terRender(); return; }
+  if(a==='saveProfile'){ terSaveProfile(el); return; }
+  if(a==='openTouch'){ const t = terFindTenant(state.terProfile.id); const x = t && terEdgeTouches(t)[+el.dataset.i]; if(x && x.clientId){ state.terProfile = null; openClientModal(x.listId, x.clientId); render(); } return; }
+  if(a==='addContact'){ state.terContactModal = {tenantId:el.dataset.tid, contactId:null}; render(); return; }
+  if(a==='editContact'){ state.terContactModal = {tenantId:el.dataset.tid, contactId:el.dataset.id}; render(); return; }
+  if(a==='closeContact'){ state.terContactModal = null; terRender(); return; }
+  if(a==='saveContact'){ terSaveContact(el); return; }
+  if(a==='delContact'){ terDeleteContact(el.dataset.tid, el.dataset.id); return; }
+});
+document.addEventListener('change', ev=>{
+  const el = ev.target.closest && ev.target.closest('[data-ter]'); if(!el) return;
+  const a = el.dataset.ter; const T = terState();
+  if(['az','status','dt','sort'].includes(a)){ T[a] = el.value; T.fopen = {}; T.showN = {}; terRender(); }
+});
+document.addEventListener('input', ev=>{
+  const el = ev.target.closest && ev.target.closest('[data-ter="search"],[data-ter="sf"]'); if(!el) return;
+  const T = terState(); const a = el.dataset.ter;
+  if(a==='sf'){ T.sf = el.value.replace(/[^\d.,]/g,''); }
+  else { T.q = el.value; }
+  T.fopen = {}; T.showN = {};
+  clearTimeout(terSearchTimer);
+  terSearchTimer = setTimeout(async ()=>{
+    if(a==='search') await terContactSearch((T.q||'').trim());
+    terRender(); terRefocus(`[data-ter="${a}"]`);
+  }, 300);
+});
+
 /* ---------------- SHELL HANDLERS ---------------- */
 function wireGlobalSearchResultHandlers(){
   document.querySelectorAll('[data-searchresult]').forEach(el=>el.onmousedown=(ev)=>{
@@ -8368,6 +9045,7 @@ function attachShellHandlers(){
     else if(el.dataset.nav==='archived-clients'){ state.mainView={type:'archived-clients'}; }
     else if(el.dataset.nav==='projects'){ state.mainView={type:'projects'}; }
     else if(el.dataset.nav==='checklists'){ state.mainView={type:'checklists'}; }
+    else if(el.dataset.nav==='tenant-expansion'){ state.mainView={type:'tenant-expansion'}; }
     state.expandedTeamUser=null;
     state.todoView='mine';
     state.selectedTodoIds=[];
@@ -16900,6 +17578,8 @@ document.addEventListener('keydown', (ev)=>{
   // Closest/smallest overlays first, so repeated Escape presses peel back one
   // layer at a time — same order a person would naturally click their way out.
   // These three sit above everything else (highest z-index), so they're checked first.
+  if(state.terContactModal){ state.terContactModal=null; render(); return; }
+  if(state.terProfile){ if(state.terProfile.edit){ state.terProfile.edit=false; } else { state.terProfile=null; } render(); return; }
   if(state.qualifiedOfferPrompt){ state.qualifiedOfferPrompt=null; render(); return; }
   if(state.stageReminderPrompt){
     const linkEl = document.getElementById('stageReminderEgnyte');
