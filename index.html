@@ -442,6 +442,24 @@
   .mw-nw{top:0;left:0;cursor:nwse-resize;} .mw-se{bottom:0;right:0;cursor:nwse-resize;}
   body.mw-busy, body.mw-busy *{user-select:none !important;}
   @media (max-width:700px){ .mw-h{display:none;} .mw-draggable{cursor:auto;} }
+  .mlw-bucket{display:flex;align-items:center;gap:10px;padding:11px 4px;border-bottom:1px solid var(--line-soft);font-size:13.5px;cursor:pointer;}
+  .mlw-bblock{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:14px;}
+  .mlw-bhead{display:flex;align-items:center;gap:8px;font-weight:700;font-size:14.5px;margin-bottom:6px;color:#6B46C1;}
+  .mlw-cat{padding:7px 4px;border-bottom:1px solid var(--line-soft);font-size:13px;}
+  .mlw-cat.on{background:#FAF8FE;}
+  .mlw-subs{display:flex;flex-wrap:wrap;gap:5px;margin:7px 0 2px 26px;}
+  .mlw-sub{font-size:11.5px;border:1px solid #CDBFEF;background:#F3EEFD;color:#4B2E8C;border-radius:12px;padding:2px 9px;cursor:pointer;user-select:none;}
+  .mlw-sub.off{background:#fff;color:#999;border-color:var(--line);text-decoration:line-through;}
+  .mlw-row{display:flex;align-items:center;gap:10px;padding:7px 2px;border-bottom:1px solid var(--line-soft);font-size:13px;}
+  .mlw-row.prohibited{opacity:.5;}
+  .mlw-seg{display:flex;flex-shrink:0;border:1px solid var(--line);border-radius:7px;overflow:hidden;}
+  .mlw-seg button{border:none;background:#fff;font-size:11.5px;padding:5px 9px;cursor:pointer;color:var(--ink-soft);border-right:1px solid var(--line);}
+  .mlw-seg button:last-child{border-right:none;}
+  .mlw-seg button.on.keep{background:#E6F7EE;color:#037F4C;font-weight:600;}
+  .mlw-seg button.on.trade{background:#FBF3E2;color:#8A6416;font-weight:600;}
+  .mlw-seg button.on.prohibited{background:#FDE8E8;color:#B42318;font-weight:600;}
+  .mlw-add{border:1.5px dashed var(--line);border-radius:10px;padding:12px;margin-bottom:16px;}
+  @media (max-width:700px){ .mlw-row{flex-wrap:wrap;} }
   /* ---------- TENANT EXPANSION REPORT ---------- */
   .bd-table.ter-table .bd-title-td, .bd-table.ter-table .bd-title-th{left:0;box-shadow:-40px 0 0 #fff, 2px 0 0 var(--line-soft);}
   .bd-table.ter-table thead .bd-title-th{box-shadow:-40px 0 0 var(--paper), 2px 0 0 var(--line-soft);}
@@ -823,7 +841,7 @@ const EDGE_LOGO_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAARgAAA
 // normal for this specific key type; Google expects it to be visible in page source and
 // restricted by domain, via HTTP referrer restriction in Google Cloud Console, not hidden
 // like the other secrets in this app). Replace once Michael has generated a real key.
-const APP_BUILD = '2026-10-12 list-delete-fix';
+const APP_BUILD = '2026-10-14 ter-listings';
 const GOOGLE_MAPS_JS_KEY = 'AIzaSyBMlIjvH2bpZK6mYJeNZSkQvM8TXQkCjDE';
 const CATEGORY_ORANGE_ICONS = ['💲','🏢','🎯','📋','☁️','🔧','✈️','🏛️','💎','📄','⭐','🗂️'];
 
@@ -1719,6 +1737,7 @@ function prospectRowToLocal(r){
     rent:r.rent||'', price:r.price||'', term:r.term||'', tiAllowance:r.ti_allowance||'',
     totalFee:r.total_fee||'', splits:r.splits||'', commissionStructure:r.commission_structure||'',
     commission1Paid:r.commission1_paid, commission2Paid:r.commission2_paid, inTradeArea:r.in_trade_area, attachments:[], egnyteLink:r.egnyte_link||'',
+    terTenantId:r.ter_tenant_id||null, terBuckets:r.ter_buckets||[], terGrp:r.ter_grp||null, terContactId:r.ter_contact_id||null,
     latitude: r.latitude||null, longitude: r.longitude||null, geocodeFailed: !!r.geocode_failed};
 }
 function prospectLocalToRow(p, listingId){
@@ -1730,11 +1749,19 @@ function prospectLocalToRow(p, listingId){
     term:p.term||null, ti_allowance:p.tiAllowance||null, total_fee:p.totalFee||null, splits:p.splits||null,
     commission_structure:p.commissionStructure||null,
     commission1_paid:!!p.commission1Paid, commission2_paid:!!p.commission2Paid, in_trade_area:!!p.inTradeArea, egnyte_link:p.egnyteLink||null,
-    latitude: p.latitude||null, longitude: p.longitude||null, geocode_failed: !!p.geocodeFailed};
+    latitude: p.latitude||null, longitude: p.longitude||null, geocode_failed: !!p.geocodeFailed,
+    ter_tenant_id: p.terTenantId||null, ter_buckets: p.terBuckets||[], ter_grp: p.terGrp||null, ter_contact_id: p.terContactId||null};
 }
 async function fetchProspectsFromSupabase(){
-  const { data, error } = await supabaseClient.from('prospects').select('*');
-  if(error){ console.error('fetchProspectsFromSupabase error:', error); return; }
+  // Paged (2026-10-14): TER marketing lists can put hundreds of prospects on one Listing,
+  // and a single select() silently stops at 1,000 rows.
+  const data = [];
+  for(let from=0; from<200000; from+=1000){
+    const { data:page, error } = await supabaseClient.from('prospects').select('*').order('id').range(from, from+999);
+    if(error){ console.error('fetchProspectsFromSupabase error:', error); return; }
+    data.push(...page);
+    if(page.length<1000) break;
+  }
   const listingsList = db.lists.find(l=>l.id==='listings');
   if(!listingsList) return;
   listingsList.clients.forEach(c=>{
@@ -1748,6 +1775,7 @@ async function supaCreateProspect(p, listingId){
   if(error){ console.error('supaCreateProspect error:', error); flashToast('Saved here, but syncing to the server failed. (' + error.message + ')'); render(); }
 }
 async function supaUpdateProspect(p, listingId){
+  terMaybePromoteContact(p, listingId);
   const { error } = await supabaseClient.from('prospects').update(prospectLocalToRow(p, listingId)).eq('id', p.id);
   if(error){ console.error('supaUpdateProspect error:', error); flashToast('Saved here, but syncing to the server failed. (' + error.message + ')'); render(); }
 }
@@ -7226,177 +7254,268 @@ function wireCalendarViewHandlers(overlay){
     };
   });
 }
-/* ==================== CREATE MARKETING LIST WIZARD ==================== */
+/* ==================== CREATE MARKETING LIST WIZARD (TER) ==================== */
+// Rebuilt 2026-10-14 — pulls from the Tenant Expansion Report instead of the old 434-tenant
+// roster. Flow agreed with Michael: size bucket(s) → TER categories → sub-categories → review
+// (In AZ + Coming to AZ, with a collapsed "not in Arizona" section) → saved onto the Listing in
+// the same Bucket → Category layout. A tenant shows in every bucket its SF range touches; it is
+// still ONE prospect record, so Dead / comments follow it everywhere it appears.
+const TER_BUCKETS = [
+  {id:'anchors',   name:'Anchors',     sub:'50,001 SF +',         min:50001, max:Infinity},
+  {id:'bigbox',    name:'Big Box',     sub:'10,000 – 55,000 SF',  min:10000, max:55000},
+  {id:'midmajors', name:'Mid-Majors',  sub:'5,000 – 11,000 SF',   min:5000,  max:11000},
+  {id:'shops',     name:'Shops',       sub:'5,000 SF and under',  min:0,     max:5000},
+  {id:'pads',      name:'Pads',        sub:'Freestanding · Drive Thru · Ground Lease · Build-to-Suit'},
+  {id:'unknown',   name:'Size Unknown',sub:'No SF on file (and not a Pad user)'},
+];
+const TER_BUCKET_MAP = Object.fromEntries(TER_BUCKETS.map(b=>[b.id,b]));
+function terIsPad(t){
+  return (t.bldg_type||[]).includes('Freestanding') || t.drive_thru==='YES' ||
+         (t.lease_type||[]).includes('GroundLease') || (t.lease_type||[]).includes('BTS');
+}
+function terBucketsFor(t){
+  const out = [];
+  const lo0 = t.sf_low!=null ? Number(t.sf_low) : null, hi0 = t.sf_high!=null ? Number(t.sf_high) : null;
+  const lo = lo0!=null ? lo0 : hi0, hi = hi0!=null ? hi0 : lo0;
+  const hasSize = lo!=null && !isNaN(lo);
+  if(hasSize){
+    TER_BUCKETS.forEach(b=>{ if(b.min!=null && lo<=b.max && hi>=b.min) out.push(b.id); });
+  }
+  if(terIsPad(t)) out.push('pads');
+  if(!hasSize && !out.includes('pads')) out.push('unknown');
+  return out;
+}
+function terSubLabel(s){ const x = String(s||'').replace(/([a-z])([A-Z])/g,'$1 $2'); return x.charAt(0).toUpperCase()+x.slice(1); }
+function mlwListing(m){ return db.lists.find(x=>x.id==='listings').clients.find(c=>c.id===m.clientId); }
 function openMarketingListWizard(clientId){
-  state.marketingListWizard = { step:1, clientId, selectedCategoryIds: [], reviewItems: null };
+  state.marketingListWizard = { step:1, clientId, buckets:[], sel:{}, review:{}, extraAdd:{}, showNotAz:false, added:[] };
+  if(!terState().loaded) terEnsureLoaded().then(()=>{ if(state.marketingListWizard) render(); });
+}
+// Every TER tenant that matches the picks, with the buckets it matched under.
+function mlwMatches(m){
+  const T = terState();
+  const out = new Map(); // tenantId -> {t, buckets:Set}
+  T.tenants.forEach(t=>{
+    const tb = terBucketsFor(t);
+    m.buckets.forEach(b=>{
+      if(!tb.includes(b)) return;
+      const g = (m.sel[b]||{})[t.grp]; if(!g) return;
+      const subs = t.industry_sub||[];
+      if(subs.length && !subs.some(s=>!g.off.includes(s))) return;
+      if(!out.has(t.id)) out.set(t.id, {t, buckets:new Set()});
+      out.get(t.id).buckets.add(b);
+    });
+  });
+  return out;
+}
+function mlwAzBadge(t){
+  const a = terAz(t);
+  return `<span class="ter-pill inline" style="background:${TER_AZ_COLOR[a]};${a==='not'?'color:#555;':''}">${TER_AZ_LABEL[a]}</span>`;
+}
+function mlwSfText(t){
+  const lo=t.sf_low, hi=t.sf_high; if(lo==null&&hi==null) return '';
+  return (lo!=null&&hi!=null&&Number(lo)!==Number(hi)) ? `${terFmtNum(lo)}–${terFmtNum(hi)} SF` : `${terFmtNum(lo!=null?lo:hi)} SF`;
 }
 function renderMarketingListWizard(){
   const m = state.marketingListWizard;
-  const listing = db.lists.find(x=>x.id==='listings').clients.find(c=>c.id===m.clientId);
+  const listing = mlwListing(m);
+  if(!listing){ state.marketingListWizard=null; return; }
   lsrEnsureListing(listing);
-  const allCats = DEFAULT_PROPERTY_CATEGORIES.concat(listing.categoryConfig.custom);
+  const T = terState();
   const overlay = document.createElement('div');
   overlay.className='modal-overlay'; overlay.style.zIndex=280;
-
-  let bodyHtml = '', footHtml = '', titleText = '';
-  if(m.step===1){
-    titleText = 'Create Marketing List — Step 1: Categories';
-    bodyHtml = `
-      <p style="font-size:12.5px;color:var(--ink-soft);margin-top:0;">
-        Pull tenants from the standing Phoenix retail roster (${TENANT_ROSTER.length} tenants) into ${escapeHtml(listing.name)}.
-        Choose which categories to review.
-      </p>
-      ${allCats.map(c=>{
-        const count = TENANT_ROSTER.filter(r=>r.categoryId===c.id).length;
-        if(count===0) return '';
-        return `<label style="display:flex;align-items:center;gap:8px;padding:8px 2px;border-bottom:1px solid var(--line-soft);font-size:13px;cursor:pointer;">
-          <input type="checkbox" class="mlwCategoryCheck" value="${c.id}" ${m.selectedCategoryIds.includes(c.id)?'checked':''} style="width:auto;">
-          ${escapeHtml(c.name)} <span style="color:var(--ink-soft);margin-left:auto;">${count} in roster</span>
-        </label>`;
-      }).join('')}
-    `;
-    footHtml = `
-      <button class="btn secondary" data-action="mlwCancel">Cancel</button>
-      <button class="btn" data-action="mlwNext">Next: Review Tenants →</button>
-    `;
+  let title='', body='', foot='';
+  if(!T.loaded){
+    title = 'Create Marketing List';
+    body = `<div class="tiny" style="padding:20px;color:var(--ink-soft);">${T.error?`Couldn't load the Tenant Expansion Report: ${escapeHtml(T.error)}`:'Loading the Tenant Expansion Report…'}</div>`;
+    foot = `<button class="btn secondary" data-mlw="cancel">Cancel</button>`;
+  } else if(m.step===1){
+    title = 'Create Marketing List — Step 1: Size';
+    const azTenants = T.tenants.filter(t=>terAz(t)!=='not');
+    body = `<p class="tiny" style="color:var(--ink-soft);margin-top:0;">Pulls from the Tenant Expansion Report into <b>${escapeHtml(listing.name)}</b>. Pick the kind of space you're leasing. A tenant whose size range spans more than one bucket shows in each.</p>
+      ${TER_BUCKETS.map(b=>{
+        const n = azTenants.filter(t=>terBucketsFor(t).includes(b.id)).length;
+        return `<label class="mlw-bucket"><input type="checkbox" data-mlw="bucket" value="${b.id}" ${m.buckets.includes(b.id)?'checked':''} style="width:auto;">
+          <span><b>${b.name}</b><span class="tiny" style="color:var(--ink-soft);margin-left:8px;">${escapeHtml(b.sub)}</span></span>
+          <span class="tiny" style="margin-left:auto;color:var(--ink-soft);">${n.toLocaleString()} in / coming to AZ</span></label>`;
+      }).join('')}`;
+    foot = `<button class="btn secondary" data-mlw="cancel">Cancel</button><button class="btn" data-mlw="toStep2">Next: Categories →</button>`;
+  } else if(m.step===2){
+    title = 'Create Marketing List — Step 2: Categories';
+    body = `<p class="tiny" style="color:var(--ink-soft);margin-top:0;">Check the categories you want in each bucket. Then uncheck any sub-category you want to skip (e.g. Coffee, if the center already has a coffee user).</p>` +
+      m.buckets.map(bid=>{
+        const b = TER_BUCKET_MAP[bid];
+        const inB = T.tenants.filter(t=>terAz(t)!=='not' && terBucketsFor(t).includes(bid));
+        const groups = {};
+        inB.forEach(t=>{ (groups[t.grp||'Other'] = groups[t.grp||'Other'] || []).push(t); });
+        const names = Object.keys(groups).sort((a,b)=>a.localeCompare(b));
+        const sel = m.sel[bid] || {};
+        return `<div class="mlw-bblock"><div class="mlw-bhead">${escapeHtml(b.name)} <span class="tiny" style="color:var(--ink-soft);font-weight:400;">${escapeHtml(b.sub)}</span>
+            <span style="margin-left:auto;display:flex;gap:6px;"><span class="ter-link" data-mlw="allCats" data-b="${bid}">Check all</span><span class="tiny" style="color:#ccc;">|</span><span class="ter-link" data-mlw="noCats" data-b="${bid}">None</span></span></div>
+          ${names.map(g=>{
+            const on = !!sel[g];
+            const subs = {}; groups[g].forEach(t=>(t.industry_sub||[]).forEach(s=>{ subs[s]=(subs[s]||0)+1; }));
+            const subNames = Object.keys(subs).sort((a,b)=>terSubLabel(a).localeCompare(terSubLabel(b)));
+            return `<div class="mlw-cat ${on?'on':''}">
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;"><input type="checkbox" data-mlw="cat" data-b="${bid}" data-g="${escapeAttr(g)}" ${on?'checked':''} style="width:auto;"> ${escapeHtml(g)} <span class="tiny" style="color:var(--ink-soft);margin-left:auto;">${groups[g].length}</span></label>
+              ${on && subNames.length ? `<div class="mlw-subs">${subNames.map(s=>{
+                const off = sel[g].off.includes(s);
+                return `<span class="mlw-sub ${off?'off':''}" data-mlw="sub" data-b="${bid}" data-g="${escapeAttr(g)}" data-s="${escapeAttr(s)}">${off?'☐':'☑'} ${escapeHtml(terSubLabel(s))} <span style="opacity:.6;">${subs[s]}</span></span>`;
+              }).join('')}</div>` : ''}
+            </div>`;
+          }).join('') || `<div class="tiny" style="color:var(--ink-soft);padding:6px 0;">No Arizona tenants in this bucket.</div>`}
+        </div>`;
+      }).join('');
+    foot = `<button class="btn secondary" data-mlw="back">← Back</button><button class="btn" data-mlw="toStep3">Next: Review Tenants →</button>`;
   } else {
-    titleText = `Create Marketing List — Step 2: Review (${m.reviewItems.filter(i=>i.keep && !i.prohibited).length} will be added)`;
-    const byCat = {};
-    m.reviewItems.forEach(item=>{ (byCat[item.categoryId]=byCat[item.categoryId]||[]).push(item); });
-    bodyHtml = `
-      <div style="border:1.5px dashed var(--line);border-radius:10px;padding:12px;margin-bottom:16px;">
-        <div style="font-size:12.5px;font-weight:600;margin-bottom:8px;">+ Add a tenant not on this list</div>
-        <div class="field-row">
-          <div class="field"><input id="mlwNewName" placeholder="Tenant name"></div>
-          <div class="field">
-            <select id="mlwNewCategory">
-              <option value="">— choose category (required) —</option>
-              ${allCats.map(c=>`<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('')}
-            </select>
-          </div>
-          <button class="btn sm" data-action="mlwAddNewTenant" style="flex-shrink:0;">Add</button>
+    const matches = mlwMatches(m);
+    const existing = new Map(listing.prospects.map(p=>[terNorm(p.tenantName), p]));
+    const azList = [...matches.values()].filter(x=>terAz(x.t)!=='not');
+    const notAz = [...matches.values()].filter(x=>terAz(x.t)==='not').sort((a,b)=>a.t.name.localeCompare(b.t.name));
+    const keepCount = azList.filter(x=>(m.review[x.t.id]||'keep')!=='prohibited').length + notAz.filter(x=>m.extraAdd[x.t.id]).length + m.added.length;
+    title = `Create Marketing List — Step 3: Review (${keepCount.toLocaleString()} to add)`;
+    const row = (x)=>{
+      const t = x.t; const st = m.review[t.id]||'keep'; const ex = existing.get(terNorm(t.name));
+      return `<div class="mlw-row ${st==='prohibited'?'prohibited':''}">
+        <div style="flex:1;min-width:0;"><b>${escapeHtml(t.name)}</b> ${mlwAzBadge(t)} ${t.status?`<span class="ter-pill inline" style="background:${TER_STATUS_COLORS[t.status]||'#c4c4c4'};">${escapeHtml(t.status)}</span>`:''}
+          <div class="tiny" style="color:var(--ink-soft);">${[mlwSfText(t), (t.industry_sub||[]).map(terSubLabel).join(', '), ex?'Already on this Listing — comments kept':''].filter(Boolean).map(escapeHtml).join(' · ')}</div></div>
+        <div class="mlw-seg">${[['keep','Keep'],['trade','In Trade Area'],['prohibited','Prohibited']].map(([v,l])=>`<button class="${st===v?'on':''} ${v}" data-mlw="status" data-id="${t.id}" data-v="${v}">${l}</button>`).join('')}</div>
+      </div>`;
+    };
+    const sections = m.buckets.map(bid=>{
+      const inB = azList.filter(x=>x.buckets.has(bid));
+      const addedB = m.added.filter(a=>a.bucket===bid);
+      if(!inB.length && !addedB.length) return '';
+      const groups = {}; inB.forEach(x=>{ (groups[x.t.grp||'Other']=groups[x.t.grp||'Other']||[]).push(x); });
+      addedB.forEach(a=>{ groups[a.grp] = groups[a.grp] || []; });
+      return `<div class="mlw-bblock"><div class="mlw-bhead">${escapeHtml(TER_BUCKET_MAP[bid].name)} <span class="tiny" style="color:var(--ink-soft);font-weight:400;">${inB.length} tenants</span></div>
+        ${Object.keys(groups).sort().map(g=>`<div class="section-label" style="margin:12px 0 4px;">${escapeHtml(g)} (${groups[g].length + addedB.filter(a=>a.grp===g).length})</div>
+          ${groups[g].sort((a,b)=>a.t.name.localeCompare(b.t.name)).map(row).join('')}
+          ${addedB.filter(a=>a.grp===g).map(a=>`<div class="mlw-row"><div style="flex:1;"><b>${escapeHtml(a.name)}</b> <span class="ter-src edge">Added${a.addToTer?' · also to TER':''}</span></div><span class="ter-link" data-mlw="unadd" data-i="${m.added.indexOf(a)}" style="color:#c0392b;">Remove</span></div>`).join('')}`).join('')}
+      </div>`;
+    }).join('');
+    const allGroups = [...new Set(T.tenants.map(t=>t.grp).filter(Boolean))].sort();
+    body = `
+      <div class="mlw-add">
+        <div style="font-size:12.5px;font-weight:600;margin-bottom:8px;">+ Add a tenant that isn't on this list</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+          <input id="mlwAddName" placeholder="Tenant name" style="flex:1;min-width:160px;">
+          <select id="mlwAddBucket">${m.buckets.map(b=>`<option value="${b}">${escapeHtml(TER_BUCKET_MAP[b].name)}</option>`).join('')}</select>
+          <select id="mlwAddGrp"><option value="">Category…</option>${allGroups.map(g=>`<option>${escapeHtml(g)}</option>`).join('')}</select>
+          <button class="btn sm" data-mlw="add">Add</button>
         </div>
-        <div id="mlwNewTenantError" style="color:var(--bad);font-size:11.5px;margin-top:6px;display:none;"></div>
+        <label class="tiny" style="display:flex;gap:6px;align-items:center;margin-top:8px;cursor:pointer;"><input type="checkbox" id="mlwAddTer" style="width:auto;"> Also add to TER (so it shows up for every Listing). Leave unchecked for local one-offs.</label>
       </div>
-      ${Object.keys(byCat).map(catId=>{
-        const cat = allCats.find(c=>c.id===catId);
-        const items = byCat[catId];
-        return `
-        <div class="section-label" style="margin-top:18px;">${cat?escapeHtml(cat.name):'Other'} (${items.length})</div>
-        ${items.map(item=>`
-          <div class="row-card" style="align-items:center;">
-            <div class="row-body">
-              <div class="row-title">${escapeHtml(item.name)}</div>
-              <div class="row-meta"><span>${escapeHtml(item.tenantType)}</span></div>
-            </div>
-            <div style="display:flex;gap:14px;flex-shrink:0;flex-wrap:wrap;">
-              <label style="display:flex;align-items:center;gap:5px;font-size:11.5px;"><input type="radio" name="mlwstatus_${item.rosterId}" data-mlwflag="keep" data-rosterid="${item.rosterId}" ${item.keep?'checked':''} style="width:auto;"> Keep</label>
-              <label style="display:flex;align-items:center;gap:5px;font-size:11.5px;"><input type="radio" name="mlwstatus_${item.rosterId}" data-mlwflag="tradeArea" data-rosterid="${item.rosterId}" ${item.tradeArea?'checked':''} style="width:auto;"> In Trade Area</label>
-              <label style="display:flex;align-items:center;gap:5px;font-size:11.5px;"><input type="radio" name="mlwstatus_${item.rosterId}" data-mlwflag="prohibited" data-rosterid="${item.rosterId}" ${item.prohibited?'checked':''} style="width:auto;"> Prohibited</label>
-            </div>
-          </div>`).join('')}
-        `;
-      }).join('')}
-    `;
-    footHtml = `
-      <button class="btn secondary" data-action="mlwBack">← Back</button>
-      <button class="btn" data-action="mlwSave">Save to ${escapeHtml(listing.name)}</button>
-    `;
+      ${sections || `<div class="empty-state"><div class="big">No Arizona tenants match.</div><div class="tiny">Go back and check more categories, or look below.</div></div>`}
+      ${notAz.length ? `<div class="mlw-bblock" style="background:#FAFAFA;">
+        <div class="mlw-bhead" data-mlw="toggleNotAz" style="cursor:pointer;">${m.showNotAz?'▾':'▸'} Show more: not in Arizona (${notAz.length}) <span class="tiny" style="color:var(--ink-soft);font-weight:400;">only added if you check them</span></div>
+        ${m.showNotAz ? notAz.map(x=>{ const t=x.t; const tg=(t.geo_targets_2026||[]).filter(s=>s!=='National').slice(0,4);
+          return `<label class="mlw-row" style="cursor:pointer;"><input type="checkbox" data-mlw="extra" data-id="${t.id}" ${m.extraAdd[t.id]?'checked':''} style="width:auto;">
+            <div style="flex:1;"><b>${escapeHtml(t.name)}</b> <span class="tiny" style="color:var(--ink-soft);">${escapeHtml(t.grp||'')} · ${[...x.buckets].map(b=>TER_BUCKET_MAP[b].name).join(', ')}</span>
+            <div class="tiny" style="color:var(--ink-soft);">Not in AZ${(t.current_states||[]).length?` · in ${t.current_states.length} state${t.current_states.length===1?'':'s'}`:''}${tg.length?` · 2026 targets: ${escapeHtml(tg.join(', '))}`:''}</div></div></label>`; }).join('') : ''}
+      </div>` : ''}`;
+    foot = `<button class="btn secondary" data-mlw="back">← Back</button><button class="btn" data-mlw="save">Save ${keepCount.toLocaleString()} to ${escapeHtml(listing.name)}</button>`;
   }
-
-  overlay.innerHTML = `
-  <div class="modal-card wide" style="max-height:90vh;">
-    <div class="modal-head"><div class="modal-title">${titleText}</div><button class="modal-close" data-action="mlwCancel">✕</button></div>
-    <div class="modal-body">${bodyHtml}</div>
-    <div class="modal-foot">${footHtml}</div>
-  </div>`;
+  overlay.innerHTML = `<div class="modal-card wide" style="max-height:90vh;">
+    <div class="modal-head"><div class="modal-title">${title}</div><button class="modal-close" data-mlw="cancel">✕</button></div>
+    <div class="modal-body ter-modal-body">${body}</div>
+    <div class="modal-foot">${foot}</div></div>`;
   document.getElementById('app').appendChild(overlay);
-  wireMarketingListWizard(overlay, listing, allCats);
 }
-function wireMarketingListWizard(overlay, listing, allCats){
-  const m = state.marketingListWizard;
-  overlay.querySelectorAll('[data-action="mlwCancel"]').forEach(b=>b.onclick=()=>{ state.marketingListWizard=null; render(); });
-  if(m.step===1){
-    overlay.querySelectorAll('.mlwCategoryCheck').forEach(cb=>cb.onchange=()=>{
-      if(cb.checked) m.selectedCategoryIds.push(cb.value);
-      else m.selectedCategoryIds = m.selectedCategoryIds.filter(id=>id!==cb.value);
-    });
-    overlay.querySelector('[data-action="mlwNext"]').onclick=()=>{
-      if(!m.selectedCategoryIds.length){ flashToast('Pick at least one category first.'); return; }
-      const existingNames = new Set(listing.prospects.map(p=>p.tenantName.toLowerCase().trim()));
-      m.reviewItems = TENANT_ROSTER
-        .filter(r=>m.selectedCategoryIds.includes(r.categoryId))
-        .map(r=>({rosterId:r.id, name:r.name, categoryId:r.categoryId, tenantType:r.tenantType, notes:r.notes,
-                   keep:true, tradeArea:false, prohibited:false, alreadyOnListing: existingNames.has(r.name.toLowerCase().trim())}));
-      m.step = 2;
-      render();
-    };
-  } else {
-    overlay.querySelectorAll('[data-mlwflag]').forEach(cb=>cb.onclick=(ev)=>{
-      ev.stopPropagation();
-      const item = m.reviewItems.find(i=>i.rosterId===cb.dataset.rosterid);
-      if(!item) return;
-      item.keep = (cb.dataset.mlwflag==='keep');
-      item.tradeArea = (cb.dataset.mlwflag==='tradeArea');
-      item.prohibited = (cb.dataset.mlwflag==='prohibited');
-    });
-    overlay.querySelector('[data-action="mlwBack"]').onclick=()=>{ m.step=1; render(); };
-    overlay.querySelector('[data-action="mlwAddNewTenant"]').onclick=()=>{
-      const nameInput = document.getElementById('mlwNewName');
-      const catSelect = document.getElementById('mlwNewCategory');
-      const errBox = document.getElementById('mlwNewTenantError');
-      const name = nameInput.value.trim();
-      const categoryId = catSelect.value;
-      if(!name || !categoryId){
-        errBox.textContent = !categoryId ? 'Choose a category before adding this tenant.' : 'Enter a tenant name.';
-        errBox.style.display = 'block';
-        return;
+async function mlwSave(){
+  const m = state.marketingListWizard; const listing = mlwListing(m); if(!listing) return;
+  const matches = mlwMatches(m);
+  const existing = new Map(listing.prospects.map(p=>[terNorm(p.tenantName), p]));
+  const toInsert = [], toUpdate = [];
+  let added=0, merged=0, skipped=0;
+  const base = ()=>({contactId:null, brokerId:null, categoryId:null, stage:'contacted', dealType:null, dateOfContact:null, notes:'',
+    edgeTracker: state.currentUser.id, deadDate:null, building:'', spaceNum:'', size:'', rent:'', price:'', term:'', tiAllowance:'', dealNotes:'',
+    commission1Paid:false, commission2Paid:false, attachments:[], terContactId:null});
+  const place = (name, terTenantId, buckets, grp, inTradeArea)=>{
+    const ex = existing.get(terNorm(name));
+    if(ex){
+      ex.terTenantId = ex.terTenantId || terTenantId;
+      ex.terBuckets = [...new Set([...(ex.terBuckets||[]), ...buckets])];
+      ex.terGrp = ex.terGrp || grp;
+      toUpdate.push(ex); merged++; return;
+    }
+    const p = {...base(), id:crypto.randomUUID(), tenantName:name, terTenantId, terBuckets:buckets, terGrp:grp, inTradeArea:!!inTradeArea};
+    listing.prospects.push(p); toInsert.push(p); existing.set(terNorm(name), p); added++;
+  };
+  matches.forEach(x=>{
+    const t = x.t; const az = terAz(t)!=='not';
+    if(az){
+      const st = m.review[t.id]||'keep';
+      if(st==='prohibited'){ skipped++; return; }
+      place(t.name, t.id, [...x.buckets], t.grp, st==='trade');
+    } else if(m.extraAdd[t.id]){
+      place(t.name, t.id, [...x.buckets], t.grp, false);
+    }
+  });
+  for(const a of m.added){
+    let terId = null;
+    if(a.addToTer){
+      const T = terState();
+      const dup = T.tenants.find(t=>terNorm(t.name)===terNorm(a.name));
+      if(dup) terId = dup.id;
+      else {
+        const { data, error } = await supabaseClient.from('ter_tenants').insert({name:a.name, grp:a.grp, source:'Edge', created_by:state.currentUser.authId}).select().single();
+        if(error){ console.error('mlw add to TER', error); flashToast(`Couldn't add ${a.name} to TER: ${error.message}`); }
+        else { T.tenants.push(data); terId = data.id; db.terCount = (db.terCount||0)+1; }
       }
-      errBox.style.display = 'none';
-      const newRoster = {id:crypto.randomUUID(), name, categoryId, tenantType:'', notes:''};
-      TENANT_ROSTER.push(newRoster); // added to the permanent, cross-listing roster
-      supaCreateRosterEntry(newRoster);
-      if(!m.selectedCategoryIds.includes(categoryId)) m.selectedCategoryIds.push(categoryId);
-      const alreadyOnListing = listing.prospects.some(p=>p.tenantName.toLowerCase().trim()===name.toLowerCase().trim());
-      m.reviewItems.push({rosterId:newRoster.id, name, categoryId, tenantType:'', notes:'', keep:true, tradeArea:false, prohibited:false, alreadyOnListing});
-      flashToast(`"${name}" added to the roster and this review.`);
-      render();
-    };
-    overlay.querySelector('[data-action="mlwSave"]').onclick=()=>{
-      const existingNames = new Set(listing.prospects.map(p=>p.tenantName.toLowerCase().trim()));
-      let added=0, skippedDup=0, discarded=0;
-      const toSync = [];
-      m.reviewItems.forEach(item=>{
-        if(!item.keep || item.prohibited){ discarded++; return; }
-        const key = item.name.toLowerCase().trim();
-        if(existingNames.has(key)){ skippedDup++; return; }
-        const newP = {
-          id:crypto.randomUUID(), tenantName:item.name, contactId:null, brokerId:null, categoryId:item.categoryId,
-          stage:'contacted', dealType:null, dateOfContact:null,
-          notes: [item.tenantType, item.notes].filter(Boolean).join(' — '),
-          edgeTracker: state.currentUser.id, deadDate:null,
-          building:'', spaceNum:'', size:'', rent:'', price:'', term:'', tiAllowance:'', dealNotes:'',
-          commission1Paid:false, commission2Paid:false, attachments:[],
-          inTradeArea: item.tradeArea
-        };
-        listing.prospects.push(newP);
-        toSync.push(newP);
-        existingNames.add(key);
-        added++;
-      });
-      if(toSync.length){
-        supabaseClient.from('prospects').insert(toSync.map(p=>prospectLocalToRow(p, listing.id)))
-          .then(({error})=>{ if(error){ console.error('marketing list bulk sync error:', error); flashToast('Added here, but syncing some to the server failed.'); render(); } });
-      }
-      state.marketingListWizard = null;
-      let msg = `Added ${added} tenant${added===1?'':'s'} to ${listing.name}.`;
-      if(skippedDup) msg += ` Skipped ${skippedDup} already on this listing.`;
-      if(discarded) msg += ` Discarded ${discarded}.`;
-      flashToast(msg);
-      render();
-    };
+    }
+    place(a.name, terId, [a.bucket], a.grp, false);
   }
+  if(toInsert.length){
+    for(let i=0;i<toInsert.length;i+=500){
+      const { error } = await supabaseClient.from('prospects').insert(toInsert.slice(i,i+500).map(p=>prospectLocalToRow(p, listing.id)));
+      if(error){ console.error('marketing list insert error:', error); flashToast('Added here, but saving some to the server failed. (' + error.message + ')'); }
+    }
+  }
+  toUpdate.forEach(p=>supaUpdateProspect(p, listing.id));
+  state.marketingListWizard = null;
+  let msg = `Added ${added.toLocaleString()} tenant${added===1?'':'s'} to ${listing.name}.`;
+  if(merged) msg += ` ${merged} already on the Listing — linked, comments kept.`;
+  if(skipped) msg += ` ${skipped} marked Prohibited.`;
+  flashToast(msg);
+  render();
 }
+document.addEventListener('click', ev=>{
+  const el = ev.target.closest && ev.target.closest('[data-mlw]'); if(!el) return;
+  const m = state.marketingListWizard; if(!m) return;
+  const a = el.dataset.mlw;
+  if(a==='bucket' || a==='cat' || a==='extra'){ // checkboxes: let the box toggle, then read it
+    if(a==='bucket'){ m.buckets = TER_BUCKETS.map(b=>b.id).filter(id=> id===el.value ? el.checked : m.buckets.includes(id)); }
+    if(a==='cat'){ const s = m.sel[el.dataset.b] = m.sel[el.dataset.b]||{}; if(el.checked) s[el.dataset.g] = {off:[]}; else delete s[el.dataset.g]; terRender(); }
+    if(a==='extra'){ if(el.checked) m.extraAdd[el.dataset.id]=true; else delete m.extraAdd[el.dataset.id]; terRender(); }
+    return;
+  }
+  ev.preventDefault();
+  if(a==='cancel'){ state.marketingListWizard=null; render(); return; }
+  if(a==='back'){ m.step = Math.max(1, m.step-1); render(); return; }
+  if(a==='toStep2'){ if(!m.buckets.length){ flashToast('Pick at least one size bucket.'); render(); return; } Object.keys(m.sel).forEach(b=>{ if(!m.buckets.includes(b)) delete m.sel[b]; }); m.step=2; render(); return; }
+  if(a==='toStep3'){ if(!m.buckets.some(b=>Object.keys(m.sel[b]||{}).length)){ flashToast('Check at least one category.'); render(); return; } m.step=3; render(); return; }
+  if(a==='allCats' || a==='noCats'){
+    const bid = el.dataset.b; const T = terState();
+    if(a==='noCats'){ m.sel[bid] = {}; }
+    else { const s = m.sel[bid] = m.sel[bid]||{}; T.tenants.filter(t=>terAz(t)!=='not' && terBucketsFor(t).includes(bid)).forEach(t=>{ const g=t.grp||'Other'; if(!s[g]) s[g]={off:[]}; }); }
+    terRender(); return;
+  }
+  if(a==='sub'){ const g = m.sel[el.dataset.b][el.dataset.g]; const s = el.dataset.s; g.off = g.off.includes(s) ? g.off.filter(x=>x!==s) : [...g.off, s]; terRender(); return; }
+  if(a==='status'){ m.review[el.dataset.id] = el.dataset.v; terRender(); return; }
+  if(a==='toggleNotAz'){ m.showNotAz = !m.showNotAz; terRender(); return; }
+  if(a==='unadd'){ m.added.splice(+el.dataset.i, 1); terRender(); return; }
+  if(a==='add'){
+    const name = (document.getElementById('mlwAddName')||{}).value||''; const grp = (document.getElementById('mlwAddGrp')||{}).value||'';
+    const bucket = (document.getElementById('mlwAddBucket')||{}).value; const addToTer = !!(document.getElementById('mlwAddTer')||{}).checked;
+    if(!name.trim()){ flashToast('Enter a tenant name.'); render(); return; }
+    if(!grp){ flashToast('Choose a category for it.'); render(); return; }
+    m.added.push({name:name.trim(), grp, bucket, addToTer});
+    terRender(); return;
+  }
+  if(a==='save'){ el.disabled = true; el.textContent = 'Saving…'; mlwSave().catch(err=>{ console.error(err); flashToast('Something went wrong saving the list — please try again.'); render(); }); return; }
+});
+
 // Offer Tracker is deliberately NOT in this list — it's permanently pinned on the
 // Dashboard itself (see renderDashboardMain), not an optional pick-a-widget item.
 const WIDGET_RENDERERS = { calendar: renderCalendarWidget, weather: renderWeatherWidget, news: renderNewsWidget, quicklinks: renderQuickLinksWidget };
@@ -9026,6 +9145,73 @@ document.addEventListener('input', ev=>{
     terRender(); terRefocus(`[data-ter="${a}"]`);
   }, 300);
 });
+
+/* ---- TER contacts on a Listing prospect (2026-10-14) ----
+   Contacts stay live in TER (never copied) until a prospect becomes a real deal: then the one
+   marked "Working with" is copied into Portal Contacts (deduped by email) and attached, and the
+   normal deal workflow takes over from there. */
+const terContactLoading = {};
+function terProspectContactsCard(listing, p){
+  if(!p.terTenantId) return '';
+  const T = terState();
+  const list = T.contacts[p.terTenantId];
+  if(!list && !terContactLoading[p.terTenantId]){
+    terContactLoading[p.terTenantId] = true;
+    terLoadContacts(p.terTenantId).then(()=>{ delete terContactLoading[p.terTenantId]; renderPreservingScroll('.modal-body'); });
+  }
+  const isDeal = !['contacted','interested','dead','notInterested'].includes(p.stage);
+  const rows = list ? terSortedContacts(list) : [];
+  return `<div class="contact-card" style="background:#EEF6FF;border-color:#CFE3FA;">
+    <div class="label" style="color:#1F5DB8;display:flex;align-items:center;gap:8px;">Tenant Expansion Report contacts ${list?`(${list.length})`:''}
+      <span class="ter-link" data-ter="profile" data-id="${p.terTenantId}" style="margin-left:auto;text-transform:none;letter-spacing:0;">Open TER profile →</span></div>
+    <div class="tiny" style="color:var(--ink-soft);margin:2px 0 8px;">Mark the one you're working with. ${isDeal?'':'When this becomes a Prospect / LOI they are copied into your Contacts and attached.'}</div>
+    ${!list ? `<div class="tiny" style="color:var(--ink-soft);">Loading…</div>` : (!rows.length ? `<div class="tiny" style="color:var(--ink-soft);">No contacts in TER yet. <span class="ter-link" data-ter="addContact" data-tid="${p.terTenantId}">+ Add Edge contact</span></div>` :
+      `<div style="max-height:240px;overflow-y:auto;">${rows.map(c=>{
+        const on = p.terContactId===c.id;
+        return `<div style="display:flex;gap:10px;align-items:flex-start;padding:6px 0;border-bottom:1px solid #DCE9F8;">
+          <button class="btn ${on?'':'secondary'} sm" data-terwork="${c.id}" data-client="${listing.id}" data-pid="${p.id}" style="flex-shrink:0;">${on?'★ Working with':'☆ Working with'}</button>
+          <div style="min-width:0;font-size:12.5px;"><b>${escapeHtml(c.name)}</b>${c.title?` · ${escapeHtml(c.title)}`:''} ${terContactAz(c)?'<span class="ter-azdot">AZ</span>':''}
+            <div class="tiny" style="color:var(--ink-soft);display:flex;gap:10px;flex-wrap:wrap;">${c.email?`<a href="mailto:${escapeAttr(c.email)}">${escapeHtml(c.email)}</a>`:''}${c.phone?`<a href="tel:${escapeAttr(String(c.phone).replace(/[^\d+]/g,''))}">${escapeHtml(terFmtPhone(c.phone))}</a>`:''}${c.based?`<span>📍 ${escapeHtml(c.based)}</span>`:''}</div></div>
+        </div>`; }).join('')}</div>
+      <div style="margin-top:6px;"><span class="ter-link" data-ter="addContact" data-tid="${p.terTenantId}">+ Add Edge contact</span></div>`)}
+  </div>`;
+}
+async function terMaybePromoteContact(p, listingId){
+  if(!p.terContactId || p.contactId) return;
+  if(['contacted','interested','dead','notInterested'].includes(p.stage)) return;
+  if(p._terPromoting) return; p._terPromoting = true;
+  try{
+    let c = (terState().contacts[p.terTenantId]||[]).find(x=>x.id===p.terContactId);
+    if(!c){ const { data } = await supabaseClient.from('ter_contacts').select('*').eq('id', p.terContactId).maybeSingle(); c = data; }
+    if(!c) return;
+    const email = (c.email||'').trim().toLowerCase();
+    let local = email ? db.contacts.find(x=>(x.email||'').trim().toLowerCase()===email) : null;
+    if(!local){
+      const parts = String(c.name||'').trim().split(/\s+/);
+      const first = parts.shift()||'', last = parts.join(' ');
+      local = {id:crypto.randomUUID(), first, last, company:p.tenantName||'', website:'', email:c.email||'', mobile:c.phone||'', phone:'',
+        address:'', city:'', state:'', zip:'', categories:[], createdBy: state.currentUser.authId, isPrivate:true};
+      db.contacts.push(local);
+      await supaCreateContact(local);
+      flashToast(`${c.name} copied from TER into your Contacts and attached to ${p.tenantName}.`);
+    } else {
+      flashToast(`${c.name} is already in your Contacts — attached to ${p.tenantName}.`);
+    }
+    p.contactId = local.id;
+    const { error } = await supabaseClient.from('prospects').update({contact_id: local.id}).eq('id', p.id);
+    if(error) console.error('terMaybePromoteContact', error);
+    render();
+  } finally { delete p._terPromoting; }
+}
+document.addEventListener('click', ev=>{
+  const el = ev.target.closest && ev.target.closest('[data-terwork]'); if(!el) return;
+  ev.preventDefault(); ev.stopPropagation();
+  const listing = db.lists.find(x=>x.id==='listings').clients.find(c=>c.id===el.dataset.client); if(!listing) return;
+  const p = (listing.prospects||[]).find(x=>x.id===el.dataset.pid); if(!p) return;
+  p.terContactId = p.terContactId===el.dataset.terwork ? null : el.dataset.terwork;
+  supaUpdateProspect(p, listing.id);
+  renderPreservingScroll('.modal-body');
+}, true);
 
 /* ---------------- SHELL HANDLERS ---------------- */
 function wireGlobalSearchResultHandlers(){
@@ -13941,7 +14127,7 @@ function lsrSortRows(rows){
     if(!a.dueDateSortHelperUnused){} // no-op, keeps structure simple
     const ad = a.dateOfContact||a.deadDate, bd = b.dateOfContact||b.deadDate;
     const at = ad? ad.getTime():0, bt = bd? bd.getTime():0;
-    return bt-at; // most recent activity first
+    return (bt-at) || String(a.tenantName||'').localeCompare(String(b.tenantName||'')); // most recent activity first, then A–Z
   });
 }
 function renderLSRInline(listing, mode){
@@ -13962,7 +14148,6 @@ function renderLSRInline(listing, mode){
         <option value="all" ${state.lsrTrackerFilter==='all'?'selected':''}>All Edge Trackers</option>
         ${usersSortedByMe().map(u=>`<option value="${u.id}" ${state.lsrTrackerFilter===u.id?'selected':''}>${u.name}</option>`).join('')}
       </select>
-      <button class="btn secondary sm" data-action="lsrManageCategories" data-client="${listing.id}">⚙️ Categories</button>
       <button class="btn secondary sm" data-action="lsrCreateMarketingList" data-client="${listing.id}">📋 Create Marketing List</button>
       <button class="btn sm" data-action="lsrNewDeal" data-client="${listing.id}">+ New Deal (direct to LOI)</button>
       <button class="btn secondary sm" data-action="lsrCreateReport" data-client="${listing.id}" data-reportmode="deals">📄 Report: Deals</button>
@@ -13986,10 +14171,26 @@ function renderLSRInline(listing, mode){
     });
   }
   if(showCategories){
-    cats.forEach(cat=>{
-      const rows = lsrSortRows(visible.filter(p=>p.categoryId===cat.id && (p.stage==='contacted'||p.stage==='interested') && !p.inTradeArea));
-      html += renderLSRSectionInline({key:'cat_'+cat.id, title:cat.name, color:'#8B5CF6', rows, listing, kind:'prospect', categoryId:cat.id});
+    // 2026-10-14: prospecting is laid out the way the TER marketing list was built —
+    // Size bucket → TER category → tenant. Anything without a bucket (local / older
+    // prospects) sits under "Other / Local". A tenant in several buckets shows in each.
+    const prospecting = visible.filter(p=>(p.stage==='contacted'||p.stage==='interested') && !p.inTradeArea);
+    TER_BUCKETS.forEach(b=>{
+      const inB = prospecting.filter(p=>(p.terBuckets||[]).includes(b.id));
+      if(!inB.length) return;
+      const bKey = 'tb_'+b.id; const bCollapsed = state.lsrCollapsed[bKey] !== false;
+      const groups = {}; inB.forEach(p=>{ const g=p.terGrp||'Other'; (groups[g]=groups[g]||[]).push(p); });
+      html += `<div style="margin-bottom:16px;">
+        <button class="row-card" data-lsrtoggle="${bKey}" style="cursor:pointer;border-left:4px solid #6B46C1;width:100%;text-align:left;background:#F6F3FC;">
+          <div class="row-body"><div class="row-title" style="color:#6B46C1;">${bCollapsed?'▸':'▾'} ${escapeHtml(b.name)}
+            <span style="color:var(--ink-soft);font-weight:400;font-size:12px;">${escapeHtml(b.sub)} · ${inB.length}</span></div></div>
+        </button>
+        ${bCollapsed ? '' : `<div style="margin:8px 0 0 18px;">${Object.keys(groups).sort().map(g=>
+            renderLSRSectionInline({key:'tc_'+b.id+'_'+g, title:g, color:'#8B5CF6', rows:lsrSortRows(groups[g]), listing, kind:'prospect'})).join('')}</div>`}
+      </div>`;
     });
+    const localRows = lsrSortRows(prospecting.filter(p=>!(p.terBuckets||[]).length));
+    html += renderLSRSectionInline({key:'cat_local', title:'Other / Local', color:'#8B5CF6', rows:localRows, listing, kind:'prospect', categoryId:'local'});
     const deadRows = lsrSortRows(visible.filter(p=>p.stage==='dead'));
     const niRows = lsrSortRows(visible.filter(p=>p.stage==='notInterested'));
     html += renderLSRSectionInline({key:'dead', title:'Dead Deals', color:'#8A8378', rows:deadRows, listing, kind:'dead'});
@@ -14132,7 +14333,9 @@ function renderLSRRowCard(p, listing, kind){
   const contact = p.contactId ? db.contacts.find(x=>x.id===p.contactId) : null;
   const tracker = USERS.find(u=>u.id===p.edgeTracker);
   let meta = [];
-  if(cat) meta.push(`<span class="pill">${escapeHtml(cat.name)}</span>`);
+  if(p.terGrp) meta.push(`<span class="pill">${escapeHtml(p.terGrp)}</span>`);
+  else if(cat) meta.push(`<span class="pill">${escapeHtml(cat.name)}</span>`);
+  if(p.terTenantId) meta.push(`<span class="pill gray" title="Linked to the Tenant Expansion Report">TER</span>`);
   if(kind==='deal'){
     const moneyLabel = p.dealType==='sale'?'Price':'Rent';
     const money = lsrMoney(p.dealType==='sale'?p.price:p.rent);
@@ -14203,7 +14406,8 @@ function renderLSRProspectBody(l, listing, p){
     ${brokerRow(p.brokerId)}
     <button class="btn secondary sm" style="margin-top:10px;" data-action="lsrPickBroker">${p.brokerId?'Change broker':'Attach broker'}</button>
   </div>
-  <div class="field">
+  ${terProspectContactsCard(listing, p)}
+  <div class="field" ${p.terBuckets&&p.terBuckets.length?'style="display:none;"':''}>
     <label>Category</label>
     <select id="lpCategory">${allCats.map(c=>`<option value="${c.id}" ${p.categoryId===c.id?'selected':''}>${escapeHtml(c.name)}</option>`).join('')}<option value="__new__">➕ Create New Category…</option></select>
   </div>
@@ -14240,6 +14444,7 @@ function renderLSRProspectBody(l, listing, p){
 
 /* ---- New Prospect / New Deal creation (small floating modal) ---- */
 function openLSRNewProspectModal(clientId, categoryId, directToLOI){
+  if(!terState().loaded) terEnsureLoaded().then(()=>{ if(state.lsrNewProspectModal) render(); });
   state.lsrNewProspectModal = {
     clientId, categoryId: categoryId||null, directToLOI: !!directToLOI, tenantName:'', dateOfContact:'', notes:'',
     edgeTracker: state.currentUser.id, dealType: directToLOI? 'lease':null,
@@ -14289,8 +14494,10 @@ function renderLSRNewProspectModal(){
       `}
       <div class="field" style="display:flex;align-items:flex-start;gap:8px;">
         <input type="checkbox" id="npAddToRoster" style="width:auto;margin-top:3px;">
-        <label for="npAddToRoster" style="margin:0;font-weight:400;cursor:pointer;">Also add to the master Tenant Roster — so it's available as a pick when building a marketing list for any other listing going forward.</label>
+        <label for="npAddToRoster" style="margin:0;font-weight:400;cursor:pointer;">Also add to the Tenant Expansion Report (TER), so it shows up for every Listing. Leave unchecked for local one-offs.</label>
       </div>
+      <div class="field"><label>TER category (only used if the box above is checked)</label>
+        <select id="npTerGrp">${[...new Set(terState().tenants.map(t=>t.grp).filter(Boolean).concat(['Other']))].sort().map(g=>`<option ${g==='Other'?'selected':''}>${escapeHtml(g)}</option>`).join('')}</select></div>
       <div class="field"><label>Notes</label><textarea id="npNotes" rows="2">${escapeHtml(m.notes)}</textarea></div>
       <div class="field">
         <label>Edge Tracker</label>
@@ -14361,24 +14568,28 @@ function renderLSRNewProspectModal(){
     // prospect should silently join. Name-matched against the existing roster (same
     // case-insensitive/trimmed comparison used elsewhere) so checking it twice for the same
     // tenant doesn't create a duplicate roster entry.
+    // 2026-10-14: the old roster is retired — this now adds to TER (as an Edge-added tenant).
     let addedToRoster = false, rosterAlready = false;
     const npAddToRosterEl = document.getElementById('npAddToRoster');
     if(npAddToRosterEl && npAddToRosterEl.checked){
-      const nameKey = name.toLowerCase().trim();
-      if(TENANT_ROSTER.some(r=>r.name.toLowerCase().trim()===nameKey)){
-        rosterAlready = true;
-      } else {
-        const newRoster = {id:crypto.randomUUID(), name, categoryId, tenantType:'', notes:''};
-        TENANT_ROSTER.push(newRoster); // added to the permanent, cross-listing roster
-        supaCreateRosterEntry(newRoster);
+      const T = terState();
+      const dup = T.tenants.find(t=>terNorm(t.name)===terNorm(name));
+      if(dup){ rosterAlready = true; newProspect.terTenantId = dup.id; newProspect.terGrp = newProspect.terGrp || dup.grp; supaUpdateProspect(newProspect, listing.id); }
+      else {
         addedToRoster = true;
+        const grp = (document.getElementById('npTerGrp')||{}).value || 'Other';
+        supabaseClient.from('ter_tenants').insert({name, grp, source:'Edge', created_by:state.currentUser.authId}).select().single().then(({data, error})=>{
+          if(error){ flashToast(`Couldn't add ${name} to TER: ${error.message}`); render(); return; }
+          T.tenants.push(data); db.terCount=(db.terCount||0)+1;
+          newProspect.terTenantId = data.id; newProspect.terGrp = newProspect.terGrp || grp; supaUpdateProspect(newProspect, listing.id);
+        });
       }
     }
     state.lsrNewProspectModal=null;
     if(edgeTracker !== state.currentUser.id){
       notifyNewLSRTracker(edgeTracker, newProspect, listing);
     } else {
-      const rosterNote = addedToRoster ? ' — also added to the master Tenant Roster' : (rosterAlready ? ' (already on the master Tenant Roster)' : '');
+      const rosterNote = addedToRoster ? ' — also added to TER' : (rosterAlready ? ' (already in TER — linked)' : '');
       flashToast(`${name} added${otherChecks.length? ` and stubbed into ${otherChecks.length} other listing(s)`:''}${rosterNote}.`);
     }
     render();
@@ -14575,7 +14786,7 @@ function wireLSRInlineHandlers(root){
     renderPreservingScroll('.modal-body');
   });
   root.querySelectorAll('[data-action="lsrAddProspect"]').forEach(el=>el.onclick=()=>{
-    openLSRNewProspectModal(el.dataset.client, el.dataset.category); render();
+    openLSRNewProspectModal(el.dataset.client, el.dataset.category==='local' ? null : el.dataset.category); render();
   });
   const newDealBtn = root.querySelector('[data-action="lsrNewDeal"]'); if(newDealBtn) newDealBtn.onclick=()=>{
     openLSRNewProspectModal(newDealBtn.dataset.client, null, true); render();
