@@ -460,6 +460,7 @@
   .mlw-seg button.on.prohibited{background:#FDE8E8;color:#B42318;font-weight:600;}
   .mlw-add{border:1.5px dashed var(--line);border-radius:10px;padding:12px;margin-bottom:16px;}
   @media (max-width:700px){ .mlw-row{flex-wrap:wrap;} }
+  .ascx-block{background:#F7F9FC;border:1px solid var(--line-soft);border-radius:8px;padding:8px 12px;}
   /* ---------- TENANT EXPANSION REPORT ---------- */
   .bd-table.ter-table .bd-title-td, .bd-table.ter-table .bd-title-th{left:0;box-shadow:-40px 0 0 #fff, 2px 0 0 var(--line-soft);}
   .bd-table.ter-table thead .bd-title-th{box-shadow:-40px 0 0 var(--paper), 2px 0 0 var(--line-soft);}
@@ -841,7 +842,7 @@ const EDGE_LOGO_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAARgAAA
 // normal for this specific key type; Google expects it to be visible in page source and
 // restricted by domain, via HTTP referrer restriction in Google Cloud Console, not hidden
 // like the other secrets in this app). Replace once Michael has generated a real key.
-const APP_BUILD = '2026-10-14 ter-listings';
+const APP_BUILD = '2026-10-15 ascendix';
 const GOOGLE_MAPS_JS_KEY = 'AIzaSyBMlIjvH2bpZK6mYJeNZSkQvM8TXQkCjDE';
 const CATEGORY_ORANGE_ICONS = ['💲','🏢','🎯','📋','☁️','🔧','✈️','🏛️','💎','📄','⭐','🗂️'];
 
@@ -1304,7 +1305,7 @@ function dealRowToLocal(r){
           latitude: r.latitude||null, longitude: r.longitude||null, geocodeFailed: !!r.geocode_failed,
           commission1DueDate: r.commission1_due_date||null, commission2DueDate: r.commission2_due_date||null,
           coeDueDate: r.coe_due_date||null, caExpirationDate: r.ca_expiration_date||null,
-          trackerUserId: authIdToLocalUserId(r.tracker_user_id) || r.tracker_user_id || null};
+          trackerUserId: authIdToLocalUserId(r.tracker_user_id) || r.tracker_user_id || null, ascendixChecklist: r.ascendix_checklist || {}};
 }
 function dealLocalToRow(d, clientId){
   return {id:d.id, client_id:clientId, name:d.name, complete:!!d.complete, active_deal:!!d.activeDeal,
@@ -1318,7 +1319,7 @@ function dealLocalToRow(d, clientId){
           latitude: d.latitude||null, longitude: d.longitude||null, geocode_failed: !!d.geocodeFailed,
           commission1_due_date: d.commission1DueDate||null, commission2_due_date: d.commission2DueDate||null,
           coe_due_date: d.coeDueDate||null, ca_expiration_date: d.caExpirationDate||null,
-          tracker_user_id: localUserIdToAuthId(d.trackerUserId)};
+          tracker_user_id: localUserIdToAuthId(d.trackerUserId), ascendix_checklist: d.ascendixChecklist || {}};
 }
 async function fetchListsClientsDealsFromSupabase(){
   const { data:lists, error:e1 } = await supabaseClient.from('lists').select('*');
@@ -1568,6 +1569,7 @@ async function fetchDealOffersFromSupabase(){
     qualified:r.qualified, markedAt:r.marked_at, markedBy:r.marked_by}));
 }
 function brokerReviewApproved(sourceTable, sourceId, dealType){
+  return true; // 2026-10-15: commissions no longer wait on a Portal sign-off (files live in Ascendix now)
   const type = dealType==='lease' ? 'signedLease' : 'closedEscrow';
   return (db.brokerReviews||[]).some(r=>r.sourceTable===sourceTable && r.sourceId===sourceId && r.reviewType===type && r.approvedAt);
 }
@@ -1616,48 +1618,27 @@ async function invokeCommissionSummaryEmail(clientId, splitUserId, actorLocalId)
 // Called right after a Deal or Prospect is saved with a new stage — compares old vs new
 // and fires off whichever Designated Broker / Office Manager workflow applies.
 async function handleStageTransition(sourceTable, sourceId, clientId, dealName, dealType, oldStage, newStage){
+  // 2026-10-15: no more Designated Broker / Office Manager sign-off. Each of these stages now:
+  //  • records an FYI row (status 'fyi') and emails David + Gina "[Deal] was marked [Stage]"
+  //  • Signed Lease / In Escrow: gives the broker a to-do to upload to Ascendix in 3 business days
   if(oldStage===newStage) return;
-  const david = davidUser();
-  if(newStage==='signedLease'){
-    const rev = await createBrokerReview('signedLease', sourceTable, sourceId, clientId, dealName, 10);
-    if(rev){
-      if(david){
-        const todo = {id:crypto.randomUUID(), title:`Designated Broker Review: ${dealName}`, category:'Broker Review',
-          dueDate: new Date(rev.dueDate+'T00:00:00'), assignedTo:david.id, createdBy:state.currentUser.id,
-          type:'brokerReview', private:false, completed:false, isNew:true, brokerReviewId:rev.id,
-          notes:`Signed Lease — please review in Egnyte and mark reviewed.`,
-          listId:null, clientId, dealId: sourceTable==='deals'?sourceId:null, entryId:null, attachments:[]};
-        db.todos.push(todo); await supaCreateTodo(todo);
-      }
-      invokeBrokerReviewEmail(rev.id, 'leaseOrPsaReview', state.currentUser.id);
-    }
-  } else if(newStage==='inEscrow'){
-    const rev = await createBrokerReview('signedPSA', sourceTable, sourceId, clientId, dealName, 10);
-    if(rev){
-      if(david){
-        const todo = {id:crypto.randomUUID(), title:`Designated Broker Review: ${dealName}`, category:'Broker Review',
-          dueDate: new Date(rev.dueDate+'T00:00:00'), assignedTo:david.id, createdBy:state.currentUser.id,
-          type:'brokerReview', private:false, completed:false, isNew:true, brokerReviewId:rev.id,
-          notes:`Signed PSA / In Escrow — please review in Egnyte and mark reviewed.`,
-          listId:null, clientId, dealId: sourceTable==='deals'?sourceId:null, entryId:null, attachments:[]};
-        db.todos.push(todo); await supaCreateTodo(todo);
-      }
-      invokeBrokerReviewEmail(rev.id, 'leaseOrPsaReview', state.currentUser.id);
-    }
-  } else if(newStage==='closedEscrow'){
-    const rev = await createBrokerReview('closedEscrow', sourceTable, sourceId, clientId, dealName, 3);
-    if(rev){
-      const gina = ginaUser();
-      if(gina){
-        const todo = {id:crypto.randomUUID(), title:`Closing Documents: ${dealName}`, category:'Closing Checklist',
-          dueDate: new Date(rev.dueDate+'T00:00:00'), assignedTo:gina.id, createdBy:state.currentUser.id,
-          type:'closedEscrowChecklist', private:false, completed:false, isNew:true, brokerReviewId:rev.id,
-          notes:`Confirm each closing document is in Egnyte, then mark complete for Designated Broker review.`,
-          listId:null, clientId, dealId: sourceTable==='deals'?sourceId:null, entryId:null, attachments:[]};
-        db.todos.push(todo); await supaCreateTodo(todo);
-      }
-      invokeBrokerReviewEmail(rev.id, 'closedEscrowGinaChecklist', state.currentUser.id);
-    }
+  if(!ASCENDIX_STAGES.includes(newStage)) return;
+  const reviewType = newStage==='signedLease' ? 'signedLease' : (newStage==='inEscrow' ? 'signedPSA' : 'closedEscrow');
+  const today = todayDate();
+  const { data, error } = await supabaseClient.from('broker_reviews').insert({
+    source_table:sourceTable, source_id:sourceId, client_id:clientId, deal_name:dealName,
+    review_type:reviewType, date_signed: toLocalDateStr(today), due_date: toLocalDateStr(addBusinessDays(today, 3)),
+    status:'fyi', created_by: localUserIdToAuthId(state.currentUser.id)
+  }).select().single();
+  if(error) console.error('stage FYI record error:', error);
+  if(data) invokeBrokerReviewEmail(data.id, 'stageFyi', state.currentUser.id);
+  if(newStage==='signedLease' || newStage==='inEscrow'){
+    const todo = {id:crypto.randomUUID(), title:`Upload to Ascendix: ${dealName}`, category:'Ascendix',
+      dueDate: addBusinessDays(today, 3), assignedTo:state.currentUser.id, createdBy:state.currentUser.id,
+      type:'task', private:false, completed:false, isNew:false,
+      notes:`${newStage==='signedLease'?'Signed Lease':'In Escrow (signed PSA)'} — upload the executed agreements to Ascendix within 3 business days so David can complete his review. Use the Ascendix checklist on the deal.`,
+      listId:null, clientId, dealId: sourceTable==='deals'?sourceId:null, entryId:null, attachments:[], checklistItems:[], status:'Not Started', createdAt:new Date()};
+    db.todos.push(todo); await supaCreateTodo(todo);
   }
 }
 // Fires the instant a stage dropdown crosses into LOI-or-above — called directly
@@ -1673,12 +1654,11 @@ function checkFileServerReminder(oldStage, newStage, ref, saveFn){
   if(newStage===oldStage) return;
   let message = null;
   if(newStage==='signedLease'){
-    message = 'Please ensure that your Signed Lease and Signed Commission Agreement are in the File Server.';
+    message = 'Signed Lease — upload the executed agreements to Ascendix within 3 business days. Commissions are paid only after the transaction file is complete.';
   } else if(newStage==='inEscrow'){
-    message = 'Please ensure that your Signed PSA and Signed Commission Agreement are in the File Server.';
+    message = 'In Escrow — upload the executed purchase agreement and related documents to Ascendix within 3 business days. Commissions are paid only after the transaction file is complete.';
   } else if(newStage==='closedEscrow'){
-    message = 'Please ensure that all documents necessary for processing payment are in the File Server, including '
-      + CLOSED_ESCROW_CHECKLIST_ITEMS.join(', ') + ', and the Commission Agreement.';
+    message = 'Closed Escrow — make sure the transaction file in Ascendix is complete (including the final settlement statement). Commissions are paid only after it is.';
   }
   if(message) state.stageReminderPrompt = {message, ref, saveFn, link: ref.egnyteLink||''};
 }
@@ -1737,7 +1717,7 @@ function prospectRowToLocal(r){
     rent:r.rent||'', price:r.price||'', term:r.term||'', tiAllowance:r.ti_allowance||'',
     totalFee:r.total_fee||'', splits:r.splits||'', commissionStructure:r.commission_structure||'',
     commission1Paid:r.commission1_paid, commission2Paid:r.commission2_paid, inTradeArea:r.in_trade_area, attachments:[], egnyteLink:r.egnyte_link||'',
-    terTenantId:r.ter_tenant_id||null, terBuckets:r.ter_buckets||[], terGrp:r.ter_grp||null, terContactId:r.ter_contact_id||null,
+    terTenantId:r.ter_tenant_id||null, terBuckets:r.ter_buckets||[], terGrp:r.ter_grp||null, terContactId:r.ter_contact_id||null, ascendixChecklist:r.ascendix_checklist||{},
     latitude: r.latitude||null, longitude: r.longitude||null, geocodeFailed: !!r.geocode_failed};
 }
 function prospectLocalToRow(p, listingId){
@@ -1750,7 +1730,7 @@ function prospectLocalToRow(p, listingId){
     commission_structure:p.commissionStructure||null,
     commission1_paid:!!p.commission1Paid, commission2_paid:!!p.commission2Paid, in_trade_area:!!p.inTradeArea, egnyte_link:p.egnyteLink||null,
     latitude: p.latitude||null, longitude: p.longitude||null, geocode_failed: !!p.geocodeFailed,
-    ter_tenant_id: p.terTenantId||null, ter_buckets: p.terBuckets||[], ter_grp: p.terGrp||null, ter_contact_id: p.terContactId||null};
+    ter_tenant_id: p.terTenantId||null, ter_buckets: p.terBuckets||[], ter_grp: p.terGrp||null, ter_contact_id: p.terContactId||null, ascendix_checklist: p.ascendixChecklist||{}};
 }
 async function fetchProspectsFromSupabase(){
   // Paged (2026-10-14): TER marketing lists can put hundreds of prospects on one Listing,
@@ -8505,7 +8485,7 @@ function renderAdminMenu(){
     ${isAdmin ? `<div class="admin-item" data-action="adminUsers">👥 Manage Users</div>` : ''}
     ${isAdmin ? `<div class="admin-item" data-action="adminTimes">⏱️ Email Send Times</div>` : ''}
     ${isAdmin ? `<div class="admin-item" data-action="adminReset">🔑 Reset a Password</div>` : ''}
-    ${isDBRole ? `<div class="admin-item" data-action="openBrokerReviewLog">📋 Broker Review Log</div>` : ''}
+    ${(false && isDBRole) ? `<div class="admin-item" data-action="openBrokerReviewLog">📋 Broker Review Log</div>` : ''}
     <div class="admin-item" data-action="goToDashboard">🏠 Dashboard</div>
     <div class="admin-item" data-action="openPipelineView">📈 Pipeline View</div>
     <div class="admin-item" data-action="openGeocodeIssues">📍 Geocoding Issues</div>
@@ -9212,6 +9192,84 @@ document.addEventListener('click', ev=>{
   supaUpdateProspect(p, listing.id);
   renderPreservingScroll('.modal-body');
 }, true);
+
+/* ---- Ascendix transaction-file checklist (2026-10-15) ----
+   Corporate (Leslie, eff. 11/1/2026): commissions are paid only after a complete transaction file
+   is in Ascendix. The Portal no longer gates "paid" on a Designated Broker sign-off — instead the
+   broker gets this checklist (saved on the deal, never required), David + Gina get an FYI email,
+   and the broker gets a to-do to upload executed agreements within 3 business days. */
+const ASCENDIX_ITEMS = {
+  sale: [
+    {k:'s1', t:'Fully executed purchase and sale agreement'},
+    {k:'s2', t:'All amendments, addenda, and extensions'},
+    {k:'s3', t:'Executed listing agreement (if Edge represents the seller)'},
+    {k:'s4', t:'Executed buyer representation agreement (if Edge represents the buyer)'},
+    {k:'s5', t:'Commission agreement with the cooperating broker, if applicable'},
+    {k:'s6', t:'Escrow receipt for earnest money and the escrow instructions'},
+    {k:'s7', t:'Final settlement statement'},
+    {k:'s8', t:'Release of earnest money, if the deal was cancelled'},
+  ],
+  lease: [
+    {k:'l1', t:'Fully executed lease, including all exhibits/amendments'},
+    {k:'l2', t:'Executed listing agreement (if Edge represents the landlord)'},
+    {k:'l3', t:'Executed tenant representation or commission agreement (if Edge represents the tenant)'},
+    {k:'l4', t:'Commission agreement with the cooperating broker, if applicable'},
+  ],
+  disclosures: [
+    {k:'d1', t:'Written consent from all parties if Edge represents more than one party in the transaction'},
+    {k:'d2', t:'Written disclosure to the other parties if you, a family member, or Edge has an ownership or financial interest in the property or transaction'},
+  ],
+};
+const ASCENDIX_STAGES = ['signedLease','inEscrow','closedEscrow'];
+function ascendixItemsFor(obj){ return (obj && obj.dealType==='sale' ? ASCENDIX_ITEMS.sale : ASCENDIX_ITEMS.lease).concat(ASCENDIX_ITEMS.disclosures); }
+function ascendixCount(obj){ const cl = (obj && obj.ascendixChecklist) || {}; const items = ascendixItemsFor(obj); return {done: items.filter(i=>cl[i.k]).length, total: items.length}; }
+function ascendixChecklistHtml(obj, sourceTable, clientId){
+  const cl = obj.ascendixChecklist || {};
+  const isSale = obj.dealType==='sale';
+  const box = i=>`<label style="display:flex;gap:8px;align-items:flex-start;padding:4px 0;font-size:12.5px;cursor:pointer;">
+      <input type="checkbox" data-ascx="${i.k}" data-src="${sourceTable}" data-id="${obj.id}" data-client="${clientId||''}" ${cl[i.k]?'checked':''} style="width:auto;margin-top:2px;accent-color:var(--good);"> <span>${escapeHtml(i.t)}</span></label>`;
+  return `<div class="ascx-block">
+    <div style="font-weight:600;font-size:12px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.04em;margin:4px 0;">${isSale?'Sale Transaction':'Lease Transaction'}</div>
+    ${(isSale?ASCENDIX_ITEMS.sale:ASCENDIX_ITEMS.lease).map(box).join('')}
+    <div style="font-weight:600;font-size:12px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.04em;margin:10px 0 4px;">Disclosures (if applicable)</div>
+    ${ASCENDIX_ITEMS.disclosures.map(box).join('')}
+    <div class="tiny" style="color:var(--ink-soft);margin-top:8px;line-height:1.45;">Upload executed agreements to Ascendix within 3 business days. If a document doesn't apply or can't be obtained, add a note in Ascendix explaining why and contact Accounting before submitting.</div>
+  </div>`;
+}
+// Replaces the old Designated Broker / Office Manager review block on deals and prospects.
+function renderBrokerReviewSection(sourceTable, sourceId){
+  const found = ascendixFind(sourceTable, sourceId);
+  if(!found) return '';
+  const obj = found.obj;
+  const hasTicks = obj.ascendixChecklist && Object.values(obj.ascendixChecklist).some(Boolean);
+  if(!ASCENDIX_STAGES.includes(obj.stage) && !hasTicks) return '';
+  const {done, total} = ascendixCount(obj);
+  return `<div class="field" style="margin-top:16px;padding-top:14px;border-top:1px solid var(--line-soft);">
+    <label>📁 Ascendix Transaction File <span style="font-weight:400;color:${done===total?'var(--good)':'var(--ink-soft)'};">(${done} of ${total} uploaded)</span></label>
+    ${ascendixChecklistHtml(obj, sourceTable, found.clientId)}
+  </div>`;
+}
+function ascendixFind(sourceTable, id){
+  for(const l of (db.lists||[])){
+    for(const c of (l.clients||[])){
+      if(sourceTable==='deals'){ const d = (c.deals||[]).find(x=>x.id===id); if(d) return {obj:d, clientId:c.id}; }
+      else { const p = (c.prospects||[]).find(x=>x.id===id); if(p) return {obj:p, clientId:c.id}; }
+    }
+  }
+  return null;
+}
+document.addEventListener('change', ev=>{
+  const el = ev.target.closest && ev.target.closest('[data-ascx]'); if(!el) return;
+  const found = ascendixFind(el.dataset.src, el.dataset.id); if(!found) return;
+  const obj = found.obj;
+  obj.ascendixChecklist = {...(obj.ascendixChecklist||{}), [el.dataset.ascx]: el.checked};
+  if(!el.checked) delete obj.ascendixChecklist[el.dataset.ascx];
+  supabaseClient.from(el.dataset.src).update({ascendix_checklist: obj.ascendixChecklist}).eq('id', obj.id).then(({error})=>{
+    if(error){ console.error('ascendix checklist save', error); flashToast("Couldn't save the checklist: " + error.message); render(); }
+  });
+  // refresh the "x of y" count without losing scroll
+  if(!el.closest('.ascx-popup')) renderPreservingScroll('.modal-body');
+});
 
 /* ---------------- SHELL HANDLERS ---------------- */
 function wireGlobalSearchResultHandlers(){
@@ -10256,26 +10314,28 @@ function renderBrokerReviewModal(){
 }
 function renderStageReminderPrompt(){
   const m = state.stageReminderPrompt;
+  const obj = m.ref;
   const overlay = document.createElement('div');
   overlay.className='modal-overlay'; overlay.style.zIndex=286;
+  const src = (obj && obj.tenantName!==undefined) ? 'prospects' : 'deals';
   overlay.innerHTML = `
-  <div class="modal-card" style="max-width:460px;">
-    <div class="modal-head"><div class="modal-title">Reminder</div></div>
-    <div class="modal-body">
-      <p>${escapeHtml(m.message)}</p>
+  <div class="modal-card" style="max-width:560px;">
+    <div class="modal-head"><div class="modal-title">📁 Ascendix Transaction File</div></div>
+    <div class="modal-body ascx-popup">
+      <p style="margin-top:0;">${escapeHtml(m.message)}</p>
+      ${ascendixChecklistHtml(obj, src, '')}
+      <div class="tiny" style="color:var(--ink-soft);margin-top:10px;">Check off what's uploaded now, or later on the deal. Nothing here holds up the deal or your commission request in the Portal.</div>
       <div class="field" style="margin-top:14px;">
-        <label>Egnyte Link to This Deal</label>
+        <label>Egnyte Link to This Deal (optional)</label>
         <input type="text" id="stageReminderEgnyte" placeholder="Paste the Egnyte folder link here" value="${escapeAttr(m.link||'')}">
       </div>
-      <div class="tiny" id="stageReminderEgnyteErr" style="color:var(--bad);display:none;margin-top:4px;">A link is required so David/Gina can find the folder.</div>
     </div>
     <div class="modal-foot"><button class="btn" data-action="closeStageReminder">OK</button></div>
   </div>`;
   document.getElementById('app').appendChild(overlay);
   overlay.querySelector('[data-action="closeStageReminder"]').onclick=()=>{
     const val = document.getElementById('stageReminderEgnyte').value.trim();
-    if(!val){ document.getElementById('stageReminderEgnyteErr').style.display='block'; return; }
-    m.ref.egnyteLink = val;
+    if(val) m.ref.egnyteLink = val;
     m.saveFn();
     state.stageReminderPrompt=null;
     render();
@@ -13952,31 +14012,6 @@ function renderCommissionModal(){
 // Shown at the bottom of a Deal or Prospect page — one row per broker review event tied
 // to this record, each with a button to reopen the review modal. Visible to everyone;
 // the modal itself gates who can actually act.
-function renderBrokerReviewSection(sourceTable, sourceId){
-  const revs = (db.brokerReviews||[]).filter(r=>r.sourceTable===sourceTable && r.sourceId===sourceId);
-  if(!revs.length) return '';
-  const labelFor = rev=>{
-    if(rev.reviewType==='signedLease') return 'Signed Lease Review';
-    if(rev.reviewType==='signedPSA') return 'Signed PSA (In Escrow) Review';
-    return rev.status==='pending' ? 'Closing Documents — Office Manager Checklist' : 'Closing Documents — Designated Broker Approval';
-  };
-  const btnLabelFor = rev=>{
-    if(rev.reviewType!=='closedEscrow') return 'Designated Broker Approval';
-    return rev.status==='pending' ? 'Office Manager Checklist' : 'Designated Broker Approval';
-  };
-  return `
-  <div class="field" style="margin-top:16px;padding-top:14px;border-top:1px solid var(--line-soft);">
-    <label>Designated Broker / Office Manager Review</label>
-    ${revs.map(rev=>`
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;">
-        <div>
-          <div style="font-size:13px;font-weight:600;">${escapeHtml(labelFor(rev))}</div>
-          <div class="tiny" style="color:var(--ink-soft);">${rev.approvedAt ? `✓ Approved on ${fmtDate(new Date(rev.approvedAt))}` : (rev.status==='awaiting_db' ? 'Awaiting Designated Broker' : 'Pending')}</div>
-        </div>
-        <button class="btn ${rev.approvedAt?'secondary':''} sm" data-openbrokerreview="${rev.id}">${btnLabelFor(rev)}</button>
-      </div>`).join('')}
-  </div>`;
-}
 function renderDealModalBody(l,c,d){
   const todos = db.todos.filter(t=>t.dealId===d.id).filter(visibleTodo);
   const caExecuted = d.caExecuted!==undefined ? d.caExecuted : (l.id==='listings');
