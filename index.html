@@ -429,6 +429,20 @@
   .modal-close{background:rgba(255,255,255,.18);border:none;color:#fff;min-width:28px;height:28px;padding:0 10px;border-radius:8px;font-size:14px;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center;}
   .modal-close:hover{background:rgba(255,255,255,.32);}
   .modal-body{padding:18px 20px;overflow-y:auto;flex:1;overscroll-behavior-y:contain;}
+  /* floating windows */
+  .modal-overlay.fw-pass{background:transparent !important;pointer-events:none;animation:none;}
+  .modal-overlay.fw-pass > .modal-card{pointer-events:auto;box-shadow:0 10px 40px rgba(0,0,0,.28);}
+  .fw-snap .modal-card{filter:saturate(.75);}
+  .fw-snap .modal-head{opacity:.85;}
+  .fw-shield{position:absolute;inset:0;z-index:4;cursor:pointer;background:rgba(255,255,255,.08);border-radius:inherit;}
+  .fw-shield:hover{background:rgba(255,255,255,0);outline:2px solid var(--edge);outline-offset:-2px;}
+  .fw-shield-bar{position:absolute;top:10px;right:12px;display:flex;gap:6px;}
+  .fw-shield-bar button,.fw-min{background:rgba(255,255,255,.22);border:none;color:#fff;min-width:28px;height:28px;border-radius:8px;font-size:15px;cursor:pointer;margin-right:8px;}
+  .fw-shield-bar button{margin:0;}
+  .fw-shield-bar button:hover,.fw-min:hover{background:rgba(255,255,255,.4);}
+  .fw-tray{position:fixed;left:50%;transform:translateX(-50%);bottom:12px;z-index:150;display:flex;gap:8px;background:rgba(40,32,24,.88);padding:6px 8px;border-radius:12px;box-shadow:0 6px 24px rgba(0,0,0,.3);}
+  .fw-tray button{background:#fff;border:none;border-radius:8px;padding:6px 12px;font-size:12.5px;cursor:pointer;color:var(--ink);max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .fw-tray button:hover{background:var(--edge-lighter);}
   /* movable / resizable windows (desktop) */
   .mw-draggable{cursor:move;user-select:none;}
   .mw-draggable input, .mw-draggable textarea, .mw-draggable select{user-select:text;cursor:auto;}
@@ -460,6 +474,11 @@
   .mlw-seg button.on.prohibited{background:#FDE8E8;color:#B42318;font-weight:600;}
   .mlw-add{border:1.5px dashed var(--line);border-radius:10px;padding:12px;margin-bottom:16px;}
   @media (max-width:700px){ .mlw-row{flex-wrap:wrap;} }
+  .ter-hat{font-size:10px;color:#bbb;margin-left:3px;}
+  .ter-hat.on{color:var(--edge);font-size:11px;}
+  .ter-table td.ter-ed{cursor:pointer;}
+  .ter-table td.ter-ed:hover{box-shadow:inset 0 0 0 2px var(--edge-light, #f3b9a0);}
+  .ter-pop{z-index:1000;}
   .ascx-block{background:#F7F9FC;border:1px solid var(--line-soft);border-radius:8px;padding:8px 12px;}
   /* ---------- TENANT EXPANSION REPORT ---------- */
   .bd-table.ter-table .bd-title-td, .bd-table.ter-table .bd-title-th{left:0;box-shadow:-40px 0 0 #fff, 2px 0 0 var(--line-soft);}
@@ -842,7 +861,7 @@ const EDGE_LOGO_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAARgAAA
 // normal for this specific key type; Google expects it to be visible in page source and
 // restricted by domain, via HTTP referrer restriction in Google Cloud Console, not hidden
 // like the other secrets in this app). Replace once Michael has generated a real key.
-const APP_BUILD = '2026-10-15 ascendix';
+const APP_BUILD = '2026-10-22 windows-ter-edit';
 const GOOGLE_MAPS_JS_KEY = 'AIzaSyBMlIjvH2bpZK6mYJeNZSkQvM8TXQkCjDE';
 const CATEGORY_ORANGE_ICONS = ['💲','🏢','🎯','📋','☁️','🔧','✈️','🏛️','💎','📄','⭐','🗂️'];
 
@@ -3476,6 +3495,7 @@ function render(){
   const __scrollSnap = captureScrollPositions();
   app.innerHTML = renderShell();
   attachShellHandlers();
+  if(fwEnabled()) renderFwSnapshots();
   if(state.modalStack.length){
     renderModalStack();
   }
@@ -3484,6 +3504,7 @@ function render(){
   if(state.contactModal) renderContactModal();
   if(state.duplicatePrompt) renderDuplicatePrompt();
   if(state.todoDetailModal) renderTodoDetailModal();
+  if(fwEnabled()){ fwDecorateActive(); renderFwTray(); }
   if(state.editContactModal) renderEditContactModal();
   if(state.editBrokerModal) renderEditBrokerModal();
   if(state.importTodosModal) renderImportTodosModal();
@@ -3526,6 +3547,7 @@ function render(){
   if(state.kickoffEditor) renderKickoffEditor();
   if(state.terProfile) renderTerProfileModal();
   if(state.terContactModal) renderTerContactModal();
+  if(state.terPop && state.mainView.type==='tenant-expansion') renderTerPop();
   wireTodoRowHandlers(app);
   renderPortalChatWidget();
   if(state.undoToast) renderUndoToast();
@@ -3714,6 +3736,188 @@ function mwStartResize(ev, card, dir){
   document.body.classList.add('mw-busy');
   window.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp);
 }
+/* ---------------- FLOATING WINDOWS (2026-10-22) ----------------
+   Clients / Listings / Deals / Entries (the drill-down stack) and To-Dos open as floating
+   windows that stay open when you click the screen behind them. Up to 3 at once.
+   One stack window is "active" (live, editable — it IS state.modalStack); the others are
+   parked in fwWins and drawn as read-only snapshots until clicked. Fully switchable:
+   user menu → "Floating windows: On/Off" (stored per browser). Off = the old behaviour,
+   exactly. Backup of the build before this feature: index_2026-10-15_ascendix.html. */
+const FW_MAX = 3;
+const FW_PREF_KEY = 'edgeFloatWin';
+let fwWins = [];            // parked stack windows: {id, slot, stack, min}
+let fwActive = null;        // {id, slot, min} for the live stack window
+let fwTodoFront = true;     // is the To-Do window in front of the active stack window?
+let fwTodoMin = false;
+let _fwMs = state.modalStack || [];
+function fwPrefOn(){ try { return localStorage.getItem(FW_PREF_KEY) !== 'off'; } catch(e){ return true; } }
+function fwEnabled(){ return fwPrefOn() && mwIsDesktop(); }
+function fwSameRoot(a, b){ return !!(a && b && a.kind===b.kind && a.listId===b.listId && (a.clientId||a.entryId)===(b.clientId||b.entryId)); }
+function fwStackCount(){ return (_fwMs.length?1:0) + fwWins.length; }
+function fwCount(){ return fwStackCount() + (state.todoDetailModal?1:0); }
+function fwFreeSlot(){ const used = new Set([fwActive&&fwActive.slot, ...fwWins.map(w=>w.slot)].filter(Boolean)); for(let i=1;i<=FW_MAX;i++) if(!used.has(i)) return i; return 1; }
+function fwBlockedToast(){ flashToast(`${FW_MAX} windows are open — close one to open another.`); }
+function fwSetStack(v){
+  v = v || [];
+  if(!fwEnabled()){ _fwMs = v; return; }
+  const cur = _fwMs;
+  if(!v.length){ // the active window closed → bring the most recent parked window forward
+    _fwMs = [];
+    fwActive = null;
+    const next = fwWins.pop();
+    if(next){ _fwMs = next.stack; fwActive = {id:next.id, slot:next.slot, min:false}; }
+    return;
+  }
+  if(!cur.length){ _fwMs = v; fwActive = {id:crypto.randomUUID(), slot:fwFreeSlot(), min:false}; return; }
+  if(fwSameRoot(cur[0], v[0])){ _fwMs = v; if(fwActive) fwActive.min = false; return; }
+  const existing = fwWins.find(w=>fwSameRoot(w.stack[0], v[0]));
+  if(existing){
+    fwWins = fwWins.filter(w=>w!==existing);
+    if(fwActive) fwWins.push({...fwActive, stack:cur});
+    _fwMs = v; fwActive = {id:existing.id, slot:existing.slot, min:false}; fwTodoFront = false;
+    return;
+  }
+  if(fwCount() >= FW_MAX){ fwBlockedToast(); return; } // keep what's open
+  if(fwActive) fwWins.push({...fwActive, stack:cur});
+  _fwMs = v; fwActive = {id:crypto.randomUUID(), slot:fwFreeSlot(), min:false}; fwTodoFront = false;
+}
+Object.defineProperty(state, 'modalStack', { get(){ return _fwMs; }, set(v){ fwSetStack(v); }, configurable:true, enumerable:true });
+function fwActivate(id){
+  const w = fwWins.find(x=>x.id===id); if(!w) return;
+  fwWins = fwWins.filter(x=>x!==w);
+  if(fwActive && _fwMs.length) fwWins.push({...fwActive, stack:_fwMs});
+  _fwMs = w.stack; fwActive = {id:w.id, slot:w.slot, min:false}; fwTodoFront = false;
+  render();
+}
+function fwClose(id){
+  if(fwActive && fwActive.id===id){ closeModalStack(); return; }
+  fwWins = fwWins.filter(x=>x.id!==id); render();
+}
+function fwMinimize(id){
+  if(id==='todo'){ fwTodoMin = true; render(); return; }
+  if(fwActive && fwActive.id===id){
+    // park it minimized and bring the next un-minimized window (if any) forward
+    const parked = {...fwActive, stack:_fwMs, min:true};
+    _fwMs = []; fwActive = null;
+    const nextIdx = fwWins.map(w=>!w.min).lastIndexOf(true);
+    if(nextIdx>-1){ const n = fwWins.splice(nextIdx,1)[0]; _fwMs = n.stack; fwActive = {id:n.id, slot:n.slot, min:false}; }
+    fwWins.push(parked);
+  } else { const w = fwWins.find(x=>x.id===id); if(w) w.min = true; }
+  render();
+}
+function fwRestore(id){
+  if(id==='todo'){ fwTodoMin = false; fwTodoFront = true; render(); return; }
+  const w = fwWins.find(x=>x.id===id); if(!w) return;
+  w.min = false; fwActivate(id);
+}
+function fwTitleFor(stack){
+  try{
+    const crumbs = breadcrumbFor(stack); return crumbs.length>1 ? crumbs[crumbs.length-1].label : 'Window';
+  }catch(e){ return 'Window'; }
+}
+// Default spot for a window the first time its slot is used: cascaded so they don't stack exactly.
+function fwSeedGeom(slot){
+  const key = 'fw:slot'+slot;
+  if(mwGeom[key]) return;
+  const w = Math.min(980, window.innerWidth-80), h = Math.round(window.innerHeight*0.84);
+  mwGeom[key] = {geom:{left:40+(slot-1)*48, top:30+(slot-1)*36, width:w, height:h}, max:false};
+}
+// Parked windows: drawn as read-only snapshots (no ids, no live handlers) under a click shield.
+function renderFwSnapshots(){
+  if(!fwEnabled()) return;
+  const keep = [];
+  fwWins.forEach((w, i)=>{
+    if(w.min){ keep.push(w); return; }
+    let html = '';
+    const saved = _fwMs; _fwMs = w.stack;
+    try{ html = renderTopModalCard(); } catch(e){ console.warn('fw snapshot dropped', e); _fwMs = saved; return; }
+    _fwMs = saved;
+    keep.push(w);
+    html = html.replace(/\sid="/g, ' data-fwid="');
+    const ov = document.createElement('div');
+    ov.className = 'modal-overlay fw-pass fw-snap';
+    ov.style.zIndex = 96 + i*0; ov.style.animation = 'none';
+    ov.innerHTML = html;
+    const card = ov.querySelector('.modal-card');
+    if(card){
+      fwSeedGeom(w.slot);
+      card.dataset.mwKey = 'fw:slot'+w.slot;
+      card.querySelectorAll('input,textarea,select,button').forEach(el=>{ el.tabIndex = -1; });
+      const shield = document.createElement('div');
+      shield.className = 'fw-shield'; shield.dataset.fwActivate = w.id;
+      shield.title = 'Click to bring this window to the front';
+      shield.innerHTML = `<div class="fw-shield-bar"><button data-fwmin="${w.id}" title="Minimize">–</button><button data-fwclose="${w.id}" title="Close">✕</button></div>`;
+      card.appendChild(shield);
+    }
+    document.getElementById('app').appendChild(ov);
+  });
+  fwWins = keep;
+}
+function renderFwTray(){
+  if(!fwEnabled()) return;
+  const items = [];
+  fwWins.filter(w=>w.min).forEach(w=>items.push({id:w.id, label:fwTitleFor(w.stack)}));
+  if(state.todoDetailModal && fwTodoMin){ const td = db.todos.find(x=>x.id===state.todoDetailModal.id); items.push({id:'todo', label:'To-Do: '+(td?td.title:'')}); }
+  if(!items.length) return;
+  const tray = document.createElement('div');
+  tray.className = 'fw-tray';
+  tray.innerHTML = items.map(it=>`<button data-fwrestore="${it.id}" title="Restore">▢ ${escapeHtml(String(it.label).slice(0,40))}</button>`).join('');
+  document.getElementById('app').appendChild(tray);
+}
+// Called right after the live stack window / To-Do window are drawn.
+function fwDecorateActive(){
+  if(!fwEnabled()) return;
+  const overlays = [...document.querySelectorAll('#app > .modal-overlay')];
+  // live stack window = the overlay whose card carries the stack key
+  overlays.forEach(ov=>{
+    const card = ov.querySelector('.modal-card'); if(!card) return;
+    const isStack = card.dataset.mwKey && card.dataset.mwKey.startsWith('stack:');
+    const isTodo = ov.dataset.fwTodo === '1';
+    if(!isStack && !isTodo) return;
+    ov.classList.add('fw-pass');
+    if(isStack && !fwActive) fwActive = {id:crypto.randomUUID(), slot:fwFreeSlot(), min:false};
+    if(isStack && fwActive){
+      if(fwActive.min){ ov.remove(); return; }
+      fwSeedGeom(fwActive.slot);
+      card.dataset.mwKey = 'fw:slot'+fwActive.slot;
+      ov.style.zIndex = fwTodoFront ? 99 : 101;
+      card.addEventListener('mousedown', ()=>{ if(fwTodoFront){ fwTodoFront=false; ov.style.zIndex=101; const t=document.querySelector('[data-fw-todo="1"]'); if(t) t.style.zIndex=99; } }, true);
+      fwAddMinButton(card, fwActive.id);
+    }
+    if(isTodo){
+      if(fwTodoMin){ ov.remove(); return; }
+      card.dataset.mwKey = 'fw:todo';
+      if(!mwGeom['fw:todo']) mwGeom['fw:todo'] = {geom:{left:Math.max(40, window.innerWidth-720), top:60, width:640, height:Math.round(window.innerHeight*0.8)}, max:false};
+      ov.style.zIndex = fwTodoFront ? 101 : 99;
+      card.addEventListener('mousedown', ()=>{ if(!fwTodoFront){ fwTodoFront=true; ov.style.zIndex=101; const s=[...document.querySelectorAll('#app > .modal-overlay.fw-pass:not(.fw-snap)')].find(o=>o!==ov); if(s) s.style.zIndex=99; } }, true);
+      fwAddMinButton(card, 'todo');
+    }
+  });
+}
+function fwAddMinButton(card, id){
+  const head = card.querySelector('.modal-head'); if(!head || head.querySelector('.fw-min')) return;
+  const b = document.createElement('button');
+  b.type='button'; b.className='fw-min'; b.title='Minimize'; b.textContent='–'; b.dataset.fwmin = id;
+  const close = head.querySelector('.modal-close');
+  if(close && close.parentNode) close.parentNode.insertBefore(b, close); else head.appendChild(b);
+}
+document.addEventListener('mousedown', ev=>{
+  const t = ev.target;
+  if(!t.closest) return;
+  const mn = t.closest('[data-fwmin]'); if(mn){ ev.preventDefault(); ev.stopPropagation(); fwMinimize(mn.dataset.fwmin); return; }
+  const cl = t.closest('[data-fwclose]'); if(cl){ ev.preventDefault(); ev.stopPropagation(); fwClose(cl.dataset.fwclose); return; }
+  const rs = t.closest('[data-fwrestore]'); if(rs){ ev.preventDefault(); ev.stopPropagation(); fwRestore(rs.dataset.fwrestore); return; }
+  const sh = t.closest('[data-fw-activate]'); if(sh){ ev.preventDefault(); ev.stopPropagation(); fwActivate(sh.dataset.fwActivate); return; }
+}, true);
+function fwToggle(){
+  const on = !fwPrefOn();
+  try { localStorage.setItem(FW_PREF_KEY, on ? 'on' : 'off'); } catch(e){}
+  if(!on){ fwWins = []; fwTodoMin = false; }
+  flashToast(on ? 'Floating windows are ON — up to 3 windows stay open while you work.' : 'Floating windows are OFF — back to one window at a time.');
+  state.showUserMenu = false;
+  render();
+}
+
 (function mwObserve(){
   const scan = root=>{ if(root.querySelectorAll) root.querySelectorAll('.modal-card').forEach(mwEnhance); if(root.classList && root.classList.contains('modal-card')) mwEnhance(root); };
   const obs = new MutationObserver(muts=>{ muts.forEach(m=>m.addedNodes.forEach(n=>{ if(n.nodeType===1) scan(n); })); });
@@ -3831,10 +4035,17 @@ function splitCompleted(list){
   const open = list.filter(t=>!t.completed);
   return {open, done};
 }
-function todoListWithPills(list, emptyHtml){
+function todoListWithPills(list, emptyHtml, deferCompleted){
   const {open, done} = splitCompleted(list);
-  return (open.length ? renderTodoList(open, true) : emptyHtml) + completedPillsHtml(done);
+  return (open.length ? renderTodoList(open, true) : emptyHtml) + (deferCompleted ? '' : completedPillsHtml(done));
 }
+// 2026-10-22 (Michael): on Clients / Listings / Deals, completed To-Do's sit at the very
+// bottom of the window — same pills as before, just moved below everything else.
+function completedTodosAtBottom(list){
+  const {done} = splitCompleted(list);
+  return done.length ? `<div style="margin-top:22px;padding-top:12px;border-top:1px solid var(--line-soft);">${completedPillsHtml(done, "Completed To-Do's")}</div>` : '';
+}
+function accountLooseTodos(c){ return db.todos.filter(t=>t.clientId===c.id && !t.dealId && t.type!=='project' && !t.projectId).filter(visibleTodo); }
 function renderAccountProjectsSection(l, c, canEdit){
   const projs = accountProjects(c);
   const kick = projs.find(p=>p.isStandard);
@@ -3858,7 +4069,7 @@ function renderAccountProjectsSection(l, c, canEdit){
       ${accountBoardFor(c.id) ? `<button class="btn secondary sm" data-bd="openListBoard" data-board="${accountBoardFor(c.id).id}">▦ Board</button>` : ''}
     </div>` : ''}
     ${lbl("To-Do's", ' <span style="font-weight:400;color:var(--ink-soft);">(not tied to a specific site or Project)</span>')}
-    ${todoListWithPills(todos, '<div class="tiny" style="color:var(--ink-soft);padding:6px 0;">No open To-Dos.</div>')}
+    ${todoListWithPills(todos, '<div class="tiny" style="color:var(--ink-soft);padding:6px 0;">No open To-Dos.</div>', true)}
     ${lbl('Projects')}
     ${others.filter(p=>!p.completed).length ? others.filter(p=>!p.completed).map(row).join('') : '<div class="tiny" style="color:var(--ink-soft);padding:6px 0;">No open Projects.</div>'}
     ${completedPillsHtml(others.filter(p=>p.completed), 'Completed Projects')}
@@ -5891,6 +6102,7 @@ function renderSidebar(){
         ${state.showUserMenu ? `
         <div class="admin-menu" style="top:100%;left:0;margin-top:6px;min-width:160px;">
           <button class="admin-item" data-action="openMyNotes" style="width:100%;border:none;background:none;text-align:left;">📝 My Notes</button>
+          ${mwIsDesktop() ? `<button class="admin-item" data-action="toggleFloatWin" style="width:100%;border:none;background:none;text-align:left;">🪟 Floating windows: ${fwPrefOn()?'On':'Off'}</button>` : ''}
           <button class="admin-item" data-action="openNotifSettingsFromMenu" style="width:100%;border:none;background:none;text-align:left;">⚙️ Notification Settings</button>
           <button class="admin-item" data-action="openChangePassword" style="width:100%;border:none;background:none;text-align:left;">🔑 Change Password</button>
           <button class="admin-item" data-action="logout" style="width:100%;border:none;background:none;text-align:left;">⏻ Sign out</button>
@@ -8615,6 +8827,7 @@ async function terEnsureLoaded(){
       if(data.length<1000) break;
     }
     T.tenants = all;
+    await terLoadLabels();
     const counts = {};
     for(let from=0; from<60000; from+=1000){
       const { data, error } = await supabaseClient.from('ter_contacts').select('tenant_id').order('id').range(from, from+999);
@@ -8698,13 +8911,181 @@ function terPill(val, colors){
 function terTags(arr, max){
   const a = (arr||[]).filter(Boolean); if(!a.length) return '';
   const m = max||2; const shown = a.slice(0,m);
-  const lab = x=>TER_RESP_LABELS[x]||x;
+  const lab = x=>terHash(x);
   return `<div class="ter-tags" title="${escapeAttr(a.map(lab).join(', '))}">${shown.map(x=>`<span class="ter-chip">${escapeHtml(lab(x))}</span>`).join('')}${a.length>m?`<span class="ter-chip more">+${a.length-m}</span>`:''}</div>`;
 }
 function terGroupColor(name, idx){
   const map = {'Apparel':'#ffcb00','Automotive':'#df2f4a','Banks & Financial Services':'#333333','Books/Arts & Crafts':'#bb3354','Casual Dining':'#757575','Convenience & Fuel':'#7f5347','Department Stores':'#cab641','Discount & Dollar':'#579bfc','Drugstores':'#ff007f','Education':'#225091','Electronics & Telecommunications':'#784bd1','Entertainment':'#faa1f1','Fast Casual':'#66ccff','Fine Dining':'#ffadad','Fitness':'#00c875','Grocery':'#ff6d3b','Health & Wellness':'#7e3b8a','Home Furnishings/Furniture':'#74afcc','Home Improvement':'#ff7575','Jewelry':'#5559df','New Retailers (Under Research)':'#a25ddc','Office, Print & Shipping':'#563e3e','Other':'#bda8f9','Personal Care/Beauty':'#4eccc6','Pet':'#9aadbd','Quick Service Restaurant':'#037f4c','Shoes/Footwear':'#ff5ac4','Sporting Goods/Outdoor':'#9cd326','Warehouse Retailer':'#401694'};
   return map[name] || TER_GROUP_PALETTE[idx % TER_GROUP_PALETTE.length];
 }
+/* ---- TER board: #tags, column sorting, click-to-edit (2026-10-22) ---- */
+const TER_TAG_FIELDS = ['tags','current_states','geo_targets_2026','hq_state','bldg_type','lease_type','industry_sub','cotenancy'];
+const TER_LABEL_COLORS = {status:TER_STATUS_COLORS, drive_thru:TER_DT_COLORS, ownership_type:TER_OWN_COLORS, industry_type:TER_IND_COLORS};
+const TER_NEW_LABEL_PALETTE = ['#579bfc','#00c875','#fdab3d','#df2f4a','#9d50dd','#037f4c','#ff6d3b','#66ccff','#bb3354','#4eccc6','#5559df','#ff7575','#225091','#9cd326','#7f5347','#ff5ac4'];
+function terHash(v){ return '#' + String(v||'').replace(/\s+/g,''); }
+function terTagNorm(v){ return String(v||'').toLowerCase().replace(/[^a-z0-9]/g,''); }
+// "#NewMexico" / "New Mexico" / "newmexico" → stored value. State names keep their space (the AZ logic relies on it).
+function terCleanTag(v){
+  let x = String(v||'').trim().replace(/^#+/,'').trim(); if(!x) return '';
+  const st = TER_STATES.find(s=>terTagNorm(s)===terTagNorm(x)); if(st) return st;
+  if(terTagNorm(x)==='washingtondc' || terTagNorm(x)==='washdc') return 'Washington DC';
+  return x;
+}
+function terTenantTagMatch(t, tok){ // tok already normalized, without '#'
+  return TER_TAG_FIELDS.some(f=>(t[f]||[]).some(v=>terTagNorm(v).startsWith(tok)));
+}
+async function terLoadLabels(){
+  const { data, error } = await supabaseClient.from('ter_labels').select('*');
+  if(error){ console.warn('ter_labels', error); return; }
+  (data||[]).forEach(r=>{ const map = TER_LABEL_COLORS[r.field]; if(map && !map[r.label]) map[r.label] = r.color; });
+}
+function terSortVal(t, col){
+  const T = terState(); const v = t[col.k];
+  switch(col.type){
+    case 'az': return {in:0, coming:1, not:2}[terAz(t)];
+    case 'count': return T.counts[t.id]||0;
+    case 'sf': return t.sf_low!=null ? Number(t.sf_low) : (t.sf_high!=null ? Number(t.sf_high) : null);
+    case 'num': case 'money': return (v===null||v===undefined||v==='') ? null : Number(v);
+    case 'tags': return (v&&v.length) ? v.map(x=>String(x).toLowerCase()).sort().join(' ') : null;
+    case 'bool': return v===true ? 0 : (v===false ? 1 : null);
+    case 'files': return (v||[]).length || null;
+    default: return (v===null||v===undefined||v==='') ? null : String(v).toLowerCase();
+  }
+}
+function terApplyColSort(list){
+  const T = terState(); const cs = T.colSort; if(!cs) return list;
+  const col = cs.k==='name' ? {k:'name', type:'text'} : TER_COLS.find(c=>c.k===cs.k); if(!col) return list;
+  const dir = cs.dir==='desc' ? -1 : 1;
+  return list.slice().sort((a,b)=>{
+    const va = terSortVal(a,col), vb = terSortVal(b,col);
+    if(va===null && vb===null) return (a.name||'').localeCompare(b.name||'');
+    if(va===null) return 1; if(vb===null) return -1;   // blanks always last
+    const r = (typeof va==='number' && typeof vb==='number') ? va-vb : String(va).localeCompare(String(vb));
+    return r*dir || (a.name||'').localeCompare(b.name||'');
+  });
+}
+function terSortHat(k){
+  const cs = terState().colSort;
+  if(cs && cs.k===k) return `<span class="ter-hat on">${cs.dir==='desc'?'▼':'▲'}</span>`;
+  return `<span class="ter-hat">⇅</span>`;
+}
+const TER_EDITABLE_TYPES = ['pill','text','num','money','tags','bool','link','sf'];
+function terCanEditCol(col){ return TER_EDITABLE_TYPES.includes(col.type); }
+async function terSaveFields(t, patch){
+  const me = state.currentUser.authId; const now = new Date().toISOString();
+  const ef = {...(t.edge_fields||{})};
+  const changed = {};
+  Object.keys(patch).forEach(k=>{ if(!terSame(patch[k], t[k])){ changed[k]=patch[k]; ef[k]={by:me, at:now}; } });
+  if(!Object.keys(changed).length) return true;
+  changed.edge_fields = ef;
+  const before = {}; Object.keys(changed).forEach(k=>before[k]=t[k]);
+  Object.assign(t, changed); terRender();
+  const { data, error } = await supabaseClient.from('ter_tenants').update(changed).eq('id', t.id).select().single();
+  if(error){ Object.assign(t, before); flashToast("Couldn't save: " + error.message); terRender(); return false; }
+  Object.assign(t, data);
+  return true;
+}
+function renderTerPop(){
+  const P = state.terPop; const T = terState();
+  const t = terFindTenant(P.id); const col = TER_COLS.find(c=>c.k===P.k);
+  if(!t || !col){ state.terPop=null; return; }
+  let body = '';
+  if(col.type==='pill'){
+    const map = TER_LABEL_COLORS[col.k] || {};
+    const labels = Object.keys(map).filter(l=>!(col.k==='status' && ['Bankruptcy','Out of Business'].includes(l) && t.status!==l));
+    body = `<div class="bd-palette">${labels.map(l=>`<div class="bd-pal-item" data-terpop="pick" data-v="${escapeAttr(l)}" style="background:${map[l]};${t[col.k]===l?'outline:3px solid #333;outline-offset:-3px;':''}">${escapeHtml(l)}</div>`).join('')}
+        <div class="bd-pal-item" data-terpop="pick" data-v="" style="background:#e6e9ef;color:#555;">Clear</div></div>
+      <div style="display:flex;gap:6px;margin-top:10px;"><input id="terPopNew" placeholder="+ New label" style="flex:1;font-size:13px;padding:6px 8px;"><button class="btn sm" data-terpop="newLabel">Add</button></div>`;
+  } else if(col.type==='tags'){
+    const cur = t[col.k]||[];
+    const all = new Set(); T.tenants.forEach(x=>(x[col.k]||[]).forEach(v=>all.add(v)));
+    body = `<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px;">${cur.length ? cur.map((v,i)=>`<span class="ter-chip" style="max-width:none;">${escapeHtml(terHash(v))} <span data-terpop="rmTag" data-i="${i}" style="cursor:pointer;color:#c0392b;font-weight:700;margin-left:3px;">×</span></span>`).join('') : '<span class="tiny" style="color:var(--ink-soft);">No tags yet.</span>'}</div>
+      <div style="display:flex;gap:6px;"><input id="terPopTag" list="terPopTagList" placeholder="#Add tag" style="flex:1;font-size:13px;padding:6px 8px;"><button class="btn sm" data-terpop="addTag">Add</button></div>
+      <datalist id="terPopTagList">${[...all].sort().slice(0,400).map(v=>`<option value="${escapeAttr(terHash(v))}">`).join('')}</datalist>`;
+  } else if(col.type==='bool'){
+    body = `<div style="display:flex;gap:6px;">${[['true','Yes'],['false','No'],['','Clear']].map(([v,l])=>`<button class="btn ${String(t[col.k])===v?'':'secondary'} sm" data-terpop="pick" data-v="${v}">${l}</button>`).join('')}</div>`;
+  } else if(col.type==='sf'){
+    body = `<div style="display:flex;gap:6px;align-items:center;"><input id="terPopLo" inputmode="numeric" placeholder="Low" value="${t.sf_low??''}" style="width:90px;font-size:13px;padding:6px 8px;"> – <input id="terPopHi" inputmode="numeric" placeholder="High" value="${t.sf_high??''}" style="width:90px;font-size:13px;padding:6px 8px;"> SF <button class="btn sm" data-terpop="saveVal">Save</button></div>`;
+  } else {
+    const v = t[col.k];
+    body = `<div style="display:flex;gap:6px;"><input id="terPopVal" ${col.type==='num'||col.type==='money'?'inputmode="decimal"':''} value="${escapeAttr(v??'')}" style="flex:1;font-size:13px;padding:6px 8px;"><button class="btn sm" data-terpop="saveVal">Save</button></div>`;
+  }
+  const pop = document.createElement('div');
+  pop.className = 'bd-pop ter-pop';
+  const w = col.type==='pill' ? 320 : 300;
+  const left = Math.min(Math.max(8, P.x), window.innerWidth - w - 12);
+  const top = Math.min(P.y, window.innerHeight - 320);
+  pop.style.left = left+'px'; pop.style.top = Math.max(8, top)+'px'; pop.style.width = w+'px';
+  pop.innerHTML = `<div class="bd-pop-title">${escapeHtml(t.name)} · ${escapeHtml(col.label)}</div>${body}
+    <div class="tiny" style="color:var(--ink-soft);margin-top:8px;">Changes are marked Edge-edited and never overwritten by quarterly updates.</div>`;
+  document.getElementById('app').appendChild(pop);
+  const focusEl = pop.querySelector('#terPopVal, #terPopTag, #terPopLo, #terPopNew');
+  if(focusEl && P.focus!==false){ focusEl.focus(); try{ const n=focusEl.value.length; focusEl.setSelectionRange(n,n); }catch(e){} }
+}
+async function terPopAction(a, el){
+  const P = state.terPop; if(!P) return;
+  const t = terFindTenant(P.id); const col = TER_COLS.find(c=>c.k===P.k); if(!t||!col) return;
+  if(a==='pick'){
+    let v = el.dataset.v;
+    if(col.type==='bool') v = v==='' ? null : v==='true';
+    else v = v || null;
+    state.terPop = null; await terSaveFields(t, {[col.k]: v}); return;
+  }
+  if(a==='newLabel'){
+    const inp = document.getElementById('terPopNew'); const label = (inp&&inp.value||'').trim(); if(!label) return;
+    const map = TER_LABEL_COLORS[col.k] || {};
+    if(!map[label]){
+      const color = TER_NEW_LABEL_PALETTE[Object.keys(map).length % TER_NEW_LABEL_PALETTE.length];
+      map[label] = color;
+      supabaseClient.from('ter_labels').insert({field:col.k, label, color, created_by:state.currentUser.authId}).then(({error})=>{ if(error) console.warn('ter_labels insert', error); });
+    }
+    state.terPop = null; await terSaveFields(t, {[col.k]: label}); return;
+  }
+  if(a==='addTag'){
+    const inp = document.getElementById('terPopTag'); const raw = (inp&&inp.value||'');
+    const vals = raw.split(/[,\s]+(?=#)|,/).map(terCleanTag).filter(Boolean);
+    if(!vals.length) return;
+    const next = [...(t[col.k]||[])]; vals.forEach(v=>{ if(!next.some(x=>terTagNorm(x)===terTagNorm(v))) next.push(v); });
+    if(inp) inp.value = '';
+    if(next.length===(t[col.k]||[]).length){ flashToast('Already tagged.'); terRender(); return; }
+    await terSaveFields(t, {[col.k]: next}); return;
+  }
+  if(a==='rmTag'){
+    const next = [...(t[col.k]||[])]; next.splice(+el.dataset.i, 1);
+    await terSaveFields(t, {[col.k]: next}); return;
+  }
+  if(a==='saveVal'){
+    if(col.type==='sf'){
+      const num = id=>{ const r=(document.getElementById(id)||{}).value||''; const n=parseFloat(r.replace(/[$,\s]/g,'')); return isNaN(n)?null:n; };
+      state.terPop = null; await terSaveFields(t, {sf_low:num('terPopLo'), sf_high:num('terPopHi')}); return;
+    }
+    const raw = ((document.getElementById('terPopVal')||{}).value||'').trim();
+    let v = raw || null;
+    if(col.type==='num' || col.type==='money'){ const n = parseFloat(raw.replace(/[$,\s]/g,'')); v = raw==='' ? null : (isNaN(n) ? t[col.k] : n); }
+    state.terPop = null; await terSaveFields(t, {[col.k]: v}); return;
+  }
+}
+document.addEventListener('mousedown', ev=>{
+  if(!state.terPop) return;
+  const t = ev.target;
+  if(t.closest && (t.closest('.ter-pop') || t.closest('[data-ter="cell"]'))) return;
+  state.terPop = null; terRender();
+}, true);
+document.addEventListener('click', ev=>{
+  const el = ev.target.closest && ev.target.closest('[data-terpop]'); if(!el) return;
+  ev.preventDefault(); terPopAction(el.dataset.terpop, el);
+});
+document.addEventListener('keydown', ev=>{
+  if(!state.terPop) return;
+  if(ev.key==='Escape'){ ev.stopImmediatePropagation(); state.terPop=null; terRender(); return; }
+  if(ev.key==='Enter'){
+    const id = ev.target && ev.target.id;
+    if(id==='terPopTag'){ ev.preventDefault(); terPopAction('addTag'); }
+    else if(id==='terPopNew'){ ev.preventDefault(); terPopAction('newLabel'); }
+    else if(id==='terPopVal' || id==='terPopLo' || id==='terPopHi'){ ev.preventDefault(); terPopAction('saveVal'); }
+  }
+}, true);
+
 function terFilterActive(){ const T=terState(); return !!((T.q||'').trim() || T.az!=='all' || T.status || T.dt || T.sf); }
 function terFiltered(){
   const T = terState();
@@ -8723,7 +9104,11 @@ function terFiltered(){
     }
     if(q){
       const hay = [t.name, t.hq, t.ownership_group, t.industry_type, ...(t.industry_sub||[]), ...(t.tags||[])].join(' ').toLowerCase();
-      if(!q.split(/\s+/).every(w=>hay.includes(w)) && !(hits && hits.has(t.id))) return false;
+      // "#Arizona" style tokens match any #tag column; plain words match name/HQ/owner/etc.
+      // Tokens are whitespace-split, so "#New Mexico" also works ("#New" + "mexico" both match the state tag text).
+      const toks = q.split(/\s+/).filter(Boolean);
+      const ok = toks.every(w=> w.startsWith('#') ? (w.length<2 || terTenantTagMatch(t, terTagNorm(w))) : (hay.includes(w) || TER_TAG_FIELDS.some(f=>(t[f]||[]).some(v=>String(v).toLowerCase().includes(w)))));
+      if(!ok && !(hits && hits.has(t.id))) return false;
     }
     return true;
   });
@@ -8734,7 +9119,7 @@ function terFiltered(){
     sf:(a,b)=>(a.sf_low==null?1e12:Number(a.sf_low))-(b.sf_low==null?1e12:Number(b.sf_low)),
     status:(a,b)=>{ const o={HOT:0,Expanding:1,TBD:2,Flat:3,Contracting:4}; return (o[a.status]??9)-(o[b.status]??9) || (a.name||'').localeCompare(b.name||''); },
   }[T.sort] || ((a,b)=>0);
-  return list.sort(by);
+  return terApplyColSort(list.sort(by));
 }
 function terCell(t, col){
   const T = terState();
@@ -8882,7 +9267,7 @@ function renderTenantExpansionMain(){
           ${touched?`<span title="Already in the Portal (Client, Listing prospect, or Hit/Hot List)" style="font-size:12px;">🤝</span>`:''}
           ${edgeEdited?`<span class="ter-src edge" title="${t.source==='Edge'?'Added by Edge':'Edited by Edge — protected from quarterly updates'}">${t.source==='Edge'?'Edge':'✎'}</span>`:''}
         </div></td>
-        ${TER_COLS.map(c=>`<td>${terCell(t, c)}</td>`).join('')}
+        ${TER_COLS.map(c=>`<td${terCanEditCol(c)?` class="ter-ed" data-ter="cell" data-id="${t.id}" data-k="${c.k}"`:''}>${terCell(t, c)}</td>`).join('')}
       </tr>${exp?`<tr class="ter-subrow"><td colspan="${TER_COLS.length+1}">${terContactsSubHtml(t)}</td></tr>`:''}`;
     }).join('');
     const more = rows.length>cap ? `<tr><td colspan="${TER_COLS.length+1}" style="padding:8px 10px;"><span class="ter-link" data-ter="showMore" data-g="${escapeAttr(g)}" style="position:sticky;left:12px;">Show ${Math.min(100, rows.length-cap)} more of ${rows.length-cap} remaining…</span></td></tr>` : '';
@@ -8890,7 +9275,7 @@ function renderTenantExpansionMain(){
     return `<div class="bd-group ter-group" style="--gc:${color};">${head}
       <table class="bd-table ter-table" style="width:${totalW}px;">
         <colgroup><col style="width:300px;">${TER_COLS.map(c=>`<col style="width:${c.w}px;">`).join('')}</colgroup>
-        <thead><tr><th class="bd-th bd-title-th ter-title-th">Tenant</th>${TER_COLS.map(c=>`<th class="bd-th" title="${escapeAttr(c.label)}">${escapeHtml(c.label)}</th>`).join('')}</tr></thead>
+        <thead><tr><th class="bd-th bd-title-th ter-title-th" data-ter="colsort" data-k="name" title="Sort by name">Tenant ${terSortHat('name')}</th>${TER_COLS.map(c=>`<th class="bd-th" data-ter="colsort" data-k="${c.k}" title="Sort by ${escapeAttr(c.label)}">${escapeHtml(c.label)} ${terSortHat(c.k)}</th>`).join('')}</tr></thead>
         <tbody>${body}${more}${sum}</tbody>
       </table></div>`;
   }).join('');
@@ -8902,7 +9287,7 @@ function terFindTenant(id){ return terState().tenants.find(t=>t.id===id); }
 function terUserName(authId){ const u = USERS.find(x=>x.authId===authId || x.id===authId); return u ? u.name : 'someone at Edge'; }
 function terFieldDisplay(t, f){
   const v = t[f.k];
-  if(f.t==='arr') return (v&&v.length) ? escapeHtml(v.map(x=>TER_RESP_LABELS[x]||x).join(', ')) : '<span class="ter-blank">—</span>';
+  if(f.t==='arr') return (v&&v.length) ? escapeHtml(v.map(x=>TER_TAG_FIELDS.includes(f.k)?terHash(x):(TER_RESP_LABELS[x]||x)).join(' ')) : '<span class="ter-blank">—</span>';
   if(f.t==='bool') return v===true ? 'Yes' : (v===false ? 'No' : '<span class="ter-blank">—</span>');
   if(f.t==='num') return (v===null||v===undefined) ? '<span class="ter-blank">—</span>' : (f.money ? '$'+Number(v).toLocaleString() : terFmtNum(v, 2));
   if(f.t==='sel'){ const colors = f.k==='status'?TER_STATUS_COLORS:f.k==='ownership_type'?TER_OWN_COLORS:TER_DT_COLORS; return v ? `<span class="ter-pill inline" style="background:${colors[v]||'#c4c4c4'};">${escapeHtml(v)}</span>` : '<span class="ter-blank">—</span>'; }
@@ -8915,7 +9300,7 @@ function terFieldInput(t, f, prefix){
   if(f.t==='sel') return `<select id="${id}"><option value=""></option>${f.opts.map(o=>`<option ${v===o?'selected':''}>${escapeHtml(o)}</option>`).join('')}</select>`;
   if(f.t==='grp'){ const gs = [...new Set(terState().tenants.map(x=>x.grp).filter(Boolean))].sort(); return `<select id="${id}">${gs.map(o=>`<option ${v===o?'selected':''}>${escapeHtml(o)}</option>`).join('')}</select>`; }
   if(f.t==='bool') return `<select id="${id}"><option value=""></option><option value="true" ${v===true?'selected':''}>Yes</option><option value="false" ${v===false?'selected':''}>No</option></select>`;
-  if(f.t==='arr') return `<input id="${id}" value="${escapeAttr((v||[]).join(', '))}" placeholder="Separate with commas">`;
+  if(f.t==='arr') return `<input id="${id}" value="${escapeAttr((v||[]).map(terHash).join(' '))}" placeholder="#Tag #Tag (or separate with commas)">`;
   if(f.t==='num') return `<input id="${id}" inputmode="decimal" value="${v===null||v===undefined?'':escapeAttr(v)}">`;
   if(f.t==='date') return `<input id="${id}" type="date" value="${escapeAttr(v||'')}">`;
   return `<input id="${id}" value="${escapeAttr(v||'')}">`;
@@ -8923,7 +9308,7 @@ function terFieldInput(t, f, prefix){
 function terReadInput(f, prefix){
   const el = document.getElementById(`${prefix}_${f.k}`); if(!el) return undefined;
   const raw = el.value.trim();
-  if(f.t==='arr') return raw ? raw.split(',').map(s=>s.trim()).filter(Boolean) : [];
+  if(f.t==='arr') return raw ? raw.split(/,|\s+(?=#)/).map(terCleanTag).filter(Boolean) : [];
   if(f.t==='num'){ if(!raw) return null; const n = parseFloat(raw.replace(/[$,\s]/g,'')); return isNaN(n) ? null : n; }
   if(f.t==='bool') return raw==='' ? null : raw==='true';
   if(f.t==='date') return raw || null;
@@ -9074,7 +9459,17 @@ async function terSaveProfile(btn){
 let terSearchTimer = null;
 async function terContactSearch(q){
   const T = terState();
-  const clean = q.replace(/[%,()*\\]/g,' ').trim();
+  const tagToks = q.split(/\s+/).filter(w=>w.startsWith('#') && w.length>1).map(terTagNorm);
+  const clean = q.split(/\s+/).filter(w=>!w.startsWith('#')).join(' ').replace(/[%,()*\\]/g,' ').trim();
+  if(tagToks.length && !clean){
+    const vocab = [...new Set(TER_STATES.concat(['Washington DC','National']))];
+    const cands = vocab.filter(v=>tagToks.some(tk=>terTagNorm(v).startsWith(tk)));
+    if(!cands.length){ T.contactHits = null; return; }
+    const { data, error } = await supabaseClient.from('ter_contacts').select('tenant_id').overlaps('geo_tags', cands).limit(5000);
+    if(error){ console.error('terContactSearch', error); T.contactHits = null; return; }
+    if((T.q||'').trim()!==q) return;
+    T.contactHits = new Set(data.map(r=>r.tenant_id)); return;
+  }
   if(clean.length<3){ T.contactHits = null; return; }
   const { data, error } = await supabaseClient.from('ter_contacts').select('tenant_id').or(`name.ilike.%${clean}%,email.ilike.%${clean}%,title.ilike.%${clean}%`).limit(1000);
   if(error){ console.error('terContactSearch', error); T.contactHits = null; return; }
@@ -9089,8 +9484,16 @@ document.addEventListener('click', ev=>{
   const el = ev.target.closest && ev.target.closest('[data-ter]'); if(!el) return;
   const a = el.dataset.ter; const T = terState();
   if(['search','az','status','dt','sf','sort'].includes(a)) return;
+  if(a==='cell' && ev.target.closest('a')) return; // let links (Website) open normally
   ev.preventDefault();
   if(a==='retry'){ T.error=null; render(); return; }
+  if(a==='colsort'){ const k = el.dataset.k; T.colSort = (T.colSort && T.colSort.k===k) ? {k, dir: T.colSort.dir==='asc'?'desc':'asc'} : {k, dir:'asc'}; terRender(); return; }
+  if(a==='cell'){
+    if(ev.target.closest('a')) return;
+    const r = el.getBoundingClientRect();
+    state.terPop = {id:el.dataset.id, k:el.dataset.k, x:r.left, y:r.bottom+4};
+    terRender(); return;
+  }
   if(a==='toggleGroup'){ const g = el.dataset.g; if(terFilterActive()) T.fopen[g] = T.fopen[g]===false; else T.open[g] = !T.open[g]; terRender(); return; }
   if(a==='expandAll' || a==='collapseAll'){ const on = a==='expandAll'; [...new Set(T.tenants.map(t=>t.grp||'Other'))].forEach(g=>{ if(terFilterActive()) T.fopen[g]=on; else T.open[g]=on; }); terRender(); return; }
   if(a==='showMore'){ const g = el.dataset.g; T.showN[g] = (T.showN[g]||100)+100; terRender(); return; }
@@ -9441,7 +9844,7 @@ function attachShellHandlers(){
   const userMenuBtn=document.querySelector('[data-action="toggleUserMenu"]'); if(userMenuBtn) userMenuBtn.onclick=(ev)=>{ ev.stopPropagation(); state.showAdminMenu=false; state.showUserMenu=!state.showUserMenu; render(); };
   const logout=document.querySelector('[data-action="logout"]'); if(logout) logout.onclick=async ()=>{
     await supabaseClient.auth.signOut();
-    state.screen='login'; state.currentUser=null; state.mainView={type:'smart',id:'todayMe'}; state.modalStack=[]; state.mobileScreen='nav'; render();
+    fwWins=[]; state.screen='login'; state.currentUser=null; state.mainView={type:'smart',id:'todayMe'}; state.modalStack=[]; fwWins=[]; fwActive=null; state.mobileScreen='nav'; render();
   };
   document.querySelectorAll('[data-action="addSmartList"]').forEach(el=>el.onclick=()=>promptAddSmartList());
   wireDragReorder('[data-smartlistdrag]', 'smartlistdrag', (fromId, toId)=>{
@@ -9501,6 +9904,7 @@ function attachShellHandlers(){
     state.notifSettingsOpen=true; render(); refreshMsGraphStatus(); refreshEgnyteFolderStatus();
   };
   const refreshBtn=document.querySelector('[data-action="refreshApp"]'); if(refreshBtn) refreshBtn.onclick=()=>{ doAppRefresh(); };
+  const fwBtn=document.querySelector('[data-action="toggleFloatWin"]'); if(fwBtn) fwBtn.onclick=()=>fwToggle();
   const myNotesBtn=document.querySelector('[data-action="openMyNotes"]'); if(myNotesBtn) myNotesBtn.onclick=()=>{ state.myNotesOpen=true; state.showUserMenu=false; render(); };
   const notifFromMenuBtn=document.querySelector('[data-action="openNotifSettingsFromMenu"]'); if(notifFromMenuBtn) notifFromMenuBtn.onclick=()=>{ state.notifSettingsOpen=true; state.showUserMenu=false; render(); refreshMsGraphStatus(); refreshEgnyteFolderStatus(); };
   const changePwBtn=document.querySelector('[data-action="openChangePassword"]'); if(changePwBtn) changePwBtn.onclick=()=>{ state.changePasswordModalOpen=true; state.showUserMenu=false; render(); };
@@ -12376,6 +12780,8 @@ function openTodoDetail(id){
   // a list → closing returns to the list. Opened from inside a Client/Deal → returns there
   // (that window is already open underneath). (Old 'stack client+deal first' block removed;
   // backup index.pre_closenav.html.)
+  if(fwEnabled() && !state.todoDetailModal && fwStackCount() >= FW_MAX){ fwBlockedToast(); return; }
+  fwTodoMin = false; fwTodoFront = true;
   state.todoDetailModal = {id, originalAssignedTo: td ? td.assignedTo : null};
   if(td && td.isNew && td.assignedTo===state.currentUser.id) td.isNew=false;
 }
@@ -12753,6 +13159,7 @@ function renderTodoDetailModal(){
   }
   const overlay = document.createElement('div');
   overlay.className='modal-overlay'; overlay.style.zIndex=190;
+  if(fwEnabled()){ overlay.dataset.fwTodo = '1'; }
   const cats = allCategories();
   const contact = getTodoContact(td);
   const isForMe = td.assignedTo===state.currentUser.id;
@@ -13214,7 +13621,7 @@ function renderModalStack(){
   const stackCard = overlay.querySelector('.modal-card');
   if(stackCard){ const topFrame = state.modalStack[state.modalStack.length-1]; stackCard.dataset.mwKey = 'stack:' + (topFrame && topFrame.kind || 'window'); }
   document.getElementById('app').appendChild(overlay);
-  overlay.addEventListener('mousedown', (ev)=>{ if(ev.target===overlay) closeModalStack(); });
+  overlay.addEventListener('mousedown', (ev)=>{ if(ev.target===overlay && !fwEnabled()) closeModalStack(); });
   attachModalHandlers(overlay);
 }
 function guessDomain(name){
@@ -13420,6 +13827,7 @@ function renderClientModalBody(l,c,viewMode,pendingDel){
     <input id="clientHashtags" value="${escapeAttr(c.hashtags||'')}" placeholder="#Freddys, #SouthwestEdgeRocks" ${canEdit?'':'disabled'} style="width:100%;font-size:19px;padding:16px 14px;border:1px solid var(--line);border-radius:8px;color:var(--ink);background:#fff;box-sizing:border-box;">
     ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="saveHashtags" data-client="${c.id}">Save Tags</button>` : ''}
   </div>
+  ${completedTodosAtBottom(accountLooseTodos(c))}
   ${state.currentUser.role==='Admin' ? `
   <div style="margin-top:24px;padding-top:16px;border-top:1px solid var(--line-soft);display:flex;gap:8px;">
     ${c.archivedAt
@@ -14071,7 +14479,7 @@ function renderDealModalBody(l,c,d){
   </div>
   <div class="section-label">To-Do's</div>
   ${canEdit ? `<button class="btn sm" data-action="newTodoInDeal" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}" style="margin-bottom:10px;">+ New To-Do</button>` : ''}
-  ${todoListWithPills(todos, `<div class="tiny" style="color:var(--ink-soft);padding:6px 0;">No open to-do's — add the next action item for this site.</div>`)}
+  ${todoListWithPills(todos, `<div class="tiny" style="color:var(--ink-soft);padding:6px 0;">No open to-do's — add the next action item for this site.</div>`, true)}
   <div class="contact-card" style="margin-top:18px;">
     <div class="label">Broker</div>
     ${brokerRow(d.brokerContactId)}
@@ -14123,6 +14531,7 @@ function renderDealModalBody(l,c,d){
   <div class="field"><label>Notes</label><textarea id="dtNotes" rows="3" ${ro}>${escapeHtml(d.notes||'')}</textarea></div>
   ${canEdit ? `<button class="btn sm" data-action="saveDealTerms" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}" style="margin-bottom:6px;">Save Deal Terms</button>` : ''}
   ${renderBrokerReviewSection('deals', d.id)}
+  ${completedTodosAtBottom(todos)}
   ${state.currentUser.role==='Admin' ? `
   <div style="margin-top:24px;padding-top:16px;border-top:1px solid var(--line-soft);">
     <button class="btn danger sm" data-action="deleteDeal" data-listid="${l.id}" data-client="${c.id}" data-deal="${d.id}">🗑️ Delete this Deal</button>
