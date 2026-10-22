@@ -869,7 +869,7 @@ const EDGE_LOGO_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAARgAAA
 // normal for this specific key type; Google expects it to be visible in page source and
 // restricted by domain, via HTTP referrer restriction in Google Cloud Console, not hidden
 // like the other secrets in this app). Replace once Michael has generated a real key.
-const APP_BUILD = '2026-10-22 windows-v3';
+const APP_BUILD = '2026-10-22 windows-v4';
 const GOOGLE_MAPS_JS_KEY = 'AIzaSyBMlIjvH2bpZK6mYJeNZSkQvM8TXQkCjDE';
 const CATEGORY_ORANGE_ICONS = ['💲','🏢','🎯','📋','☁️','🔧','✈️','🏛️','💎','📄','⭐','🗂️'];
 
@@ -3744,20 +3744,21 @@ function mwStartResize(ev, card, dir){
   document.body.classList.add('mw-busy');
   window.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp);
 }
-/* ---------------- FLOATING WINDOWS v3 (2026-10-22) ----------------
-   Michael's layout: up to TWO big windows side by side (never on top of each other) plus
-   the rest as small buttons at the bottom. Max 3 windows total (Client/Listing/Deal stacks
-   and the To-Do window). Click into either big window to work in it ("live"). Clicking a
-   bottom button swaps that window in for the big window that ISN'T live. "↓" sends a big
-   window down to a button. Switchable: user menu → "Floating windows: On/Off".
+/* ---------------- FLOATING WINDOWS v4 (2026-10-22) — Word-style ----------------
+   Michael (with a screenshot of two Word documents): new windows open like Word —
+   on top, a little down and to the right of the last one. Every open window that is NOT
+   the one in front always has a small button at the bottom (up to 2 buttons with 3
+   windows) so you can toggle between them. "↓" hides a window; its button stays.
+   Max 3 windows (Client/Listing/Deal stacks + the To-Do window).
+   Switchable: user menu → "Floating windows: On/Off".
    Backup of the build before floating windows: index_2026-10-15_ascendix.html. */
 const FW_MAX = 3;
 const FW_PREF_KEY = 'edgeFloatWin';
 let fwWins = [];            // parked stack windows: {id, stack}
-let fwActive = null;        // {id} — the stack window that is state.modalStack
-let fwPlace = {};           // id → 'L' | 'R' | 'B'   ('todo' is the To-Do window's id)
-let fwLive = null;          // id of the window you're working in
-let fwLayoutSig = '';
+let fwActive = null;        // {id} — the stack window that is state.modalStack (always the front-most stack)
+let fwOrder = [];           // window ids, back → front ('todo' = the To-Do window)
+let fwMin = {};             // id → true when hidden with ↓
+let fwSlot = {};            // id → 1..3 (decides its cascade position)
 let _fwMs = state.modalStack || [];
 function fwPrefOn(){ try { return localStorage.getItem(FW_PREF_KEY) !== 'off'; } catch(e){ return true; } }
 function fwEnabled(){ return fwPrefOn() && mwIsDesktop(); }
@@ -3766,54 +3767,42 @@ function fwStackCount(){ return (_fwMs.length?1:0) + fwWins.length; }
 function fwCount(){ return fwStackCount() + (state.todoDetailModal?1:0); }
 function fwBlockedToast(){ flashToast(`${FW_MAX} windows are open — close one to open another.`); }
 function fwIds(){ const ids = []; if(fwActive && _fwMs.length) ids.push(fwActive.id); fwWins.forEach(w=>ids.push(w.id)); if(state.todoDetailModal) ids.push('todo'); return ids; }
-function fwBig(){ return fwIds().filter(id=>fwPlace[id]==='L' || fwPlace[id]==='R'); }
-// Where a newly opened (or newly swapped-in) window goes: a free big slot, else the slot of
-// the big window that isn't live (that one drops to a button).
-function fwPlaceNew(id){
-  const big = fwBig().filter(x=>x!==id);
-  const taken = new Set(big.map(x=>fwPlace[x]));
-  if(!taken.has('L')) { fwPlace[id]='L'; }
-  else if(!taken.has('R')) { fwPlace[id]='R'; }
-  else {
-    const victim = big.find(x=>x!==fwLive) || big[0];
-    fwPlace[id] = fwPlace[victim]; fwPlace[victim] = 'B';
-  }
-  fwLive = id;
-}
+function fwFreeSlot(){ const used = new Set(Object.values(fwSlot)); for(let i=1;i<=FW_MAX;i++) if(!used.has(i)) return i; return 1; }
+function fwToFront(id){ fwOrder = fwOrder.filter(x=>x!==id); fwOrder.push(id); delete fwMin[id]; if(!fwSlot[id]) fwSlot[id] = fwFreeSlot(); }
+function fwFront(){ for(let i=fwOrder.length-1;i>=0;i--){ if(!fwMin[fwOrder[i]]) return fwOrder[i]; } return null; }
 function fwSetStack(v){
   v = v || [];
   if(!fwEnabled()){ _fwMs = v; return; }
   const cur = _fwMs;
-  if(!v.length){ // the active stack window closed
-    if(fwActive) delete fwPlace[fwActive.id];
+  if(!v.length){ // the live stack window closed
+    if(fwActive){ fwOrder = fwOrder.filter(x=>x!==fwActive.id); delete fwMin[fwActive.id]; delete fwSlot[fwActive.id]; }
     _fwMs = []; fwActive = null;
     fwPromoteStack();
     return;
   }
-  if(!cur.length){ _fwMs = v; fwActive = {id:crypto.randomUUID()}; fwPlaceNew(fwActive.id); return; }
-  if(fwSameRoot(cur[0], v[0])){ _fwMs = v; return; }
+  if(!cur.length){ _fwMs = v; fwActive = {id:crypto.randomUUID()}; fwToFront(fwActive.id); return; }
+  if(fwSameRoot(cur[0], v[0])){ _fwMs = v; fwToFront(fwActive.id); return; }
   const existing = fwWins.find(w=>fwSameRoot(w.stack[0], v[0]));
   if(existing){
     fwWins = fwWins.filter(w=>w!==existing);
     if(fwActive) fwWins.push({id:fwActive.id, stack:cur});
-    _fwMs = v; fwActive = {id:existing.id};
-    if(fwPlace[existing.id]==='B') fwPlaceNew(existing.id); else fwLive = existing.id;
+    _fwMs = v; fwActive = {id:existing.id}; fwToFront(existing.id);
     return;
   }
   if(fwCount() >= FW_MAX){ fwBlockedToast(); return; }
   if(fwActive) fwWins.push({id:fwActive.id, stack:cur});
-  _fwMs = v; fwActive = {id:crypto.randomUUID()}; fwPlaceNew(fwActive.id);
+  _fwMs = v; fwActive = {id:crypto.randomUUID()}; fwToFront(fwActive.id);
 }
 Object.defineProperty(state, 'modalStack', { get(){ return _fwMs; }, set(v){ fwSetStack(v); }, configurable:true, enumerable:true });
-// After the live stack closes: bring forward a parked stack, preferring one that's already big.
 function fwPromoteStack(){
   if(!fwWins.length) return;
-  let i = fwWins.findIndex(w=>fwPlace[w.id]==='L' || fwPlace[w.id]==='R');
-  if(i<0) i = fwWins.length-1;
-  const w = fwWins.splice(i,1)[0];
-  _fwMs = w.stack; fwActive = {id:w.id};
+  // the parked stack nearest the front comes forward as the live one
+  let best = null, bestIdx = -1;
+  fwWins.forEach(w=>{ const i = fwOrder.indexOf(w.id); if(i>bestIdx){ bestIdx = i; best = w; } });
+  best = best || fwWins[fwWins.length-1];
+  fwWins = fwWins.filter(w=>w!==best);
+  _fwMs = best.stack; fwActive = {id:best.id};
 }
-// Make a parked stack the live one (swap it into state.modalStack).
 function fwMakeActive(id){
   if(fwActive && fwActive.id===id) return;
   const w = fwWins.find(x=>x.id===id); if(!w) return;
@@ -3821,64 +3810,56 @@ function fwMakeActive(id){
   if(fwActive && _fwMs.length) fwWins.push({id:fwActive.id, stack:_fwMs});
   _fwMs = w.stack; fwActive = {id:w.id};
 }
-// Tidy up before drawing: drop closed windows, place new ones, keep the live stack big.
+function fwIsStack(id){ return id && id!=='todo'; }
 function fwNormalize(){
   const ids = fwIds();
-  Object.keys(fwPlace).forEach(id=>{ if(!ids.includes(id)) delete fwPlace[id]; });
-  ids.forEach(id=>{ if(!fwPlace[id]) fwPlaceNew(id); });
-  if(!ids.includes(fwLive)) fwLive = fwBig()[0] || null;
-  // the stack shown live must be a big one; if the active stack is a button but a parked stack is big, swap
-  if(fwActive && fwPlace[fwActive.id]==='B'){
-    const bigParked = fwWins.find(w=>fwPlace[w.id]==='L' || fwPlace[w.id]==='R');
-    if(bigParked) fwMakeActive(bigParked.id);
-  }
-  // a lone big window sits in the middle
-  const big = fwBig();
-  const sig = big.length===1 ? 'C' : big.length===2 ? 'LR' : '';
-  if(sig!==fwLayoutSig){ fwLayoutSig = sig; fwSeedLayout(sig); }
+  fwOrder = fwOrder.filter(id=>ids.includes(id));
+  Object.keys(fwMin).forEach(id=>{ if(!ids.includes(id)) delete fwMin[id]; });
+  Object.keys(fwSlot).forEach(id=>{ if(!ids.includes(id)) delete fwSlot[id]; });
+  ids.forEach(id=>{ if(!fwOrder.includes(id)) fwOrder.push(id); if(!fwSlot[id]) fwSlot[id] = fwFreeSlot(); });
+  // the live stack is always the front-most visible stack window
+  for(let i=fwOrder.length-1;i>=0;i--){ const id=fwOrder[i]; if(fwIsStack(id) && !fwMin[id]){ fwMakeActive(id); break; } }
 }
-function fwSeedLayout(sig){
-  const vw = window.innerWidth, vh = window.innerHeight, gap = 10, dock = 64;
-  if(sig==='C'){ const w = Math.min(1040, vw-80), h = vh - 24 - dock; mwGeom['fw:C'] = {geom:{left:Math.round((vw-w)/2), top:12, width:w, height:h}, max:false}; }
-  if(sig==='LR'){ const w = Math.floor((vw-gap*3)/2), h = vh - 20 - dock;
-    mwGeom['fw:L'] = {geom:{left:gap, top:10, width:w, height:h}, max:false};
-    mwGeom['fw:R'] = {geom:{left:gap*2+w, top:10, width:w, height:h}, max:false}; }
+function fwKey(id){ return 'fw:s'+(fwSlot[id]||1); }
+function fwSeed(id){
+  const key = fwKey(id); if(mwGeom[key]) return;
+  const slot = fwSlot[id]||1, vw = window.innerWidth, vh = window.innerHeight, step = 36;
+  const w = Math.min(1100, vw-220), h = Math.max(400, vh - 24 - 80 - step*2);
+  const left0 = Math.max(16, Math.round((vw - w)/2) - step);
+  mwGeom[key] = {geom:{left:left0 + (slot-1)*step, top:12 + (slot-1)*step, width:w, height:h}, max:false};
 }
-function fwKeyFor(id){ return fwBig().length===1 ? 'fw:C' : 'fw:'+fwPlace[id]; }
-function fwShowsActive(){ return !fwEnabled() || !fwActive || fwPlace[fwActive.id]==='L' || fwPlace[fwActive.id]==='R'; }
-function fwShowsTodo(){ return !fwEnabled() || fwPlace['todo']==='L' || fwPlace['todo']==='R'; }
+function fwZ(id){ const i = fwOrder.indexOf(id); return 90 + Math.max(0,i); }
+function fwShowsActive(){ return !fwEnabled() || !fwActive || !fwMin[fwActive.id]; }
+function fwShowsTodo(){ return !fwEnabled() || !fwMin['todo']; }
 function fwTitleFor(id){
   if(id==='todo'){ const td = state.todoDetailModal && db.todos.find(x=>x.id===state.todoDetailModal.id); return 'To-Do: '+(td?td.title:''); }
   const stack = (fwActive && fwActive.id===id) ? _fwMs : ((fwWins.find(w=>w.id===id)||{}).stack||[]);
   try{ const c = breadcrumbFor(stack); return c.length>1 ? c[c.length-1].label : 'Window'; }catch(e){ return 'Window'; }
 }
-// A big window whose stack isn't the live one: read-only picture (no ids, no handlers) under a click shield.
+// Parked stack windows still showing (behind the front one): read-only picture under a click shield.
 function renderFwSnapshots(){
   if(!fwEnabled()) return;
   fwWins.slice().forEach(w=>{
-    if(!(fwPlace[w.id]==='L' || fwPlace[w.id]==='R')) return;
+    if(fwMin[w.id]) return;
     let html = '';
     const saved = _fwMs; _fwMs = w.stack;
-    try{ html = renderTopModalCard(); } catch(e){ _fwMs = saved; fwWins = fwWins.filter(x=>x!==w); delete fwPlace[w.id]; return; }
+    try{ html = renderTopModalCard(); } catch(e){ _fwMs = saved; fwWins = fwWins.filter(x=>x!==w); return; }
     _fwMs = saved;
     html = html.replace(/\sid="/g, ' data-fwid="');
     const ov = document.createElement('div');
-    ov.className = 'modal-overlay fw-pass fw-snap'; ov.style.zIndex = 100; ov.style.animation = 'none';
+    ov.className = 'modal-overlay fw-pass fw-snap'; ov.style.zIndex = fwZ(w.id); ov.style.animation = 'none';
     ov.innerHTML = html;
     const card = ov.querySelector('.modal-card');
     if(card){
-      card.dataset.mwKey = fwKeyFor(w.id);
+      fwSeed(w.id); card.dataset.mwKey = fwKey(w.id);
       card.querySelectorAll('input,textarea,select,button,a').forEach(el=>{ el.tabIndex = -1; });
       const shield = document.createElement('div');
-      shield.className = 'fw-shield'; shield.dataset.fwActivate = w.id;
-      shield.title = 'Click to work in this window';
-      shield.innerHTML = `<div class="fw-shield-bar"><button data-fwdown="${w.id}" title="Send down to a button">↓</button><button data-fwclose="${w.id}" title="Close">✕</button></div>`;
+      shield.className = 'fw-shield'; shield.dataset.fwActivate = w.id; shield.title = 'Click to bring this window to the front';
       card.appendChild(shield);
     }
     document.getElementById('app').appendChild(ov);
   });
 }
-// After the live stack / To-Do windows are drawn: give them their side, a ↓ button, and track "live".
 function fwDecorateActive(){
   if(!fwEnabled()) return;
   document.querySelectorAll('#app > .modal-overlay').forEach(ov=>{
@@ -3888,70 +3869,57 @@ function fwDecorateActive(){
     if(!isStack && !isTodo) return;
     const id = isTodo ? 'todo' : (fwActive && fwActive.id);
     if(!id) return;
-    ov.classList.add('fw-pass'); ov.style.zIndex = 100;
-    card.dataset.mwKey = fwKeyFor(id);
-    card.addEventListener('mousedown', ()=>{ if(fwLive!==id){ fwLive = id; fwMarkLive(); } }, true);
+    ov.classList.add('fw-pass'); ov.dataset.fwId = id; ov.style.zIndex = fwZ(id);
+    fwSeed(id); card.dataset.mwKey = fwKey(id);
+    card.addEventListener('mousedown', ()=>{ if(fwFront()!==id){ fwToFront(id); fwRestack(); renderFwTrayOnly(); } }, true);
     const head = card.querySelector('.modal-head');
     if(head && !head.querySelector('.fw-min')){
       const b = document.createElement('button');
-      b.type='button'; b.className='fw-min'; b.title='Send down to a button'; b.textContent='↓'; b.dataset.fwdown = id;
+      b.type='button'; b.className='fw-min'; b.title='Hide (it stays as a button at the bottom)'; b.textContent='↓'; b.dataset.fwdown = id;
       const close = head.querySelector('.modal-close');
       if(close && close.parentNode) close.parentNode.insertBefore(b, close); else head.appendChild(b);
     }
   });
-  fwMarkLive();
 }
-function fwMarkLive(){
-  document.querySelectorAll('#app > .modal-overlay.fw-pass .modal-card').forEach(c=>c.classList.remove('fw-live'));
-  const big = fwBig(); if(big.length<2) return;
-  document.querySelectorAll('#app > .modal-overlay.fw-pass:not(.fw-snap) .modal-card').forEach(card=>{
-    const isTodo = card.closest('[data-fw-todo="1"]');
-    const id = isTodo ? 'todo' : (fwActive && fwActive.id);
-    if(id===fwLive) card.classList.add('fw-live');
-  });
-}
+// Re-order live windows without redrawing (so a click into a window isn't lost).
+function fwRestack(){ document.querySelectorAll('#app > .modal-overlay.fw-pass[data-fw-id]').forEach(ov=>{ ov.style.zIndex = fwZ(ov.dataset.fwId); }); }
 function renderFwTray(){
   if(!fwEnabled()) return;
-  const btns = fwIds().filter(id=>fwPlace[id]==='B');
-  if(!btns.length) return;
+  const front = fwFront();
+  const ids = fwOrder.filter(id=>id!==front);
+  document.querySelectorAll('.fw-tray').forEach(x=>x.remove());
+  if(!ids.length) return;
   const tray = document.createElement('div');
   tray.className = 'fw-tray';
-  tray.innerHTML = btns.map(id=>`<span class="fw-btn"><button data-fwswap="${id}" title="Open this window">${id==='todo'?'☑':'▢'} ${escapeHtml(String(fwTitleFor(id)).slice(0,36))}</button><button class="x" data-fwclose="${id}" title="Close">✕</button></span>`).join('');
+  tray.innerHTML = ids.slice().reverse().map(id=>`<span class="fw-btn"><button class="${fwMin[id]?'min':''}" data-fwswap="${id}" title="Bring to front">${id==='todo'?'☑':'▢'} ${escapeHtml(String(fwTitleFor(id)).slice(0,36))}</button><button class="x" data-fwclose="${id}" title="Close">✕</button></span>`).join('');
   document.getElementById('app').appendChild(tray);
 }
+function renderFwTrayOnly(){ renderFwTray(); }
 function fwSwapIn(id){
-  fwPlaceNew(id);
-  if(id!=='todo') fwMakeActive(id);
+  fwToFront(id);
+  if(fwIsStack(id)) fwMakeActive(id);
   render();
 }
-function fwDown(id){
-  fwPlace[id] = 'B';
-  if(fwLive===id) fwLive = fwBig()[0] || null;
-  if(id!=='todo' && fwActive && fwActive.id===id){
-    const bigParked = fwWins.find(w=>fwPlace[w.id]==='L' || fwPlace[w.id]==='R');
-    if(bigParked) fwMakeActive(bigParked.id);
-  }
-  render();
-}
+function fwDown(id){ fwMin[id] = true; render(); }
 function fwClose(id){
   if(id==='todo'){ const td = state.todoDetailModal && db.todos.find(x=>x.id===state.todoDetailModal.id);
     if(td && typeof attemptCloseTodoDetail==='function' && attemptCloseTodoDetail(td)===false) return;
-    state.todoDetailModal = null; delete fwPlace.todo; render(); return; }
+    state.todoDetailModal = null; render(); return; }
   if(fwActive && fwActive.id===id){ closeModalStack(); return; }
-  fwWins = fwWins.filter(x=>x.id!==id); delete fwPlace[id]; render();
+  fwWins = fwWins.filter(x=>x.id!==id); render();
 }
 document.addEventListener('mousedown', ev=>{
   const t = ev.target; if(!t.closest) return;
   const dn = t.closest('[data-fwdown]'); if(dn){ ev.preventDefault(); ev.stopPropagation(); fwDown(dn.dataset.fwdown); return; }
   const cl = t.closest('[data-fwclose]'); if(cl){ ev.preventDefault(); ev.stopPropagation(); fwClose(cl.dataset.fwclose); return; }
   const sw = t.closest('[data-fwswap]'); if(sw){ ev.preventDefault(); ev.stopPropagation(); fwSwapIn(sw.dataset.fwswap); return; }
-  const sh = t.closest('[data-fw-activate]'); if(sh){ ev.preventDefault(); ev.stopPropagation(); fwMakeActive(sh.dataset.fwActivate); fwLive = sh.dataset.fwActivate; render(); return; }
+  const sh = t.closest('[data-fw-activate]'); if(sh){ ev.preventDefault(); ev.stopPropagation(); fwSwapIn(sh.dataset.fwActivate); return; }
 }, true);
 function fwToggle(){
   const on = !fwPrefOn();
   try { localStorage.setItem(FW_PREF_KEY, on ? 'on' : 'off'); } catch(e){}
-  if(!on){ fwWins = []; fwPlace = {}; fwLayoutSig = ''; }
-  flashToast(on ? 'Floating windows are ON — up to 3 windows, 2 side by side.' : 'Floating windows are OFF — back to one window at a time.');
+  if(!on){ fwWins = []; fwOrder = []; fwMin = {}; fwSlot = {}; }
+  flashToast(on ? 'Floating windows are ON — up to 3 windows, with buttons at the bottom to switch.' : 'Floating windows are OFF — back to one window at a time.');
   state.showUserMenu = false;
   render();
 }
@@ -9882,7 +9850,7 @@ function attachShellHandlers(){
   const userMenuBtn=document.querySelector('[data-action="toggleUserMenu"]'); if(userMenuBtn) userMenuBtn.onclick=(ev)=>{ ev.stopPropagation(); state.showAdminMenu=false; state.showUserMenu=!state.showUserMenu; render(); };
   const logout=document.querySelector('[data-action="logout"]'); if(logout) logout.onclick=async ()=>{
     await supabaseClient.auth.signOut();
-    fwWins=[]; state.screen='login'; state.currentUser=null; state.mainView={type:'smart',id:'todayMe'}; state.modalStack=[]; fwWins=[]; fwActive=null; fwPlace={}; state.mobileScreen='nav'; render();
+    fwWins=[]; state.screen='login'; state.currentUser=null; state.mainView={type:'smart',id:'todayMe'}; state.modalStack=[]; fwWins=[]; fwActive=null; fwOrder=[]; fwMin={}; fwSlot={}; state.mobileScreen='nav'; render();
   };
   document.querySelectorAll('[data-action="addSmartList"]').forEach(el=>el.onclick=()=>promptAddSmartList());
   wireDragReorder('[data-smartlistdrag]', 'smartlistdrag', (fromId, toId)=>{
@@ -12819,7 +12787,7 @@ function openTodoDetail(id){
   // (that window is already open underneath). (Old 'stack client+deal first' block removed;
   // backup index.pre_closenav.html.)
   if(fwEnabled() && !state.todoDetailModal && fwStackCount() >= FW_MAX){ fwBlockedToast(); return; }
-  if(fwEnabled()){ if(!state.todoDetailModal) delete fwPlace.todo; state.todoDetailModal = {id, originalAssignedTo: td ? td.assignedTo : null}; if(!fwPlace.todo || fwPlace.todo==='B') fwPlaceNew('todo'); else fwLive='todo'; }
+  if(fwEnabled()){ state.todoDetailModal = {id, originalAssignedTo: td ? td.assignedTo : null}; fwToFront('todo'); }
   state.todoDetailModal = {id, originalAssignedTo: td ? td.assignedTo : null};
   if(td && td.isNew && td.assignedTo===state.currentUser.id) td.isNew=false;
 }
