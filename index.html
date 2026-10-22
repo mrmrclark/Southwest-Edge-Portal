@@ -443,6 +443,10 @@
   .fw-tray{position:fixed;left:50%;transform:translateX(-50%);bottom:12px;z-index:150;display:flex;gap:8px;background:rgba(40,32,24,.88);padding:6px 8px;border-radius:12px;box-shadow:0 6px 24px rgba(0,0,0,.3);}
   .fw-tray button{background:#fff;border:none;border-radius:8px;padding:6px 12px;font-size:12.5px;cursor:pointer;color:var(--ink);max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .fw-tray button:hover{background:var(--edge-lighter);}
+  .fw-tray button.on{background:var(--edge);color:#fff;font-weight:600;}
+  .fw-tray button.min{opacity:.75;font-style:italic;}
+  .fw-tray button.tile{background:#3A3630;color:#fff;}
+  .fw-tray .fw-count{color:#fff;font-size:11.5px;align-self:center;opacity:.75;padding:0 4px;}
   /* movable / resizable windows (desktop) */
   .mw-draggable{cursor:move;user-select:none;}
   .mw-draggable input, .mw-draggable textarea, .mw-draggable select{user-select:text;cursor:auto;}
@@ -861,7 +865,7 @@ const EDGE_LOGO_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAARgAAA
 // normal for this specific key type; Google expects it to be visible in page source and
 // restricted by domain, via HTTP referrer restriction in Google Cloud Console, not hidden
 // like the other secrets in this app). Replace once Michael has generated a real key.
-const APP_BUILD = '2026-10-22 windows-ter-edit';
+const APP_BUILD = '2026-10-22 windows-v2';
 const GOOGLE_MAPS_JS_KEY = 'AIzaSyBMlIjvH2bpZK6mYJeNZSkQvM8TXQkCjDE';
 const CATEGORY_ORANGE_ICONS = ['💲','🏢','🎯','📋','☁️','🔧','✈️','🏛️','💎','📄','⭐','🗂️'];
 
@@ -3768,7 +3772,7 @@ function fwSetStack(v){
     if(next){ _fwMs = next.stack; fwActive = {id:next.id, slot:next.slot, min:false}; }
     return;
   }
-  if(!cur.length){ _fwMs = v; fwActive = {id:crypto.randomUUID(), slot:fwFreeSlot(), min:false}; return; }
+  if(!cur.length){ _fwMs = v; fwActive = {id:crypto.randomUUID(), slot:fwFreeSlot(), min:false}; fwPendingTile = true; return; }
   if(fwSameRoot(cur[0], v[0])){ _fwMs = v; if(fwActive) fwActive.min = false; return; }
   const existing = fwWins.find(w=>fwSameRoot(w.stack[0], v[0]));
   if(existing){
@@ -3780,6 +3784,7 @@ function fwSetStack(v){
   if(fwCount() >= FW_MAX){ fwBlockedToast(); return; } // keep what's open
   if(fwActive) fwWins.push({...fwActive, stack:cur});
   _fwMs = v; fwActive = {id:crypto.randomUUID(), slot:fwFreeSlot(), min:false}; fwTodoFront = false;
+  fwPendingTile = true;
 }
 Object.defineProperty(state, 'modalStack', { get(){ return _fwMs; }, set(v){ fwSetStack(v); }, configurable:true, enumerable:true });
 function fwActivate(id){
@@ -3819,6 +3824,7 @@ function fwTitleFor(stack){
 function fwSeedGeom(slot){
   const key = 'fw:slot'+slot;
   if(mwGeom[key]) return;
+  fwPendingTile = true;
   const w = Math.min(980, window.innerWidth-80), h = Math.round(window.innerHeight*0.84);
   mwGeom[key] = {geom:{left:40+(slot-1)*48, top:30+(slot-1)*36, width:w, height:h}, max:false};
 }
@@ -3853,16 +3859,56 @@ function renderFwSnapshots(){
   });
   fwWins = keep;
 }
+let fwPendingTile = false;
+// Every open window, left-to-right in slot order (To-Do last).
+function fwAllWindows(){
+  const list = [];
+  if(fwActive && _fwMs.length) list.push({id:fwActive.id, slot:fwActive.slot, key:'fw:slot'+fwActive.slot, label:fwTitleFor(_fwMs), active:true, min:!!fwActive.min});
+  fwWins.forEach(w=>list.push({id:w.id, slot:w.slot, key:'fw:slot'+w.slot, label:fwTitleFor(w.stack), active:false, min:!!w.min}));
+  list.sort((a,b)=>a.slot-b.slot);
+  if(state.todoDetailModal){ const td = db.todos.find(x=>x.id===state.todoDetailModal.id); list.push({id:'todo', key:'fw:todo', label:'To-Do: '+(td?td.title:''), active:false, min:fwTodoMin, todo:true}); }
+  return list;
+}
+// Side by side: every visible window gets an equal column, full height above the taskbar.
+function fwTile(){
+  const vis = fwAllWindows().filter(w=>!w.min);
+  if(!vis.length) return;
+  const gap = 10, top = 10, n = vis.length;
+  const vw = window.innerWidth, vh = window.innerHeight;
+  if(n===1){ // a single window: normal centered size, so the page behind is still visible
+    const w1 = Math.min(1000, vw-80), h1 = Math.round(vh*0.86);
+    mwGeom[vis[0].key] = {geom:{left:Math.round((vw-w1)/2), top:Math.round((vh-h1)/2)-20, width:w1, height:h1}, max:false};
+    mwSave(); return;
+  }
+  const w = Math.max(MW_MIN_W, Math.floor((vw - gap*(n+1)) / n));
+  const h = vh - top - 64;
+  vis.forEach((win, i)=>{ mwGeom[win.key] = {geom:{left: gap + i*(w+gap), top, width:w, height:h}, max:false}; });
+  mwSave();
+}
 function renderFwTray(){
   if(!fwEnabled()) return;
-  const items = [];
-  fwWins.filter(w=>w.min).forEach(w=>items.push({id:w.id, label:fwTitleFor(w.stack)}));
-  if(state.todoDetailModal && fwTodoMin){ const td = db.todos.find(x=>x.id===state.todoDetailModal.id); items.push({id:'todo', label:'To-Do: '+(td?td.title:'')}); }
-  if(!items.length) return;
+  if(fwPendingTile){ fwPendingTile = false; fwTile(); fwReapplyGeom(); }
+  const wins = fwAllWindows();
+  if(!wins.length) return;
+  const front = wins.find(w=>!w.min && (w.todo ? fwTodoFront : (w.active && !fwTodoFront))) || wins.find(w=>w.active);
   const tray = document.createElement('div');
   tray.className = 'fw-tray';
-  tray.innerHTML = items.map(it=>`<button data-fwrestore="${it.id}" title="Restore">▢ ${escapeHtml(String(it.label).slice(0,40))}</button>`).join('');
+  tray.innerHTML = wins.map(w=>`<button class="${front && front.id===w.id ? 'on' : ''} ${w.min?'min':''}" data-fwswitch="${w.id}" title="${w.min?'Restore':'Bring to front'}">${w.todo?'☑':'▢'} ${escapeHtml(String(w.label).slice(0,34))}</button>`).join('')
+    + (wins.filter(w=>!w.min).length>1 ? `<button class="tile" data-fwtile="1" title="Put the open windows side by side">⊞ Side by side</button>` : '')
+    + `<span class="fw-count">${fwCount()}/${FW_MAX}</span>`;
   document.getElementById('app').appendChild(tray);
+}
+// Cards drawn before the tray was computed already took their old spot — push the new tiles onto them.
+function fwReapplyGeom(){
+  document.querySelectorAll('#app > .modal-overlay .modal-card[data-mw-key^="fw:"]').forEach(card=>{
+    const g = mwGeom[card.dataset.mwKey]; if(g && g.geom) mwApply(card, g.geom);
+  });
+}
+function fwSwitch(id){
+  if(id==='todo'){ fwTodoMin = false; fwTodoFront = true; render(); return; }
+  const w = fwWins.find(x=>x.id===id);
+  if(w){ w.min = false; fwActivate(id); return; }
+  if(fwActive && fwActive.id===id){ fwActive.min = false; fwTodoFront = false; render(); }
 }
 // Called right after the live stack window / To-Do window are drawn.
 function fwDecorateActive(){
@@ -3906,6 +3952,8 @@ document.addEventListener('mousedown', ev=>{
   if(!t.closest) return;
   const mn = t.closest('[data-fwmin]'); if(mn){ ev.preventDefault(); ev.stopPropagation(); fwMinimize(mn.dataset.fwmin); return; }
   const cl = t.closest('[data-fwclose]'); if(cl){ ev.preventDefault(); ev.stopPropagation(); fwClose(cl.dataset.fwclose); return; }
+  const sw = t.closest('[data-fwswitch]'); if(sw){ ev.preventDefault(); ev.stopPropagation(); fwSwitch(sw.dataset.fwswitch); return; }
+  const tl = t.closest('[data-fwtile]'); if(tl){ ev.preventDefault(); ev.stopPropagation(); fwTile(); render(); return; }
   const rs = t.closest('[data-fwrestore]'); if(rs){ ev.preventDefault(); ev.stopPropagation(); fwRestore(rs.dataset.fwrestore); return; }
   const sh = t.closest('[data-fw-activate]'); if(sh){ ev.preventDefault(); ev.stopPropagation(); fwActivate(sh.dataset.fwActivate); return; }
 }, true);
@@ -12781,6 +12829,7 @@ function openTodoDetail(id){
   // (that window is already open underneath). (Old 'stack client+deal first' block removed;
   // backup index.pre_closenav.html.)
   if(fwEnabled() && !state.todoDetailModal && fwStackCount() >= FW_MAX){ fwBlockedToast(); return; }
+  if(fwEnabled() && !state.todoDetailModal) fwPendingTile = true;
   fwTodoMin = false; fwTodoFront = true;
   state.todoDetailModal = {id, originalAssignedTo: td ? td.assignedTo : null};
   if(td && td.isNew && td.assignedTo===state.currentUser.id) td.isNew=false;
