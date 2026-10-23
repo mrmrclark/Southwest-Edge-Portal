@@ -869,7 +869,7 @@ const EDGE_LOGO_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAARgAAA
 // normal for this specific key type; Google expects it to be visible in page source and
 // restricted by domain, via HTTP referrer restriction in Google Cloud Console, not hidden
 // like the other secrets in this app). Replace once Michael has generated a real key.
-const APP_BUILD = '2026-10-22 windows-v6';
+const APP_BUILD = '2026-10-23 link-reuse-tab';
 const GOOGLE_MAPS_JS_KEY = 'AIzaSyBMlIjvH2bpZK6mYJeNZSkQvM8TXQkCjDE';
 const CATEGORY_ORANGE_ICONS = ['💲','🏢','🎯','📋','☁️','🔧','✈️','🏛️','💎','📄','⭐','🗂️'];
 
@@ -3490,6 +3490,14 @@ function render(){
     if(state.showTitlePicker) renderTitlePicker();
     if(state.showEmailClientPicker) renderEmailClientPicker();
     if(state.toast) showToastNow();
+    return;
+  }
+  if(state.screen==='handedOff'){
+    app.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;height:100vh;background:var(--canvas);text-align:center;padding:24px;">
+      ${brandLogoImg('Southwest Edge')}
+      <div style="font-size:16px;font-weight:600;color:var(--ink);">Opened in your other Portal tab 📌</div>
+      <div style="color:var(--ink-soft);font-size:13px;">Switch to that tab to see it. You can close this one.</div>
+    </div>`;
     return;
   }
   if(state.screen==='offline-empty'){
@@ -18496,7 +18504,52 @@ async function bootOffline(){
   render();
   return false;
 }
+/* ---- Email links reuse an open Portal tab (2026-10-23, trial — Michael: "let me see if I like it") ----
+   A link from an email (?todo= / ?brokerReview= / ?commissionSummary=) always opens a new tab —
+   the browser decides that. The new tab first asks any already-open, signed-in Portal tab
+   (BroadcastChannel, same browser only). If one answers within half a second, THAT tab opens
+   the item and blinks its title; the new tab shows a short note and tries to close itself.
+   Easy to remove: delete this block and the one `await portalTabHandoff()` line at boot. */
+const PORTAL_TAB_CH = ('BroadcastChannel' in window) ? new BroadcastChannel('edge-portal-tabs') : null;
+const PORTAL_LINK_KEYS = ['todo','brokerReview','commissionSummary'];
+function portalLinkSearch(){ const p = new URLSearchParams(location.search); return PORTAL_LINK_KEYS.some(k=>p.get(k)) ? location.search : null; }
+if(PORTAL_TAB_CH){
+  PORTAL_TAB_CH.onmessage = ev=>{
+    const m = ev.data || {};
+    if(m.type==='ping' && state.screen==='app' && state.currentUser) PORTAL_TAB_CH.postMessage({type:'pong', nonce:m.nonce});
+    if(m.type==='open' && state.screen==='app' && state.currentUser && m.search){
+      history.replaceState(null, '', location.pathname + m.search);
+      checkTodoDeepLink(); checkBrokerReviewDeepLink(); checkCommissionSummaryDeepLink();
+      render();
+      portalBlinkTitle();
+    }
+  };
+}
+let portalBlinkTimer = null;
+function portalBlinkTitle(){
+  const orig = document.title; let on = false, n = 0;
+  clearInterval(portalBlinkTimer);
+  portalBlinkTimer = setInterval(()=>{ document.title = (on = !on) ? '📌 To-Do opened' : orig; if(++n>=20 || document.hasFocus()){ clearInterval(portalBlinkTimer); document.title = orig; } }, 700);
+}
+async function portalTabHandoff(){
+  const search = portalLinkSearch();
+  if(!search || !PORTAL_TAB_CH) return false;
+  const nonce = Math.random().toString(36).slice(2);
+  const answered = await new Promise(res=>{
+    const t = setTimeout(()=>{ PORTAL_TAB_CH.removeEventListener('message', h); res(false); }, 500);
+    function h(ev){ const m = ev.data||{}; if(m.type==='pong' && m.nonce===nonce){ clearTimeout(t); PORTAL_TAB_CH.removeEventListener('message', h); res(true); } }
+    PORTAL_TAB_CH.addEventListener('message', h);
+    PORTAL_TAB_CH.postMessage({type:'ping', nonce});
+  });
+  if(!answered) return false;
+  PORTAL_TAB_CH.postMessage({type:'open', search});
+  state.screen = 'handedOff'; render();
+  setTimeout(()=>{ try{ window.close(); }catch(e){} }, 1200);
+  return true;
+}
+
 (async ()=>{
+  if(navigator.onLine && await portalTabHandoff()) return; // an open Portal tab took the email link
   if(!navigator.onLine){ await bootOffline(); return; }
   try{
     // Directory additions must land BEFORE the session check below — otherwise
