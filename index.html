@@ -869,7 +869,7 @@ const EDGE_LOGO_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAARgAAA
 // normal for this specific key type; Google expects it to be visible in page source and
 // restricted by domain, via HTTP referrer restriction in Google Cloud Console, not hidden
 // like the other secrets in this app). Replace once Michael has generated a real key.
-const APP_BUILD = '2026-10-23 link-reuse-tab';
+const APP_BUILD = '2026-10-23 deals-first';
 const GOOGLE_MAPS_JS_KEY = 'AIzaSyBMlIjvH2bpZK6mYJeNZSkQvM8TXQkCjDE';
 const CATEGORY_ORANGE_ICONS = ['💲','🏢','🎯','📋','☁️','🔧','✈️','🏛️','💎','📄','⭐','🗂️'];
 
@@ -4121,7 +4121,22 @@ function completedTodosAtBottom(list){
   return done.length ? `<div style="margin-top:22px;padding-top:12px;border-top:1px solid var(--line-soft);">${completedPillsHtml(done, "Completed To-Do's")}</div>` : '';
 }
 function accountLooseTodos(c){ return db.todos.filter(t=>t.clientId===c.id && !t.dealId && t.type!=='project' && !t.projectId).filter(visibleTodo); }
-function renderAccountProjectsSection(l, c, canEdit){
+// 2026-10-23 (Michael): "Deals are king." The account window now shows only "+ New To-Do" and
+// any OPEN To-Do's above the deals (nothing at all when there are none). Projects, the Kickoff
+// Project and their buttons moved below the deals, just above Access — and they also stay
+// silent when there's nothing to show.
+function renderAccountProjectsSection(l, c, canEdit){ return renderAccountTodosTop(l, c, canEdit); }
+function renderAccountTodosTop(l, c, canEdit){
+  const todos = accountLooseTodos(c);
+  const open = todos.filter(t=>!t.completed);
+  return `
+    ${canEdit ? `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:4px 0 6px;">
+      <button class="btn sm" data-action="newAccountTodo" data-listid="${l.id}" data-client="${c.id}">+ New To-Do</button>
+    </div>` : ''}
+    ${open.length ? `<div class="section-label" style="margin-top:14px;">To-Do's <span style="font-weight:400;color:var(--ink-soft);">(not tied to a specific site or Project)</span></div>
+    ${todoListWithPills(todos, '', true)}` : ''}`;
+}
+function renderAccountProjectsBottom(l, c, canEdit){
   const projs = accountProjects(c);
   const kick = projs.find(p=>p.isStandard);
   const singular = l.id==='listings' ? 'Listing' : 'Client';
@@ -4130,26 +4145,20 @@ function renderAccountProjectsSection(l, c, canEdit){
       <div class="nav-icon" style="font-size:18px;">${p.isStandard?'🚀':'📁'}</div>
       <div class="row-body"><div class="row-title">${escapeHtml(p.title)}${p.completed?' <span class="pill gray">Done</span>':''}</div>
       <div class="row-meta">${kids.length?`<span class="pill gray">${open} open of ${kids.length} To-Do${kids.length===1?'':'s'}</span>`:'<span class="tiny">No To-Dos yet</span>'}${p.dueDate?` <span class="due">${fmtDate(p.dueDate)}</span>`:''}</div></div></div>`; };
-  // 10/2 (Michael): one row of buttons — New To-Do | New Project | Kickoff Project — then
-  // the lists underneath in that same order: To-Do's, Projects, Kickoff Project.
-  const todos = db.todos.filter(t=>t.clientId===c.id && !t.dealId && t.type!=='project' && !t.projectId).filter(visibleTodo);
   const others = projs.filter(p=>!p.isStandard).sort((a,b)=>(!!a.completed - !!b.completed));
-  const lbl = (t, extra='')=>`<div class="section-label" style="margin-top:14px;">${t}${extra}</div>`;
+  const openProjects = others.filter(p=>!p.completed);
+  const doneProjects = others.filter(p=>p.completed);
+  const lbl = t=>`<div class="section-label" style="margin-top:18px;">${t}</div>`;
   return `
-    ${canEdit ? `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:4px 0 6px;">
-      <button class="btn sm" data-action="newAccountTodo" data-listid="${l.id}" data-client="${c.id}">+ New To-Do</button>
-      <button class="btn sm" data-bd="acctNewProject" data-listid="${l.id}" data-client="${c.id}">+ New Project</button>
+    ${openProjects.length ? lbl('Projects') + openProjects.map(row).join('') : ''}
+    ${doneProjects.length ? completedPillsHtml(doneProjects, 'Completed Projects') : ''}
+    ${kick ? lbl('Kickoff Project') + (kick.completed ? completedPillsHtml([kick], 'Completed') : row(kick)) : ''}
+    ${canEdit ? `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:14px 0 4px;">
+      <button class="btn secondary sm" data-bd="acctNewProject" data-listid="${l.id}" data-client="${c.id}">+ New Project</button>
       ${kick ? `<button class="btn secondary sm" data-bd="open" data-bdt="${kick.id}">🚀 Open Kickoff Project</button>`
-             : `<button class="btn secondary sm" data-bd="acctKickoff" data-listid="${l.id}" data-client="${c.id}" title="A Project pre-loaded with the standard ${singular} To-Dos">🚀 Kickoff Project</button>`}
+             : `<button class="btn secondary sm" data-bd="acctKickoff" data-listid="${l.id}" data-client="${c.id}" title="A Project pre-loaded with the standard ${singular} To-Dos">🚀 New KO Project</button>`}
       ${accountBoardFor(c.id) ? `<button class="btn secondary sm" data-bd="openListBoard" data-board="${accountBoardFor(c.id).id}">▦ Board</button>` : ''}
-    </div>` : ''}
-    ${lbl("To-Do's", ' <span style="font-weight:400;color:var(--ink-soft);">(not tied to a specific site or Project)</span>')}
-    ${todoListWithPills(todos, '<div class="tiny" style="color:var(--ink-soft);padding:6px 0;">No open To-Dos.</div>', true)}
-    ${lbl('Projects')}
-    ${others.filter(p=>!p.completed).length ? others.filter(p=>!p.completed).map(row).join('') : '<div class="tiny" style="color:var(--ink-soft);padding:6px 0;">No open Projects.</div>'}
-    ${completedPillsHtml(others.filter(p=>p.completed), 'Completed Projects')}
-    ${lbl('Kickoff Project')}
-    ${kick ? (kick.completed ? completedPillsHtml([kick], 'Completed') : row(kick)) : `<div class="tiny" style="color:var(--ink-soft);padding:6px 0;">No Kickoff Project yet.</div>`}`;
+    </div>` : ''}`;
 }
 async function createKickoffProject(listId, clientId){
   const l = db.lists.find(x=>x.id===listId); const c = l && l.clients.find(x=>x.id===clientId); if(!c) return;
@@ -13885,6 +13894,7 @@ function renderClientModalBody(l,c,viewMode,pendingDel){
   <div class="section-label" style="margin-top:18px;">Sites / Deals</div>
   ${canEdit ? `<button class="btn sm" data-action="addDeal" data-client="${c.id}" style="margin-bottom:10px;">+ Add site / deal</button>` : ''}
   ${renderDealGroupsInClient(l,c)}
+  ${renderAccountProjectsBottom(l, c, canEdit)}
   ` : ''}
   ${showProspecting ? renderLSRInline(c, state.leasingReportMode || viewMode) : ''}
   ${l.id==='listings' ? renderSignCallsSection(l, c) : ''}
