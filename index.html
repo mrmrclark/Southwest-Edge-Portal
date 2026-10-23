@@ -869,7 +869,7 @@ const EDGE_LOGO_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAARgAAA
 // normal for this specific key type; Google expects it to be visible in page source and
 // restricted by domain, via HTTP referrer restriction in Google Cloud Console, not hidden
 // like the other secrets in this app). Replace once Michael has generated a real key.
-const APP_BUILD = '2026-10-23 deals-first';
+const APP_BUILD = '2026-10-23 ter-delete';
 const GOOGLE_MAPS_JS_KEY = 'AIzaSyBMlIjvH2bpZK6mYJeNZSkQvM8TXQkCjDE';
 const CATEGORY_ORANGE_ICONS = ['💲','🏢','🎯','📋','☁️','🔧','✈️','🏛️','💎','📄','⭐','🗂️'];
 
@@ -9263,7 +9263,7 @@ function terContactsSubHtml(t){
       ${rows.length ? rows.map(c=>{
         const azc = terContactAz(c);
         const li = terSafeUrl(c.linkedin);
-        const canDel = c.source==='Edge' && (c.created_by===me || isAdmin);
+        const canDel = true; // 2026-10-23: anyone can delete (deletions are recorded so quarterly updates don't re-add them)
         const edited = c.edge_fields && Object.keys(c.edge_fields).length && c.source!=='Edge';
         return `<tr>
           <td><b>${escapeHtml(c.name)}</b>${azc?' <span class="ter-azdot" title="Covers Arizona">AZ</span>':''}</td>
@@ -9451,7 +9451,7 @@ function terProfileContactsHtml(t, contacts){
   return rows.map(c=>{
     const azc = terContactAz(c);
     const li = terSafeUrl(c.linkedin);
-    const canDel = c.source==='Edge' && (c.created_by===me || isAdmin);
+    const canDel = true; // 2026-10-23: anyone can delete (deletions are recorded so quarterly updates don't re-add them)
     return `<div class="ter-contact">
       <div style="flex:1;min-width:0;">
         <div><b>${escapeHtml(c.name)}</b>${c.title?` <span style="color:var(--ink-soft);">· ${escapeHtml(c.title)}</span>`:''} ${azc?'<span class="ter-azdot" title="Covers Arizona">AZ</span>':''} <span class="ter-src ${c.source==='Edge'?'edge':''}">${c.source==='Edge'?'Edge':'TER'}</span></div>
@@ -9519,7 +9519,7 @@ async function terSaveContact(btn){
 }
 async function terDeleteContact(tid, id){
   const T = terState(); const list = T.contacts[tid]||[]; const c = list.find(x=>x.id===id); if(!c) return;
-  if(!confirm(`Delete ${c.name}? This can't be undone.`)) return;
+  if(!confirm(`Delete ${c.name}${c.source==='TER'?' (from the Tenant Expansion Report)':''}? This can't be undone, and Collin's quarterly updates won't add them back.`)) return;
   const { error } = await supabaseClient.from('ter_contacts').delete().eq('id', id);
   if(error){ flashToast("Couldn't delete: " + error.message); render(); return; }
   T.contacts[tid] = list.filter(x=>x.id!==id);
