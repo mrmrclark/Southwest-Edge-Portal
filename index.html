@@ -466,6 +466,16 @@
   @media (max-width:700px){ .mw-h{display:none;} .mw-draggable{cursor:auto;} }
   .mlw-bucket{display:flex;align-items:center;gap:10px;padding:11px 4px;border-bottom:1px solid var(--line-soft);font-size:13.5px;cursor:pointer;}
   .mlw-bblock{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:14px;}
+  .ack-banner{background:#FFF5EF;border:1px solid #F6C9B3;border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:13px;}
+  .ack-banner .btn.on{background:var(--edge);color:#fff;}
+  .ack-panel{display:flex;flex-direction:column;gap:6px;margin-top:10px;max-width:460px;}
+  .ack-row-btns{display:inline-flex;gap:4px;flex-wrap:wrap;align-items:center;}
+  .ack-btn{border:1px solid var(--edge);background:#fff;color:var(--edge);border-radius:6px;padding:2px 8px;font-size:11.5px;font-weight:600;cursor:pointer;}
+  .ack-btn.primary{background:var(--edge);color:#fff;}
+  .cc-call{border:1px solid var(--line);border-left:4px solid #E8951E;border-radius:10px;padding:10px 12px;margin-bottom:8px;background:#fff;}
+  .cc-call.done{border-left-color:#00A65A;opacity:.7;}
+  .cc-contacts{margin-top:4px;line-height:1.6;}
+  .cc-notes{white-space:pre-wrap;font-size:12px;background:#FAF8F5;border-radius:6px;padding:6px 8px;margin-top:6px;color:#444;}
   .mlw-bhead{display:flex;align-items:center;gap:8px;font-weight:700;font-size:14.5px;margin-bottom:6px;color:#6B46C1;}
   .mlw-cat{padding:7px 4px;border-bottom:1px solid var(--line-soft);font-size:13px;}
   .mlw-cat.on{background:#FAF8FE;}
@@ -869,7 +879,7 @@ const EDGE_LOGO_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAARgAAA
 // normal for this specific key type; Google expects it to be visible in page source and
 // restricted by domain, via HTTP referrer restriction in Google Cloud Console, not hidden
 // like the other secrets in this app). Replace once Michael has generated a real key.
-const APP_BUILD = '2026-10-23 ter-delete';
+const APP_BUILD = '2026-10-26 todo-answers';
 const GOOGLE_MAPS_JS_KEY = 'AIzaSyBMlIjvH2bpZK6mYJeNZSkQvM8TXQkCjDE';
 const CATEGORY_ORANGE_ICONS = ['💲','🏢','🎯','📋','☁️','🔧','✈️','🏛️','💎','📄','⭐','🗂️'];
 
@@ -1660,8 +1670,9 @@ async function handleStageTransition(sourceTable, sourceId, clientId, dealName, 
   if(error) console.error('stage FYI record error:', error);
   if(data) invokeBrokerReviewEmail(data.id, 'stageFyi', state.currentUser.id);
   if(newStage==='signedLease' || newStage==='inEscrow'){
+    const uploader = await ascendixPickUploader(sourceTable, sourceId, clientId, dealName);
     const todo = {id:crypto.randomUUID(), title:`Upload to Ascendix: ${dealName}`, category:'Ascendix',
-      dueDate: addBusinessDays(today, 3), assignedTo:state.currentUser.id, createdBy:state.currentUser.id,
+      dueDate: addBusinessDays(today, 3), assignedTo:uploader, createdBy:state.currentUser.id, dueLocked:true,
       type:'task', private:false, completed:false, isNew:false,
       notes:`${newStage==='signedLease'?'Signed Lease':'In Escrow (signed PSA)'} — upload the executed agreements to Ascendix within 3 business days so David can complete his review. Use the Ascendix checklist on the deal.`,
       listId:null, clientId, dealId: sourceTable==='deals'?sourceId:null, entryId:null, attachments:[], checklistItems:[], status:'Not Started', createdAt:new Date()};
@@ -1850,6 +1861,8 @@ function todoRowToLocal(r){
     startDate: r.start_date ? new Date(r.start_date+'T00:00:00') : null, office: r.office || null,
     requesterId: r.requester_id ? (authIdToLocalUserId(r.requester_id) || r.requester_id) : null,
     sortOrder: r.sort_order, outcome: r.outcome || null, isStandard: !!r.is_standard,
+    ackStatus: r.ack_status || null, ackNote: r.ack_note || null, proposedDue: r.proposed_due || null, proposedReason: r.proposed_reason || null,
+    proposedBy: r.proposed_by ? (authIdToLocalUserId(r.proposed_by) || r.proposed_by) : null, dueLocked: !!r.due_locked, delegatedFrom: r.delegated_from || null,
     archivedAt: r.archived_at ? new Date(r.archived_at) : undefined};
 }
 function todoLocalToRow(t){
@@ -3991,6 +4004,478 @@ function fwToggle(){
   flashToast(on ? 'Floating windows are ON — up to 3 windows, with buttons at the bottom to switch.' : 'Floating windows are OFF — back to one window at a time.');
   state.showUserMenu = false;
   render();
+}
+
+/* ---------------- OPERATION COLD CALLS (2026-10-26) ----------------
+   Per-listing weekly cold-call campaigns. Setup reuses the Create Marketing List
+   picks (size bucket → TER category → sub-category); the resolved TER tenant ids are
+   saved as the campaign's pool. Every Monday (pg_cron → cold_calls_run) the server
+   picks N random tenants per caller from the pool — skipping anyone already on the
+   listing or handed out before — and creates one To-Do per caller, due Friday.
+   Inside that To-Do each call gets notes, a Dead button, and finishes on its own when
+   the tenant becomes a Prospect (or any deal) on the listing (DB trigger). The To-Do
+   completes itself once every call is finished. */
+function ccState(){ if(!state.cc) state.cc = {campaigns:null, loading:false, items:{}}; return state.cc; }
+async function ccLoadCampaigns(force){
+  const C = ccState(); if(C.loading || (C.campaigns && !force)) return;
+  C.loading = true;
+  const { data, error } = await supabaseClient.from('cold_call_campaigns').select('*').neq('status','stopped');
+  C.loading = false;
+  if(error){ console.error('ccLoadCampaigns', error); C.campaigns = []; return; }
+  C.campaigns = data||[]; render();
+}
+function ccCampaignFor(listingId){
+  const C = ccState(); if(!C.campaigns){ ccLoadCampaigns(); return null; }
+  return C.campaigns.find(c=>c.listing_id===listingId) || null;
+}
+const CC_STATUS_LABEL = {active:'Active', paused:'Paused', exhausted:'Out of tenants', stopped:'Stopped'};
+function ccListingButton(listing){
+  const c = ccCampaignFor(listing.id);
+  return `<button class="btn secondary sm" data-action="ccOpen" data-client="${listing.id}">📞 Cold Calls${c?` · ${CC_STATUS_LABEL[c.status]||c.status}`:''}</button>`;
+}
+function openColdCallsWizard(clientId, prefill){
+  prefill = prefill || {};
+  const c = ccCampaignFor(clientId);
+  const meAuth = state.currentUser.authId;
+  state.marketingListWizard = {
+    mode:'cc', step: c ? 3 : 1, clientId,
+    buckets: c ? [...(c.buckets||[])] : [], sel: c ? JSON.parse(JSON.stringify(c.sel||{})) : {},
+    review:{}, extraAdd:{}, showNotAz:false, added:[],
+    campaignId: c ? c.id : null, status: c ? c.status : 'active',
+    callers: prefill.callers && prefill.callers.length ? prefill.callers : (c ? [...(c.callers||[])] : []),
+    perPerson: prefill.perPerson || (c ? c.per_person : 10),
+    stats: null
+  };
+  if(!terState().loaded) terEnsureLoaded().then(()=>{ if(state.marketingListWizard) render(); });
+  if(c) ccLoadStats(c.id);
+  void meAuth;
+}
+async function ccLoadStats(campaignId){
+  const { data, error } = await supabaseClient.from('cold_call_items').select('result, assigned_to').eq('campaign_id', campaignId);
+  const m = state.marketingListWizard; if(!m || m.campaignId!==campaignId) return;
+  if(error){ console.error('ccLoadStats', error); return; }
+  const s = {total:data.length, open:0, dead:0, prospect:0};
+  data.forEach(r=>{ s[r.result] = (s[r.result]||0)+1; });
+  m.stats = s; terRender();
+}
+// TER tenants the picks resolve to (AZ / coming to AZ only), and how many are still callable.
+function ccPool(m, listing){
+  const matches = [...mlwMatches(m).values()].filter(x=>terAz(x.t)!=='not').map(x=>x.t);
+  const onListing = new Set(); const names = new Set();
+  (listing.prospects||[]).forEach(p=>{ if(p.terTenantId) onListing.add(p.terTenantId); names.add(terNorm(p.tenantName)); });
+  const avail = matches.filter(t=>!onListing.has(t.id) && !names.has(terNorm(t.name)));
+  return {all:matches, avail};
+}
+function ccStep3Html(m, listing){
+  const pool = ccPool(m, listing);
+  const brokers = usersSortedByMe().filter(u=>u.authId);
+  const groups = {}; pool.avail.forEach(t=>{ const g=t.grp||'Other'; groups[g]=(groups[g]||0)+1; });
+  const weekly = m.callers.length * (Number(m.perPerson)||0);
+  const weeks = weekly ? Math.ceil(pool.avail.length / weekly) : 0;
+  const st = m.stats;
+  const title = `Operation Cold Calls — ${escapeHtml(listing.name)}`;
+  const body = `
+    ${m.campaignId ? `<div class="mlw-bblock" style="background:#F6F3FC;">
+      <div class="mlw-bhead">Status: ${escapeHtml(CC_STATUS_LABEL[m.status]||m.status)}
+        <span style="margin-left:auto;display:flex;gap:6px;">
+          ${m.status==='active' ? `<button class="btn secondary sm" data-cc="setStatus" data-v="paused">⏸ Pause</button>` : `<button class="btn secondary sm" data-cc="setStatus" data-v="active">▶ Resume</button>`}
+          <button class="btn danger sm" data-cc="setStatus" data-v="stopped">■ Stop</button>
+        </span></div>
+      <div class="tiny" style="color:var(--ink-soft);">${st ? `${st.total} calls handed out so far · ${st.open||0} open · ${st.dead||0} dead · ${st.prospect||0} became Prospects` : 'Loading call history…'}</div>
+    </div>` : ''}
+    <div class="mlw-bblock">
+      <div class="mlw-bhead">Who makes the calls?</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px 14px;">
+        ${brokers.map(u=>`<label class="tiny" style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12.5px;"><input type="checkbox" data-cc="caller" value="${u.authId}" ${m.callers.includes(u.authId)?'checked':''} style="width:auto;"> ${escapeHtml(u.name)}</label>`).join('')}
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-top:12px;font-size:12.5px;">
+        Calls per person, every Monday:
+        <input type="number" min="1" max="50" data-cc="perPerson" value="${escapeAttr(String(m.perPerson))}" style="width:70px;">
+        <span class="tiny" style="color:var(--ink-soft);">To-Do due that Friday.</span>
+      </div>
+    </div>
+    <div class="mlw-bblock">
+      <div class="mlw-bhead">Who Edgy can pick from
+        <span style="margin-left:auto;"><span class="ter-link" data-cc="editPicks">Change size groups / categories</span></span></div>
+      <div class="tiny" style="color:var(--ink-soft);margin-bottom:8px;">
+        ${m.buckets.map(b=>TER_BUCKET_MAP[b]?TER_BUCKET_MAP[b].name:b).join(', ') || '—'} ·
+        <b>${pool.avail.length.toLocaleString()}</b> tenants available
+        (${(pool.all.length-pool.avail.length).toLocaleString()} already on the listing are skipped).
+        ${weekly ? `About ${weeks} week${weeks===1?'':'s'} of calls at ${weekly} a week.` : ''}
+        Anyone handed out in an earlier week is never picked again.</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;">${Object.keys(groups).sort().map(g=>`<span class="ter-pill inline" style="background:#EEE;color:#333;">${escapeHtml(g)} · ${groups[g]}</span>`).join('')}</div>
+    </div>`;
+  const foot = `<button class="btn secondary" data-mlw="cancel">Cancel</button>
+    <button class="btn" data-cc="save">${m.campaignId ? 'Save changes' : '📞 Start Operation Cold Calls'}</button>`;
+  return {title, body, foot};
+}
+async function ccSave(){
+  const m = state.marketingListWizard; const listing = mlwListing(m); if(!listing) return;
+  if(!m.callers.length){ flashToast('Pick at least one person to make the calls.'); render(); return; }
+  const per = Math.max(1, Math.min(50, parseInt(m.perPerson,10)||10));
+  const pool = ccPool(m, listing);
+  if(!pool.all.length){ flashToast('No TER tenants match those picks — change the categories.'); render(); return; }
+  const row = { listing_id: listing.id, callers: m.callers, per_person: per, buckets: m.buckets, sel: m.sel,
+    pool: pool.all.map(t=>t.id), status: m.status==='exhausted' ? 'active' : m.status, updated_at: new Date().toISOString() };
+  let id = m.campaignId;
+  if(id){
+    const { error } = await supabaseClient.from('cold_call_campaigns').update(row).eq('id', id);
+    if(error){ flashToast(`Couldn't save: ${error.message}`); render(); return; }
+  } else {
+    const { data, error } = await supabaseClient.from('cold_call_campaigns').insert({...row, created_by: state.currentUser.authId}).select().single();
+    if(error){ flashToast(`Couldn't start it: ${error.message}`); render(); return; }
+    id = data.id;
+  }
+  let made = 0;
+  if(row.status==='active'){
+    const { data, error } = await supabaseClient.rpc('cold_calls_run', { p_campaign: id });
+    if(error) console.error('cold_calls_run', error);
+    else (data||[]).forEach(x=>{ made += x.calls||0; });
+  }
+  state.marketingListWizard = null;
+  await ccLoadCampaigns(true);
+  if(typeof fetchTodosFromSupabase==='function') await fetchTodosFromSupabase();
+  if(typeof fetchProspectsFromSupabase==='function') await fetchProspectsFromSupabase();
+  flashToast(m.campaignId ? 'Operation Cold Calls updated.' + (made?` ${made} calls handed out for this week.`:'')
+    : (made ? `Operation Cold Calls is on — ${made} calls handed out for this week. New ones every Monday.` : 'Operation Cold Calls is on. First calls go out Monday.'));
+  render();
+}
+async function ccSetStatus(v){
+  const m = state.marketingListWizard; if(!m || !m.campaignId) return;
+  if(v==='stopped' && !confirm('Stop Operation Cold Calls for this listing? Open call To-Do\'s stay, but no new calls go out.')) return;
+  const { error } = await supabaseClient.from('cold_call_campaigns').update({status:v, updated_at:new Date().toISOString()}).eq('id', m.campaignId);
+  if(error){ flashToast(`Couldn't change it: ${error.message}`); render(); return; }
+  if(v==='stopped'){ state.marketingListWizard = null; flashToast('Operation Cold Calls stopped.'); }
+  else { m.status = v; flashToast(v==='paused' ? 'Paused — no new calls until you resume.' : 'Resumed — new calls every Monday.'); }
+  await ccLoadCampaigns(true); render();
+}
+document.addEventListener('click', ev=>{
+  const el = ev.target.closest && ev.target.closest('[data-cc]'); if(!el) return;
+  const m = state.marketingListWizard; if(!m || m.mode!=='cc') return;
+  const a = el.dataset.cc;
+  if(a==='caller'){ m.callers = el.checked ? [...new Set([...m.callers, el.value])] : m.callers.filter(x=>x!==el.value); terRender(); return; }
+  if(a==='perPerson') return;
+  ev.preventDefault();
+  if(a==='editPicks'){ m.step = 1; render(); return; }
+  if(a==='setStatus'){ ccSetStatus(el.dataset.v); return; }
+  if(a==='save'){ el.disabled = true; el.textContent = 'Saving…'; ccSave().catch(err=>{ console.error(err); flashToast('Something went wrong — please try again.'); render(); }); return; }
+});
+document.addEventListener('input', ev=>{
+  const el = ev.target; if(!el.dataset || el.dataset.cc!=='perPerson') return;
+  const m = state.marketingListWizard; if(m && m.mode==='cc') m.perPerson = el.value;
+});
+
+/* ---- Calls inside the weekly To-Do ---- */
+function ccIsCallTodo(td){ return td && (td.category==='Cold Calls' || (ccState().items[td.id]||{}).items?.length); }
+async function ccLoadItems(todoId){
+  const C = ccState(); const slot = C.items[todoId] = C.items[todoId] || {};
+  if(slot.loading) return; slot.loading = true;
+  const { data, error } = await supabaseClient.from('cold_call_items').select('*').eq('todo_id', todoId).order('tenant_name');
+  if(error){ console.error('ccLoadItems', error); slot.loading=false; slot.items=[]; render(); return; }
+  const tids = [...new Set(data.map(i=>i.ter_tenant_id).filter(Boolean))];
+  let contacts = [], tenants = [];
+  if(tids.length){
+    const r1 = await supabaseClient.from('ter_contacts').select('id, tenant_id, name, title, email, phone, linkedin').in('tenant_id', tids);
+    contacts = r1.data||[];
+    const r2 = await supabaseClient.from('ter_tenants').select('id, name, grp, industry_sub, website').in('id', tids);
+    tenants = r2.data||[];
+  }
+  slot.items = data; slot.contacts = contacts; slot.tenants = tenants; slot.loading = false; slot.loaded = true;
+  render();
+}
+function ccListingFor(listingId){
+  const l = db.lists.find(x=>x.id==='listings'); return l && l.clients.find(c=>c.id===listingId);
+}
+// A call is finished when it was marked Dead here, or the tenant now sits on the listing
+// as Dead or as a Prospect/any deal (the DB trigger records that too).
+function ccLiveResult(item){
+  if(item.result!=='open') return item.result;
+  const listing = ccListingFor(item.listing_id); if(!listing) return 'open';
+  const p = ccProspectFor(item);
+  if(!p) return 'open';
+  if(p.stage==='dead' || p.stage==='notInterested') return 'dead';
+  if(p.stage && !['contacted','interested'].includes(p.stage)) return 'prospect';
+  return 'open';
+}
+function ccProspectFor(item){
+  const listing = ccListingFor(item.listing_id); if(!listing) return null;
+  const ps = listing.prospects||[];
+  return (item.prospect_id && ps.find(p=>p.id===item.prospect_id))
+    || ps.find(p=>(item.ter_tenant_id && p.terTenantId===item.ter_tenant_id) || terNorm(p.tenantName)===terNorm(item.tenant_name)) || null;
+}
+function ccOpenCount(todoId){
+  const slot = ccState().items[todoId]; if(!slot || !slot.items) return null;
+  return slot.items.filter(i=>ccLiveResult(i)==='open').length;
+}
+function ccTodoSection(td){
+  if(!ccIsCallTodo(td)) return '';
+  const slot = ccState().items[td.id];
+  if(!slot || (!slot.loaded && !slot.loading)){ ccLoadItems(td.id); return `<div class="field"><label>📞 Calls</label><div class="tiny" style="color:var(--ink-soft);">Loading calls…</div></div>`; }
+  if(!slot.loaded) return `<div class="field"><label>📞 Calls</label><div class="tiny" style="color:var(--ink-soft);">Loading calls…</div></div>`;
+  const items = slot.items||[];
+  if(!items.length) return '';
+  const done = items.filter(i=>ccLiveResult(i)!=='open').length;
+  const listing = ccListingFor(items[0].listing_id);
+  const row = (i)=>{
+    const res = ccLiveResult(i);
+    const t = (slot.tenants||[]).find(x=>x.id===i.ter_tenant_id);
+    const cs = (slot.contacts||[]).filter(c=>c.tenant_id===i.ter_tenant_id).sort((a,b)=>(b.id===i.ter_contact_id)-(a.id===i.ter_contact_id));
+    const pill = res==='dead' ? `<span class="ter-pill inline" style="background:#8A7D6E;color:#fff;">Dead ✓</span>`
+      : res==='prospect' ? `<span class="ter-pill inline" style="background:#00A65A;color:#fff;">Prospect ✓</span>`
+      : `<span class="ter-pill inline" style="background:#FDE7C8;color:#7a4b00;">Open</span>`;
+    return `<div class="cc-call ${res!=='open'?'done':''}">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        ${ccProspectFor(i) ? `<span class="ter-link" data-ccopenp="${i.id}" style="font-size:14px;font-weight:700;">${escapeHtml(i.tenant_name)} →</span>` : `<b style="font-size:14px;">${escapeHtml(i.tenant_name)}</b>`} ${pill}
+        <span class="tiny" style="color:var(--ink-soft);">${escapeHtml([t&&t.grp, t&&(t.industry_sub||[]).map(terSubLabel).join(', ')].filter(Boolean).join(' · '))}</span>
+        ${t&&t.website ? `<a class="tiny" href="${escapeAttr(/^https?:/i.test(t.website)?t.website:'https://'+t.website)}" target="_blank" rel="noopener" style="margin-left:auto;">Website ↗</a>` : ''}
+      </div>
+      <div class="cc-contacts">${cs.length ? cs.slice(0, slot['more_'+i.id]?99:2).map(c=>`<div class="tiny">${c.id===i.ter_contact_id?'⭐ ':''}<b>${escapeHtml(c.name||'')}</b>${c.title?` · ${escapeHtml(c.title)}`:''}
+          ${c.phone?` · <a href="tel:${escapeAttr(c.phone)}">${escapeHtml(c.phone)}</a>`:''}${c.email?` · <a href="mailto:${escapeAttr(c.email)}">${escapeHtml(c.email)}</a>`:''}</div>`).join('')
+          + (cs.length>2 && !slot['more_'+i.id] ? `<span class="ter-link tiny" data-ccmore="${i.id}">+ ${cs.length-2} more contacts</span>` : '')
+        : `<div class="tiny" style="color:var(--ink-soft);">No contact in the TER — look one up and add it to the TER.</div>`}</div>
+      ${(()=>{ const p = ccProspectFor(i); const n = p && (p.notes||'').trim();
+        return n ? `<div class="cc-notes">${escapeHtml(n.length>400 ? '…'+n.slice(-400) : n)}</div>` : `<div class="tiny" style="color:var(--ink-soft);margin-top:4px;">No notes yet.</div>`; })()}
+    </div>`;
+  };
+  return `<div class="field">
+    <label>📞 Calls — ${done} of ${items.length} finished${listing?` · <span class="ter-link" data-ccopenlisting="${listing.id}">Open ${escapeHtml(listing.name)}</span>`:''}</label>
+    <div class="tiny" style="color:var(--ink-soft);margin-bottom:8px;">Click a tenant to open it on the listing and add your notes there. Left a VM or emailed? Just a note — the call stays open. Not interested? Move it to Dead. Interested? Move it to Prospect. This To-Do completes when every call is Dead or a Prospect.</div>
+    ${items.slice().sort((a,b)=>(ccLiveResult(a)!=='open')-(ccLiveResult(b)!=='open')).map(row).join('')}
+  </div>`;
+}
+function ccStamp(text){ return `[${new Date().toLocaleDateString('en-US',{month:'numeric',day:'numeric',year:'2-digit'})}] ${text}`; }
+async function ccAddNote(itemId, text){
+  const C = ccState(); let item, slot;
+  Object.values(C.items).forEach(s=>{ const f=(s.items||[]).find(i=>i.id===itemId); if(f){ item=f; slot=s; } });
+  if(!item) return;
+  item.notes = item.notes ? `${item.notes}\n${ccStamp(text)}` : ccStamp(text);
+  const { error } = await supabaseClient.from('cold_call_items').update({notes:item.notes, updated_at:new Date().toISOString()}).eq('id', itemId);
+  if(error) flashToast(`Note didn't save: ${error.message}`);
+  void slot;
+}
+async function ccMarkDead(itemId, text){
+  const C = ccState(); let item;
+  Object.values(C.items).forEach(s=>{ const f=(s.items||[]).find(i=>i.id===itemId); if(f) item=f; });
+  if(!item) return;
+  if(text) item.notes = item.notes ? `${item.notes}\n${ccStamp(text)}` : ccStamp(text);
+  if(!item.notes){ flashToast('Add a note first — why aren\'t they interested?'); render(); return; }
+  const listing = ccListingFor(item.listing_id);
+  const T = terState(); const t = T.loaded ? T.tenants.find(x=>x.id===item.ter_tenant_id) : null;
+  if(listing){
+    lsrEnsureListing(listing);
+    const p = {id:crypto.randomUUID(), tenantName:item.tenant_name, contactId:null, brokerId:null, categoryId:null,
+      stage:'dead', dealType:null, dateOfContact:todayDate(), notes:item.notes, edgeTracker:state.currentUser.id,
+      deadDate:new Date(), building:'', spaceNum:'', size:'', rent:'', price:'', term:'', tiAllowance:'', dealNotes:'',
+      commission1Paid:false, commission2Paid:false, attachments:[], inTradeArea:false,
+      terTenantId:item.ter_tenant_id||null, terBuckets: t ? terBucketsFor(t) : [], terGrp: t ? t.grp : null, terContactId:item.ter_contact_id||null};
+    listing.prospects.push(p);
+    await supaCreateProspect(p, listing.id);
+  }
+  item.result = 'dead'; item.finished_at = new Date().toISOString();
+  const { error } = await supabaseClient.from('cold_call_items').update({result:'dead', notes:item.notes, finished_at:item.finished_at, updated_at:item.finished_at}).eq('id', itemId);
+  if(error) flashToast(`Didn't save: ${error.message}`);
+  const td = db.todos.find(x=>x.id===item.todo_id);
+  if(td && ccOpenCount(td.id)===0 && !td.completed){ td.completed = true; td.completedAt = new Date(); flashToast('All calls finished — To-Do complete. Nice work.'); }
+  else flashToast(`${item.tenant_name} → Dead on the listing.`);
+}
+document.addEventListener('click', ev=>{
+  const t = ev.target; if(!t.closest) return;
+  const more = t.closest('[data-ccmore]'); if(more){ Object.values(ccState().items).forEach(s=>{ if((s.items||[]).some(i=>i.id===more.dataset.ccmore)) s['more_'+more.dataset.ccmore]=true; }); renderPreservingScroll('.modal-body'); return; }
+  const add = t.closest('[data-ccaddnote]');
+  if(add){ const id = add.dataset.ccaddnote; const inp = document.querySelector(`[data-ccnote="${id}"]`); const v = (inp&&inp.value||'').trim();
+    if(!v){ flashToast('Type a note first.'); render(); return; }
+    ccAddNote(id, v).then(()=>renderPreservingScroll('.modal-body')); return; }
+  const dead = t.closest('[data-ccdead]');
+  if(dead){ const id = dead.dataset.ccdead; const inp = document.querySelector(`[data-ccnote="${id}"]`); const v = (inp&&inp.value||'').trim();
+    ccMarkDead(id, v).then(()=>renderPreservingScroll('.modal-body')); return; }
+  const op = t.closest('[data-ccopenp]');
+  if(op){ let item; Object.values(ccState().items).forEach(s=>{ const f=(s.items||[]).find(i=>i.id===op.dataset.ccopenp); if(f) item=f; });
+    const p = item && ccProspectFor(item); if(!p){ flashToast('That tenant isn\'t on the listing yet — reload the Portal.'); render(); return; }
+    state.modalStack = [{kind:'client', listId:'listings', clientId:item.listing_id, viewMode:'all'}, {kind:'lsrProspect', clientId:item.listing_id, prospectId:p.id, parentScrollTop:0}];
+    render(); return; }
+  const ol = t.closest('[data-ccopenlisting]');
+  if(ol){ state.modalStack = [{kind:'client', listId:'listings', clientId:ol.dataset.ccopenlisting, viewMode:'all'}]; render(); return; }
+});
+// Edgy hands back {openColdCalls:{listingId, callers, perPerson}} when asked to start one.
+function ccFromChat(newMessages){
+  if(!Array.isArray(newMessages)) return;
+  newMessages.forEach(msg=>{
+    if(msg.role!=='user' || !Array.isArray(msg.content)) return;
+    msg.content.forEach(b=>{
+      if(b.type!=='tool_result') return;
+      let p; try{ p = JSON.parse(b.content); }catch(e){ return; }
+      if(p && p.openColdCalls && p.openColdCalls.listingId){
+        const o = p.openColdCalls;
+        ccLoadCampaigns(true).then(()=>{ openColdCallsWizard(o.listingId, {callers:o.callers||[], perPerson:o.perPerson||null}); render(); });
+      }
+      if(p && p.coldCallsChanged) ccLoadCampaigns(true);
+    });
+  });
+}
+
+/* ---------------- TO-DO ANSWERS: Accept / Decline / Delegate / Propose New Date (2026-10-26) ----------------
+   The database decides who has to answer (todo_ack_before trigger: To-Do's someone else
+   assigned you — not your own, not Ascendix / Broker Review / Cold Calls) and sends every
+   email (todo_ack_after → notify-todo-change). These helpers only write the answer.
+   Ascendix / Broker Review due dates are locked (due_locked); only Admins can move them. */
+const TODO_AUTO_FROM = {'Ascendix':'Portal (Ascendix)', 'Broker Review':'Portal (Broker Review)', 'Cold Calls':'Cold Calls'};
+function todoFromLabel(td){
+  if(TODO_AUTO_FROM[td.category]) return TODO_AUTO_FROM[td.category];
+  if(td.createdBy && td.createdBy!==td.assignedTo){ const u = USERS.find(x=>x.id===td.createdBy); return u ? u.name.split(' ')[0] : null; }
+  return null;
+}
+function ackPendingForMe(td){ return td.ackStatus==='pending' && td.assignedTo===state.currentUser.id && !td.completed; }
+function todoDateLocked(td){ return !!td.dueLocked && state.currentUser.role!=='Admin'; }
+function ackFmt(d){ return d ? fmtDate(d instanceof Date ? d : new Date(d+'T00:00:00')) : 'no date'; }
+function ackRowPills(td){
+  const out = [];
+  const from = todoFromLabel(td);
+  if(from) out.push(`<span class="pill gray" title="Assigned by ${escapeAttr(from)}">From: ${escapeHtml(from)}</span>`);
+  if(td.dueLocked) out.push(`<span class="pill gray" title="Due date is locked">🔒</span>`);
+  if(ackPendingForMe(td)){
+    out.push(`<span class="pill" style="background:var(--edge);color:#fff;">New</span>`);
+    out.push(`<span class="ack-row-btns" data-stopprop="1">
+      <button class="ack-btn primary" data-ack="accept" data-id="${td.id}">✓ Accept</button>
+      <button class="ack-btn" data-ack="decline" data-id="${td.id}">Decline</button>
+      <button class="ack-btn" data-ack="delegate" data-id="${td.id}">Delegate</button>
+      ${td.dueLocked ? '' : `<button class="ack-btn" data-ack="newdate" data-id="${td.id}">New Date</button>`}</span>`);
+  } else if(td.ackStatus==='pending' && td.createdBy===state.currentUser.id && td.assignedTo!==state.currentUser.id){
+    const u = USERS.find(x=>x.id===td.assignedTo);
+    out.push(`<span class="pill gray">⏳ Waiting on ${escapeHtml(u?u.name.split(' ')[0]:'them')}</span>`);
+  } else if(td.ackStatus==='accepted' && td.createdBy===state.currentUser.id && td.assignedTo!==state.currentUser.id && !td.completed){
+    out.push(`<span class="pill gray">✓ Accepted</span>`);
+  } else if(td.ackStatus==='declined' && td.assignedTo===state.currentUser.id && td.createdBy===state.currentUser.id && !td.completed){
+    out.push(`<span class="pill" style="background:#FDE2E2;color:#9b1c1c;" title="${escapeAttr(td.ackNote||'')}">Declined${td.ackNote?': '+escapeHtml(String(td.ackNote).slice(0,40)):''}</span>`);
+  }
+  if(td.proposedDue && !td.completed){
+    if(td.createdBy===state.currentUser.id) out.push(`<span class="ack-row-btns" data-stopprop="1"><span class="pill" style="background:#FFF1D6;color:#7a4b00;">📅 Asks for ${ackFmt(td.proposedDue)}</span>
+      <button class="ack-btn primary" data-ack="approveDate" data-id="${td.id}">Approve</button><button class="ack-btn" data-ack="keepDate" data-id="${td.id}">Keep</button></span>`);
+    else out.push(`<span class="pill" style="background:#FFF1D6;color:#7a4b00;">📅 Asked for ${ackFmt(td.proposedDue)}</span>`);
+  }
+  return out.join('');
+}
+// Banner at the top of the To-Do window.
+function ackBannerHtml(td){
+  const panel = state.todoAckPanel && state.todoAckPanel.id===td.id ? state.todoAckPanel.mode : null;
+  let html = '';
+  if(ackPendingForMe(td)){
+    const from = todoFromLabel(td) || 'The sender';
+    html += `<div class="ack-banner">
+      <div style="font-weight:600;margin-bottom:8px;">${escapeHtml(from)} assigned you this. Let them know:</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn sm" data-ack="accept" data-id="${td.id}">✓ Accept</button>
+        <button class="btn secondary sm ${panel==='decline'?'on':''}" data-ack="decline" data-id="${td.id}">Decline</button>
+        <button class="btn secondary sm ${panel==='delegate'?'on':''}" data-ack="delegate" data-id="${td.id}">Delegate</button>
+        ${td.dueLocked ? '' : `<button class="btn secondary sm ${panel==='newdate'?'on':''}" data-ack="newdate" data-id="${td.id}">Propose New Date</button>`}
+      </div>
+      ${panel==='decline' ? `<div class="ack-panel"><label class="tiny">Why are you declining? (goes to ${escapeHtml(from)})</label>
+          <textarea id="ackReason" rows="2" placeholder="Reason…"></textarea>
+          <button class="btn sm" data-ack="doDecline" data-id="${td.id}">Decline & send back</button></div>` : ''}
+      ${panel==='delegate' ? `<div class="ack-panel"><label class="tiny">Hand it to</label>
+          <select id="ackDelegateTo">${usersSortedByMe().filter(u=>u.id!==state.currentUser.id && u.authId).map(u=>`<option value="${u.id}">${escapeHtml(u.name)}</option>`).join('')}</select>
+          <input id="ackReason" placeholder="Note (optional)">
+          <button class="btn sm" data-ack="doDelegate" data-id="${td.id}">Delegate</button></div>` : ''}
+      ${panel==='newdate' ? `<div class="ack-panel"><label class="tiny">New due date you can hit (${escapeHtml(from)} has to approve — until then the original date stands)</label>
+          <input type="date" id="ackDate" value="${td.dueDate?toLocalDateStr(addDays(td.dueDate,7)):''}">
+          <input id="ackReason" placeholder="Why? (optional)">
+          <button class="btn sm" data-ack="doNewDate" data-id="${td.id}">Send request</button></div>` : ''}
+    </div>`;
+  }
+  if(td.proposedDue && !td.completed){
+    const who = USERS.find(x=>x.id===td.proposedBy) || USERS.find(x=>x.id===td.assignedTo);
+    if(td.createdBy===state.currentUser.id){
+      html += `<div class="ack-banner" style="background:#FFF8EA;border-color:#F3D08B;">
+        <div><b>${escapeHtml(who?who.name.split(' ')[0]:'They')}</b> asks to move this from <b>${ackFmt(td.dueDate)}</b> to <b>${ackFmt(td.proposedDue)}</b>.${td.proposedReason?` <i>"${escapeHtml(td.proposedReason)}"</i>`:''}</div>
+        <div style="display:flex;gap:8px;margin-top:8px;"><button class="btn sm" data-ack="approveDate" data-id="${td.id}">✓ Approve ${ackFmt(td.proposedDue)}</button><button class="btn secondary sm" data-ack="keepDate" data-id="${td.id}">Keep Original Date</button></div></div>`;
+    } else {
+      html += `<div class="ack-banner" style="background:#FFF8EA;border-color:#F3D08B;">📅 New date requested: <b>${ackFmt(td.proposedDue)}</b> — waiting on the sender. Until then it's due ${ackFmt(td.dueDate)}.</div>`;
+    }
+  }
+  if(td.ackStatus==='declined' && td.createdBy===state.currentUser.id && td.assignedTo===state.currentUser.id && td.ackNote && !td.completed){
+    html += `<div class="ack-banner" style="background:#FDF0F0;border-color:#F2B8B8;">Declined and sent back to you. Reason: <i>"${escapeHtml(td.ackNote)}"</i></div>`;
+  }
+  return html;
+}
+async function ackUpdate(td, row, okMsg){
+  const { error } = await supabaseClient.from('todos').update(row).eq('id', td.id);
+  if(error){ flashToast(`Didn't save: ${error.message}`); render(); return false; }
+  if(okMsg) flashToast(okMsg);
+  return true;
+}
+async function ackAction(id, a){
+  const td = db.todos.find(x=>x.id===id); if(!td) return;
+  const from = todoFromLabel(td) || 'the sender';
+  const val = sel=>{ const el=[...document.querySelectorAll(sel)].pop(); return el ? el.value.trim() : ''; };
+  if(a==='decline' || a==='delegate' || a==='newdate'){
+    state.todoAckPanel = {id, mode:a};
+    if(!state.todoDetailModal || state.todoDetailModal.id!==id){ openTodoDetail(id); }
+    render(); return;
+  }
+  if(a==='accept'){
+    if(await ackUpdate(td, {ack_status:'accepted'}, `Accepted — ${from} has been told.`)){ td.ackStatus='accepted'; }
+  } else if(a==='doDecline'){
+    const reason = val('#ackReason'); if(!reason){ flashToast('Give a reason so they know why.'); render(); return; }
+    const back = td.createdBy;
+    if(await ackUpdate(td, {ack_status:'declined', ack_note:reason, assigned_to: localUserIdToAuthId(back)}, `Declined — it's back with ${from}.`)){
+      td.ackStatus='declined'; td.ackNote=reason; td.assignedTo=back; state.todoAckPanel=null; state.todoDetailModal=null;
+    }
+  } else if(a==='doDelegate'){
+    const to = val('#ackDelegateTo'); const note = val('#ackReason'); const u = USERS.find(x=>x.id===to);
+    if(!u){ flashToast('Pick someone.'); render(); return; }
+    if(await ackUpdate(td, {assigned_to: localUserIdToAuthId(to), delegated_from: state.currentUser.authId, ack_note: note||null}, `Delegated to ${u.name.split(' ')[0]} — ${from} has been told.`)){
+      td.assignedTo=to; td.ackStatus = (to===td.createdBy ? null : 'pending'); td.ackNote=note||null; td.delegatedFrom=state.currentUser.authId; state.todoAckPanel=null; state.todoDetailModal=null;
+    }
+  } else if(a==='doNewDate'){
+    const d = val('#ackDate'); const why = val('#ackReason');
+    if(!d){ flashToast('Pick the new date.'); render(); return; }
+    if(await ackUpdate(td, {proposed_due:d, proposed_reason:why||null, proposed_by: state.currentUser.authId, ack_nudged_at: new Date().toISOString()}, `Asked ${from} for ${ackFmt(d)}. The original date stands until they answer.`)){
+      td.proposedDue=d; td.proposedReason=why||null; td.proposedBy=state.currentUser.id; state.todoAckPanel=null;
+    }
+  } else if(a==='approveDate'){
+    const d = td.proposedDue;
+    if(await ackUpdate(td, {due_date:d, proposed_due:null, proposed_reason:null, proposed_by:null}, `Approved — now due ${ackFmt(d)}.`)){
+      td.dueDate = new Date(d+'T00:00:00'); td.proposedDue=null; td.proposedReason=null; td.proposedBy=null;
+    }
+  } else if(a==='keepDate'){
+    if(await ackUpdate(td, {proposed_due:null, proposed_reason:null, proposed_by:null}, `Kept the original date (${ackFmt(td.dueDate)}). They've been told.`)){
+      td.proposedDue=null; td.proposedReason=null; td.proposedBy=null;
+    }
+  }
+  render();
+}
+document.addEventListener('click', ev=>{
+  const el = ev.target.closest && ev.target.closest('[data-ack]'); if(!el) return;
+  ev.preventDefault(); ev.stopPropagation();
+  ackAction(el.dataset.id, el.dataset.ack);
+}, true);
+
+// "Who uploads this to Ascendix?" — asked when a deal moves to Signed Lease / In Escrow.
+function ascendixPickUploader(sourceTable, sourceId, clientId, dealName){
+  return new Promise(resolve=>{
+    let rec = null;
+    db.lists.forEach(l=>(l.clients||[]).forEach(c=>{ if(c.id!==clientId) return;
+      (c.deals||[]).forEach(d=>{ if(d.id===sourceId) rec=d; }); (c.prospects||[]).forEach(p=>{ if(p.id===sourceId) rec=p; }); }));
+    const team = [];
+    ((rec && rec.splits)||[]).forEach(s=>{ const u = USERS.find(x=>isSameUser(s.userId, x.id)); if(u && !team.includes(u)) team.push(u); });
+    const tracker = rec && (rec.trackerUserId || rec.edgeTracker);
+    const pre = (tracker && USERS.find(u=>isSameUser(tracker, u.id))) || null;
+    const others = usersSortedByMe().filter(u=>!team.includes(u));
+    const opt = u=>`<option value="${u.id}" ${pre && pre.id===u.id ? 'selected' : ''}>${escapeHtml(u.name)}</option>`;
+    const ov = document.createElement('div');
+    ov.className = 'modal-overlay'; ov.style.zIndex = 400;
+    ov.innerHTML = `<div class="modal-card" style="max-width:440px;">
+      <div class="modal-head"><div class="modal-title">Who uploads this to Ascendix?</div></div>
+      <div class="modal-body">
+        <p class="tiny" style="margin-top:0;color:var(--ink-soft);"><b>${escapeHtml(dealName)}</b> — the executed agreements go into Ascendix within 3 business days. That person gets the To-Do (and the email).</p>
+        <select id="ascPick" style="width:100%;">
+          ${team.length ? `<optgroup label="Deal team">${team.map(opt).join('')}</optgroup><optgroup label="Everyone else">${others.map(opt).join('')}</optgroup>` : others.map(opt).join('')}
+        </select>
+      </div>
+      <div class="modal-foot"><button class="btn" id="ascOk">Assign</button></div></div>`;
+    document.body.appendChild(ov);
+    if(!pre && team.length){ const s = ov.querySelector('#ascPick'); s.value = team[0].id; }
+    ov.querySelector('#ascOk').onclick = ()=>{ const v = ov.querySelector('#ascPick').value; ov.remove(); resolve(v || state.currentUser.id); };
+  });
 }
 
 (function mwObserve(){
@@ -7602,11 +8087,11 @@ function renderMarketingListWizard(){
   overlay.className='modal-overlay'; overlay.style.zIndex=280;
   let title='', body='', foot='';
   if(!T.loaded){
-    title = 'Create Marketing List';
+    title = m.mode==='cc' ? 'Operation Cold Calls' : 'Create Marketing List';
     body = `<div class="tiny" style="padding:20px;color:var(--ink-soft);">${T.error?`Couldn't load the Tenant Expansion Report: ${escapeHtml(T.error)}`:'Loading the Tenant Expansion Report…'}</div>`;
     foot = `<button class="btn secondary" data-mlw="cancel">Cancel</button>`;
   } else if(m.step===1){
-    title = 'Create Marketing List — Step 1: Size';
+    title = (m.mode==='cc' ? 'Operation Cold Calls' : 'Create Marketing List') + ' — Step 1: Size';
     const azTenants = T.tenants.filter(t=>terAz(t)!=='not');
     body = `<p class="tiny" style="color:var(--ink-soft);margin-top:0;">Pulls from the Tenant Expansion Report into <b>${escapeHtml(listing.name)}</b>. Pick the kind of space you're leasing. A tenant whose size range spans more than one bucket shows in each.</p>
       ${TER_BUCKETS.map(b=>{
@@ -7617,7 +8102,7 @@ function renderMarketingListWizard(){
       }).join('')}`;
     foot = `<button class="btn secondary" data-mlw="cancel">Cancel</button><button class="btn" data-mlw="toStep2">Next: Categories →</button>`;
   } else if(m.step===2){
-    title = 'Create Marketing List — Step 2: Categories';
+    title = (m.mode==='cc' ? 'Operation Cold Calls' : 'Create Marketing List') + ' — Step 2: Categories';
     body = `<p class="tiny" style="color:var(--ink-soft);margin-top:0;">Check the categories you want in each bucket. Then uncheck any sub-category you want to skip (e.g. Coffee, if the center already has a coffee user).</p>` +
       m.buckets.map(bid=>{
         const b = TER_BUCKET_MAP[bid];
@@ -7642,7 +8127,9 @@ function renderMarketingListWizard(){
           }).join('') || `<div class="tiny" style="color:var(--ink-soft);padding:6px 0;">No Arizona tenants in this bucket.</div>`}
         </div>`;
       }).join('');
-    foot = `<button class="btn secondary" data-mlw="back">← Back</button><button class="btn" data-mlw="toStep3">Next: Review Tenants →</button>`;
+    foot = `<button class="btn secondary" data-mlw="back">← Back</button><button class="btn" data-mlw="toStep3">${m.mode==='cc'?'Next: Callers →':'Next: Review Tenants →'}</button>`;
+  } else if(m.mode==='cc'){
+    ({title, body, foot} = ccStep3Html(m, listing));
   } else {
     const matches = mlwMatches(m);
     const existing = new Map(listing.prospects.map(p=>[terNorm(p.tenantName), p]));
@@ -8488,8 +8975,8 @@ function renderTodoRow(td){
         ${contextLabel(td) ? `<span class="pill">${contextLabel(td)}</span>` : ''}
         ${td.private ? `<span class="pill private">Private</span>`:''}
         ${td.type!=='task' ? `<span class="pill gray">${td.type}${(td.type==='checklist'||td.type==='project') && td.checklistItems && td.checklistItems.length? ` ${td.checklistItems.filter(i=>i.done).length}/${td.checklistItems.length}`:''}${td.type==='project' ? ` · ${db.todos.filter(t=>t.projectId===td.id).length} to-do${db.todos.filter(t=>t.projectId===td.id).length===1?'':'s'}` : ''}</span>`:''}
-        ${td.isNew && td.assignedTo===state.currentUser.id ? `<span class="pill" style="background:var(--edge);color:#fff;">New</span>`:''}
-        ${assignedBy ? `<span class="pill gray" title="Assigned by ${escapeAttr(assignedBy.name)}">👤 by ${assignedBy.initials}</span>`:''}
+        ${td.isNew && td.assignedTo===state.currentUser.id && !ackPendingForMe(td) ? `<span class="pill" style="background:var(--edge);color:#fff;">New</span>`:''}
+        ${ackRowPills(td)}
         ${td.attachments && td.attachments.length ? `<span class="pill gray">📎 ${td.attachments.length}</span>`:''}
       </div>
     </div>
@@ -11887,7 +12374,75 @@ function toggleChatVoiceInput(){
   }, 20000);
   recognition.start();
 }
+// "Edgy, start Operation Cold Calls for I-10 & Litchfield — Anthony and Lexi, 10 each."
+// Handled right here in the Portal (no AI needed), so the code word always works the same way.
+function ccWords(s){ return String(s||'').toLowerCase().split(/\s+/).map(w=>w.replace(/[^a-z0-9]/g,'')).filter(Boolean); }
+function ccFindListing(text){
+  const l = db.lists.find(x=>x.id==='listings'); if(!l) return {match:null, ties:[]};
+  const tw = new Set(ccWords(text)); const skip = new Set(['swc','nec','nwc','sec','the','and','of','at','center','plaza']);
+  const scored = l.clients.filter(c=>!c.archivedAt).map(c=>{
+    const ws = ccWords(c.name).filter(w=>!skip.has(w)); if(!ws.length) return {c, score:0};
+    return {c, score: ws.filter(w=>tw.has(w)).length / ws.length};
+  }).filter(x=>x.score>=0.6).sort((a,b)=>b.score-a.score);
+  if(!scored.length) return {match:null, ties:[]};
+  const ties = scored.filter(x=>x.score===scored[0].score);
+  return ties.length===1 ? {match:ties[0].c, ties:[]} : {match:null, ties:ties.map(x=>x.c)};
+}
+function ccChatCommand(text){
+  const t = String(text||'');
+  const isOp = /operation\s+cold\s*calls?/i.test(t) || /\b(start|pause|resume|stop|status|change)\b[^.]*\bcold\s*calls?\b/i.test(t);
+  if(!isOp) return false;
+  const lower = t.toLowerCase();
+  const action = /\b(stop|end|cancel|kill)\b/.test(lower) ? 'stop' : /\bpause\b/.test(lower) ? 'pause'
+    : /\b(resume|restart|unpause|turn back on)\b/.test(lower) ? 'resume' : /\b(status|how is|how's|progress|update on)\b/.test(lower) ? 'status'
+    : /\b(change|set|switch|make it|bump)\b/.test(lower) ? 'change' : 'start';
+  const say = (msg)=>{ state.portalChatMessages.push({role:'user', text:t}); state.portalChatMessages.push({role:'assistant', text:msg}); render(); };
+  const {match:listing, ties} = ccFindListing(t);
+  if(!listing){
+    say(ties.length ? `Which listing? I found: ${ties.map(c=>c.name).join(', ')}. Say it again with the full name.` : `Which listing? Say "Operation Cold Calls for" and the listing name, e.g. "Start Operation Cold Calls for I-10 & Litchfield."`);
+    return true;
+  }
+  const callers = USERS.filter(u=>u.authId && new RegExp(`\\b${u.name.split(' ')[0]}\\b`, 'i').test(t)).map(u=>u.authId);
+  const nm = t.match(/\b(\d{1,2})\s*(each|apiece|calls?|a week|per (person|week|caller))\b/i);
+  const per = nm ? Math.min(50, parseInt(nm[1],10)) : null;
+  (async ()=>{
+    await ccLoadCampaigns(true);
+    const c = ccCampaignFor(listing.id);
+    if(action==='start'){
+      openColdCallsWizard(listing.id, {callers, perPerson: per});
+      say(c ? `Operation Cold Calls is already set up for ${listing.name} (${CC_STATUS_LABEL[c.status]||c.status}). I opened it so you can review or change it.`
+        : `Opening Operation Cold Calls for ${listing.name}${callers.length?` — ${USERS.filter(u=>callers.includes(u.authId)).map(u=>u.name.split(' ')[0]).join(' and ')}`:''}${per?`, ${per} each`:''}. Pick the size groups and categories, check who's calling, then press Start. Nothing goes out until you do.`);
+      return;
+    }
+    if(!c){ say(`There's no Operation Cold Calls running for ${listing.name}. Say "Start Operation Cold Calls for ${listing.name}" to set one up.`); return; }
+    if(action==='status'){
+      const { data } = await supabaseClient.from('cold_call_items').select('result').eq('campaign_id', c.id);
+      const n = (data||[]).length, open=(data||[]).filter(r=>r.result==='open').length, dead=(data||[]).filter(r=>r.result==='dead').length, pr=(data||[]).filter(r=>r.result==='prospect').length;
+      const who = USERS.filter(u=>(c.callers||[]).includes(u.authId)).map(u=>u.name.split(' ')[0]).join(' and ');
+      say(`Operation Cold Calls — ${listing.name}: ${CC_STATUS_LABEL[c.status]||c.status}. ${who}, ${c.per_person} each every Monday. ${n} calls handed out so far: ${open} open, ${dead} dead, ${pr} became Prospects.`);
+      return;
+    }
+    const upd = {updated_at:new Date().toISOString()};
+    if(action==='stop') upd.status='stopped';
+    if(action==='pause') upd.status='paused';
+    if(action==='resume') upd.status='active';
+    if(action==='change'){
+      if(per) upd.per_person = per;
+      if(callers.length) upd.callers = callers;
+      if(!per && !callers.length){ openColdCallsWizard(listing.id); say(`I opened Operation Cold Calls for ${listing.name} — make your changes there.`); return; }
+    }
+    const { error } = await supabaseClient.from('cold_call_campaigns').update(upd).eq('id', c.id);
+    if(error){ say(`I couldn't change it: ${error.message}`); return; }
+    await ccLoadCampaigns(true);
+    say(action==='stop' ? `Stopped Operation Cold Calls for ${listing.name}. Open call To-Do's stay; no new calls go out.`
+      : action==='pause' ? `Paused Operation Cold Calls for ${listing.name}. No new calls until you say resume.`
+      : action==='resume' ? `Resumed Operation Cold Calls for ${listing.name}. New calls every Monday.`
+      : `Updated Operation Cold Calls for ${listing.name}${per?` — ${per} each`:''}${callers.length?` — callers: ${USERS.filter(u=>callers.includes(u.authId)).map(u=>u.name.split(' ')[0]).join(' and ')}`:''}. Takes effect next Monday.`);
+  })();
+  return true;
+}
 async function sendPortalChatMessage(text){
+  if(ccChatCommand(text)) return;
   if(!state.portalChatHistory) state.portalChatHistory = [];
   state.portalChatMessages.push({role:'user', text});
   state.portalChatHistory.push({role:'user', content: text});
@@ -11906,6 +12461,7 @@ async function sendPortalChatMessage(text){
       state.portalChatMessages.push({role:'error', text: data.error || "Something went wrong — please try again."});
     } else {
       const items = extractPortalChatItems(data.newMessages);
+      ccFromChat(data.newMessages);
       if(Array.isArray(data.newMessages)) state.portalChatHistory.push(...data.newMessages);
       state.portalChatMessages.push({role:'assistant', text: data.reply || "(no response)", items});
     }
@@ -12933,10 +13489,13 @@ function checkTodoDeepLink(){
   const todoId = params.get('todo');
   if(!todoId) return;
   const isReminder = params.get('reminder')==='1';
+  const ackMode = params.get('ack');
   history.replaceState(null, '', window.location.pathname);
   const td = db.todos.find(x=>x.id===todoId);
   if(td){
     openTodoDetail(todoId);
+    if(['decline','delegate','newdate'].includes(ackMode) && ackPendingForMe(td)) state.todoAckPanel = {id:todoId, mode:ackMode};
+    else if(ackMode && !ackPendingForMe(td)) flashToast(td.assignedTo===state.currentUser.id ? 'You already answered this one.' : 'This To-Do was reassigned since that email went out.');
     if(isReminder && td.reminderPending && td.assignedTo===state.currentUser.id){
       state.mustRespondTodoId = td.id;
       state.mustRespondSnapshot = {
@@ -13257,6 +13816,7 @@ function renderTodoDetailModal(){
       </div>
     </div>
     <div class="modal-body">
+      ${ackBannerHtml(td)}
       ${(state.mustRespondTodoId===td.id) ? `<div style="background:#fffbe6;border:1px solid #e0c040;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:13px;">⏰ <b>${USERS.find(u=>u.id===td.createdBy).name}</b> asked for a quick update on this. Change the Status, add a Note, mark it complete, or change the due date — then you're all set.</div>` : ''}
       <div class="type-toggle">
         <button class="${td.type==='task'?'active':''}" data-dettype="task">Task</button>
@@ -13276,9 +13836,10 @@ function renderTodoDetailModal(){
           return `<select id="detStatus">${STATUS_PRESETS.map(s=>`<option value="${escapeAttr(s)}" ${(td.status||'Not Started')===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}</select>`; })()}
       </div>
       <div class="field">
-        <label>Due date</label>
-        <input type="date" id="detDue" value="${td.dueDate? toLocalDateStr(td.dueDate):''}">
-        <div class="quickdate-row">
+        <label>Due date${td.dueLocked?' 🔒':''}</label>
+        <input type="date" id="detDue" value="${td.dueDate? toLocalDateStr(td.dueDate):''}" ${todoDateLocked(td)?'disabled title="This due date is set by the Portal and can\'t be changed (Admins only)."':''}>
+        ${td.dueLocked ? `<div class="tiny" style="color:var(--ink-soft);margin-top:4px;">${todoDateLocked(td) ? 'Locked — set by the Portal. Only an Admin can change it.' : 'Locked for everyone else. As an Admin you can change it — the change is noted on the To-Do.'}</div>` : ''}
+        <div class="quickdate-row" ${todoDateLocked(td)?'style="display:none;"':''}>
           <button data-detquickdate="today">Today</button>
           <button data-detquickdate="tomorrow">Tomorrow</button>
           <button data-detquickdate="next week">Next Week</button>
@@ -13297,6 +13858,7 @@ function renderTodoDetailModal(){
       ${td.type==='checklist' ? renderChecklistSection(td) : ''}
       ${td.type==='project' ? renderProjectSection(td) : ''}
       ${td.type==='project' ? bdCommentsHtml(td) : ''}
+      ${ccTodoSection(td)}
       <div class="field">
         <label>Notes</label>
         <textarea id="detNotes" rows="3" placeholder="Any details worth keeping with this to-do…">${escapeHtml(td.notes||'')}</textarea>
@@ -13443,7 +14005,7 @@ function renderTodoDetailModal(){
   overlay.querySelector('[data-action="detDelete"]').onclick=()=>{
     if(confirm(`Delete "${td.title}"? This can't be undone.`)){ deleteTodo(td.id); render(); }
   };
-  overlay.querySelector('[data-action="detToggleComplete"]').onclick=()=>{ td.completed=!td.completed; td.completedAt = td.completed ? new Date() : null; if(td.boardId) td.outcome = td.completed ? 'done' : null; supaUpdateTodo(td); render(); };
+  overlay.querySelector('[data-action="detToggleComplete"]').onclick=()=>{ if(!td.completed && ccIsCallTodo(td)){ const oc = ccOpenCount(td.id); if(oc){ flashToast(`Finish all the calls first — ${oc} still open. A call is finished when it's Dead or a Prospect.`); render(); return; } } td.completed=!td.completed; td.completedAt = td.completed ? new Date() : null; if(td.boardId) td.outcome = td.completed ? 'done' : null; supaUpdateTodo(td); render(); };
   wireBdDetail(overlay, td);
   const sendReminderBtn = overlay.querySelector('[data-action="detSendReminder"]');
   if(sendReminderBtn) sendReminderBtn.onclick=()=>{
@@ -14677,6 +15239,7 @@ function renderLSRInline(listing, mode){
         ${usersSortedByMe().map(u=>`<option value="${u.id}" ${state.lsrTrackerFilter===u.id?'selected':''}>${u.name}</option>`).join('')}
       </select>
       <button class="btn secondary sm" data-action="lsrCreateMarketingList" data-client="${listing.id}">📋 Create Marketing List</button>
+      ${ccListingButton(listing)}
       <button class="btn sm" data-action="lsrNewDeal" data-client="${listing.id}">+ New Deal (direct to LOI)</button>
       <button class="btn secondary sm" data-action="lsrCreateReport" data-client="${listing.id}" data-reportmode="deals">📄 Report: Deals</button>
       <button class="btn secondary sm" data-action="lsrCreateReport" data-client="${listing.id}" data-reportmode="prospecting">📄 Report: Prospects</button>
@@ -15321,6 +15884,9 @@ function wireLSRInlineHandlers(root){
   };
   const mgmtBtn = root.querySelector('[data-action="lsrManageCategories"]'); if(mgmtBtn) mgmtBtn.onclick=()=>{
     state.lsrCategoryManagerOpen = mgmtBtn.dataset.client; render();
+  };
+  const ccBtn = root.querySelector('[data-action="ccOpen"]'); if(ccBtn) ccBtn.onclick=async ()=>{
+    await ccLoadCampaigns(true); openColdCallsWizard(ccBtn.dataset.client); render();
   };
   const mktBtn = root.querySelector('[data-action="lsrCreateMarketingList"]'); if(mktBtn) mktBtn.onclick=()=>{
     openMarketingListWizard(mktBtn.dataset.client); render();
