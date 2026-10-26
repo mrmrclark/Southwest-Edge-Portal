@@ -879,7 +879,7 @@ const EDGE_LOGO_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAARgAAA
 // normal for this specific key type; Google expects it to be visible in page source and
 // restricted by domain, via HTTP referrer restriction in Google Cloud Console, not hidden
 // like the other secrets in this app). Replace once Michael has generated a real key.
-const APP_BUILD = '2026-10-26 todo-answers';
+const APP_BUILD = '2026-10-26 todo-answers-2';
 const GOOGLE_MAPS_JS_KEY = 'AIzaSyBMlIjvH2bpZK6mYJeNZSkQvM8TXQkCjDE';
 const CATEGORY_ORANGE_ICONS = ['💲','🏢','🎯','📋','☁️','🔧','✈️','🏛️','💎','📄','⭐','🗂️'];
 
@@ -3505,6 +3505,23 @@ function render(){
     if(state.toast) showToastNow();
     return;
   }
+  if(state.screen==='ackDone'){
+    const q = new URLSearchParams(location.search); const code = q.get('ackdone'); const title = q.get('title')||'';
+    const M = {accepted:['✅','Accepted',"It's on your list, and the sender knows you've got it."], already:['✅','Already accepted',''],
+      answered:['ℹ️','Already answered','Open the To-Do in the Portal to see where it stands.'], moved:['⚠️','This To-Do has moved','It was reassigned or deleted since this email went out.'],
+      approved:['✅','New date approved',"They've been told."], kept:['📌','Original date kept',"They've been told."], invalid:['⚠️','Link not valid','Open the To-Do in the Portal instead.'], error:['⚠️','Something went wrong','Open the To-Do in the Portal instead.']};
+    const m = M[code] || M.invalid;
+    app.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;min-height:100vh;background:var(--canvas);text-align:center;padding:24px;">
+      ${brandLogoImg('Southwest Edge')}
+      <div style="background:#fff;border-radius:14px;box-shadow:0 4px 20px rgba(0,0,0,.08);padding:28px 26px;max-width:420px;">
+        <div style="font-size:42px;">${m[0]}</div>
+        <div style="font-size:20px;font-weight:700;color:var(--edge);margin:8px 0;">${m[1]}</div>
+        ${title?`<div style="font-weight:600;margin-bottom:6px;">${escapeHtml(title)}</div>`:''}
+        ${m[2]?`<div style="color:var(--ink-soft);font-size:14px;">${m[2]}</div>`:''}
+        <div style="color:#999;font-size:12.5px;margin-top:16px;">You can close this tab.</div>
+      </div></div>`;
+    return;
+  }
   if(state.screen==='handedOff'){
     app.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;height:100vh;background:var(--canvas);text-align:center;padding:24px;">
       ${brandLogoImg('Southwest Edge')}
@@ -4325,6 +4342,8 @@ function todoFromLabel(td){
   return null;
 }
 function ackPendingForMe(td){ return td.ackStatus==='pending' && td.assignedTo===state.currentUser.id && !td.completed; }
+// After accepting you can still decline, delegate or ask for a new date — until it's done.
+function ackCanAnswer(td){ return (td.ackStatus==='pending' || td.ackStatus==='accepted') && td.assignedTo===state.currentUser.id && !td.completed && td.createdBy!==state.currentUser.id; }
 function todoDateLocked(td){ return !!td.dueLocked && state.currentUser.role!=='Admin'; }
 function ackFmt(d){ return d ? fmtDate(d instanceof Date ? d : new Date(d+'T00:00:00')) : 'no date'; }
 function ackRowPills(td){
@@ -4358,15 +4377,16 @@ function ackRowPills(td){
 function ackBannerHtml(td){
   const panel = state.todoAckPanel && state.todoAckPanel.id===td.id ? state.todoAckPanel.mode : null;
   let html = '';
-  if(ackPendingForMe(td)){
+  if(ackCanAnswer(td)){
     const from = todoFromLabel(td) || 'The sender';
+    const acc = td.ackStatus==='accepted';
     html += `<div class="ack-banner">
-      <div style="font-weight:600;margin-bottom:8px;">${escapeHtml(from)} assigned you this. Let them know:</div>
+      <div style="font-weight:600;margin-bottom:8px;">${acc ? `✓ You accepted this from ${escapeHtml(from)}. Need to hand it off or move the date?` : `${escapeHtml(from)} assigned you this. Let them know:`}</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
-        <button class="btn sm" data-ack="accept" data-id="${td.id}">✓ Accept</button>
+        ${acc ? '' : `<button class="btn sm" data-ack="accept" data-id="${td.id}">✓ Accept</button>`}
         <button class="btn secondary sm ${panel==='decline'?'on':''}" data-ack="decline" data-id="${td.id}">Decline</button>
         <button class="btn secondary sm ${panel==='delegate'?'on':''}" data-ack="delegate" data-id="${td.id}">Delegate</button>
-        ${td.dueLocked ? '' : `<button class="btn secondary sm ${panel==='newdate'?'on':''}" data-ack="newdate" data-id="${td.id}">Propose New Date</button>`}
+        ${(td.dueLocked || td.proposedDue) ? '' : `<button class="btn secondary sm ${panel==='newdate'?'on':''}" data-ack="newdate" data-id="${td.id}">Propose New Date</button>`}
       </div>
       ${panel==='decline' ? `<div class="ack-panel"><label class="tiny">Why are you declining? (goes to ${escapeHtml(from)})</label>
           <textarea id="ackReason" rows="2" placeholder="Reason…"></textarea>
@@ -13484,18 +13504,23 @@ function checkCommissionSummaryDeepLink(){
     state.commissionSummaryModal = {clientId, listId};
   }catch(e){ console.error('Commission Summary deep-link navigation failed:', e); }
 }
-function checkTodoDeepLink(){
+async function checkTodoDeepLink(){
   const params = new URLSearchParams(window.location.search);
   const todoId = params.get('todo');
   if(!todoId) return;
   const isReminder = params.get('reminder')==='1';
   const ackMode = params.get('ack');
   history.replaceState(null, '', window.location.pathname);
+  if(!db.todos.find(x=>x.id===todoId)){
+    try{ const { data } = await supabaseClient.from('todos').select('*').eq('id', todoId).maybeSingle();
+      if(data && !data.archived_at){ db.todos.push(todoRowToLocal(data)); } }catch(e){ console.error('deep-link fetch', e); }
+  }
   const td = db.todos.find(x=>x.id===todoId);
   if(td){
     openTodoDetail(todoId);
-    if(['decline','delegate','newdate'].includes(ackMode) && ackPendingForMe(td)) state.todoAckPanel = {id:todoId, mode:ackMode};
-    else if(ackMode && !ackPendingForMe(td)) flashToast(td.assignedTo===state.currentUser.id ? 'You already answered this one.' : 'This To-Do was reassigned since that email went out.');
+    if(['decline','delegate','newdate'].includes(ackMode) && ackCanAnswer(td)) state.todoAckPanel = {id:todoId, mode:ackMode};
+    else if(ackMode && td.assignedTo!==state.currentUser.id){ const u = USERS.find(x=>x.id===td.assignedTo); flashToast(`This To-Do is assigned to ${u?u.name:'someone else'} — only they can answer it. (You're signed in as ${state.currentUser.name}.)`); }
+    else if(ackMode && td.completed) flashToast('This To-Do is already done.');
     if(isReminder && td.reminderPending && td.assignedTo===state.currentUser.id){
       state.mustRespondTodoId = td.id;
       state.mustRespondSnapshot = {
@@ -13506,6 +13531,7 @@ function checkTodoDeepLink(){
   } else {
     flashToast("That to-do couldn't be found — it may have been completed, moved, or removed since the email was sent.");
   }
+  render();
 }
 function getTodoLinkSummary(td){
   if(td.dealId){
@@ -19125,6 +19151,7 @@ async function portalTabHandoff(){
 }
 
 (async ()=>{
+  if(new URLSearchParams(location.search).get('ackdone')){ state.screen='ackDone'; render(); return; } // one-click email answer result — no login
   if(navigator.onLine && await portalTabHandoff()) return; // an open Portal tab took the email link
   if(!navigator.onLine){ await bootOffline(); return; }
   try{
