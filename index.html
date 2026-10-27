@@ -886,7 +886,7 @@ const EDGE_LOGO_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAARgAAA
 // normal for this specific key type; Google expects it to be visible in page source and
 // restricted by domain, via HTTP referrer restriction in Google Cloud Console, not hidden
 // like the other secrets in this app). Replace once Michael has generated a real key.
-const APP_BUILD = '2026-10-27 wip-dates';
+const APP_BUILD = '2026-10-27 wip-halves';
 const GOOGLE_MAPS_JS_KEY = 'AIzaSyBMlIjvH2bpZK6mYJeNZSkQvM8TXQkCjDE';
 const CATEGORY_ORANGE_ICONS = ['💲','🏢','🎯','📋','☁️','🔧','✈️','🏛️','💎','📄','⭐','🗂️'];
 
@@ -8004,11 +8004,14 @@ function computeBrokerGrossForUser(userId, year){
         if(!mySplit) return;
         const pct = (parseFloat(mySplit.pct)||0)/100;
         const isSale = d.dealType==='sale';
+        // 2026-10-27: due dates exist now, so each paid installment counts in the year it was
+        // due (tiers reset Jan 1). A paid installment with no due date still counts, as before.
+        const inYear = dt => !year || !dt || String(dt).slice(0,4)===String(year);
         if(isSale){
-          if(d.commission1Paid) gross += totalFee * pct;
+          if(d.commission1Paid && inYear(d.commission1DueDate || d.coeDueDate)) gross += totalFee * pct;
         } else {
-          if(d.commission1Paid) gross += (totalFee/2) * pct;
-          if(d.commission2Paid) gross += (totalFee/2) * pct;
+          if(d.commission1Paid && inYear(d.commission1DueDate)) gross += (totalFee/2) * pct;
+          if(d.commission2Paid && inYear(d.commission2DueDate)) gross += (totalFee/2) * pct;
         }
       });
     });
@@ -13380,7 +13383,9 @@ function renderPipelineModal(){
 // Share % is blank — there's no personal "share" to compute in that case. "Office Total"
 // is one row per deal (not one row per split), full deal value, every producer's names
 // listed in the Broker column.
-function wipRowsForUser(viewUserId){
+// 2026-10-27 (Michael): with a date range, only the commission INSTALLMENTS due in that window
+// count — a lease is two halves (1st Half / 2nd Half due dates), a sale is one payment.
+function wipRowsForUser(viewUserId, rangeStart, rangeEnd){
   const isOffice = viewUserId==='office' || !viewUserId;
   const base = allDealsForUser(isOffice ? null : viewUserId);
   const rows = [];
@@ -13392,28 +13397,29 @@ function wipRowsForUser(viewUserId){
     const mySplit = !isOffice ? findSplitForUser(d, viewUserId) : null;
     const pct = mySplit ? (parseFloat(mySplit.pct)||0) : null;
     const shareFactor = pct!=null ? pct/100 : 1;
-    const waValue = totalFee * wa * shareFactor;
     // Sale deals pay out in one lump sum at close (commission1Paid = the whole fee received);
     // lease deals pay in two half-fee installments (commission1/commission2) — same split
     // computeBrokerGrossForUser uses for "Paid to Date", so WIP's Received/Past Due agree with it.
     const isSale = d.dealType==='sale';
+    const day = x=> x ? String(x).slice(0,10) : null;
+    const installments = isSale
+      ? [{date: day(d.commission1DueDate || d.coeDueDate), amt: totalFee, paid: !!d.commission1Paid}]
+      : [{date: day(d.commission1DueDate), amt: totalFee/2, paid: !!d.commission1Paid}, {date: day(d.commission2DueDate), amt: totalFee/2, paid: !!d.commission2Paid}];
+    const ranged = !!(rangeStart || rangeEnd);
+    const inWin = ranged ? installments.filter(i=>i.date && (!rangeStart || i.date>=rangeStart) && (!rangeEnd || i.date<=rangeEnd)) : installments;
+    const hasDates = installments.some(i=>i.date);
+    if(ranged && !inWin.length){ if(!hasDates) rows.noDates = (rows.noDates||0)+1; return; }
+    const feeInWin = inWin.reduce((sum,i)=>sum+i.amt, 0);
     let receivedAmt = 0, pastDueAmt = 0;
     if(totalFee>0){
-      const today = todayDate();
-      if(isSale){
-        if(d.commission1Paid) receivedAmt += totalFee * shareFactor;
-        if(!d.commission1Paid && d.commission1DueDate && new Date(d.commission1DueDate+'T00:00:00')<today) pastDueAmt += totalFee * shareFactor;
-      } else {
-        if(d.commission1Paid) receivedAmt += (totalFee/2) * shareFactor;
-        if(d.commission2Paid) receivedAmt += (totalFee/2) * shareFactor;
-        if(!d.commission1Paid && d.commission1DueDate && new Date(d.commission1DueDate+'T00:00:00')<today) pastDueAmt += (totalFee/2) * shareFactor;
-        if(!d.commission2Paid && d.commission2DueDate && new Date(d.commission2DueDate+'T00:00:00')<today) pastDueAmt += (totalFee/2) * shareFactor;
-      }
+      const today = toLocalDateStr(todayDate());
+      inWin.forEach(i=>{ if(i.paid) receivedAmt += i.amt * shareFactor; else if(i.date && i.date<today) pastDueAmt += i.amt * shareFactor; });
     }
     const brokerNames = (d.splits||[]).map(s=>nameForSplitUserId(s.userId)).filter(Boolean).join(', ') || '—';
     rows.push({
       clientId:c.id, clientName:c.name, dealName:d.name, listId:r.listId, dealId:d.id,
-      stage:d.stage, totalFee, pct, waValue, brokerNames,
+      stage:d.stage, totalFee: feeInWin, fullFee: totalFee, halves: ranged && !isSale && inWin.length<installments.length ? `${inWin.length} of ${installments.length}` : '',
+      pct, waValue: feeInWin * wa * shareFactor, brokerNames,
       dueDate: d.dueDate ? toLocalDateStr(d.dueDate) : null,
       payDates: [d.commission1DueDate, isSale ? null : d.commission2DueDate].filter(Boolean).map(x=>String(x).slice(0,10)),
       receivedAmt, pastDueAmt,
@@ -13451,13 +13457,8 @@ function renderWipView(){
   const isFull = tier==='companyWide' || tier==='fullOffice';
   if(!isFull) m.viewUserId = state.currentUser.id; // standard producers only ever see their own numbers, even if state was tampered with
   const isOffice = isFull && m.viewUserId==='office';
-  let rows = wipRowsForUser(isOffice ? 'office' : m.viewUserId);
-  // 2026-10-27: the range means "commission due in this window" (Commission 1 or 2 due date).
-  let noDates = 0;
-  if(m.startDate || m.endDate){
-    noDates = rows.filter(r=>!r.payDates.length).length;
-    rows = rows.filter(r=>r.payDates.some(x=>(!m.startDate || x>=m.startDate) && (!m.endDate || x<=m.endDate)));
-  }
+  let rows = wipRowsForUser(isOffice ? 'office' : m.viewUserId, m.startDate, m.endDate);
+  const noDates = rows.noDates || 0;
   const stageLabel = s => LSR_STAGE_MAP[s] ? LSR_STAGE_MAP[s].name : s;
   const viewLabel = isOffice ? 'Office Total' : nameForSplitUserId(m.viewUserId);
   const sumTotalFee = rows.reduce((s,r)=>s+r.totalFee, 0);
@@ -13485,7 +13486,7 @@ function renderWipView(){
   <div style="font-size:22px;font-weight:700;color:var(--edge);margin-bottom:14px;">
     ${escapeHtml(viewLabel)} — ${sumWaValue.toLocaleString('en-US',{style:'currency',currency:'USD'})} <span style="font-size:13px;font-weight:400;color:var(--ink-soft);">weighted (${sumTotalFee.toLocaleString('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0})} total fee across ${rows.length} deal${rows.length===1?'':'s'})</span>
   </div>
-  ${(m.startDate||m.endDate) ? `<div class="tiny" style="color:var(--ink-soft);margin:-6px 0 12px;">Showing deals with a Commission 1 or 2 due date in this range.${noDates?` ${noDates} deal${noDates===1?' has':'s have'} no commission due dates yet and ${noDates===1?"isn't":"aren't"} shown.`:''}</div>` : ''}
+  ${(m.startDate||m.endDate) ? `<div class="tiny" style="color:var(--ink-soft);margin:-6px 0 12px;">Showing only the commission due in this range — a lease's 1st or 2nd half, or a sale's payment. "½" means only one half lands in this range.${noDates?` ${noDates} deal${noDates===1?' has':'s have'} no commission due dates yet and ${noDates===1?"isn't":"aren't"} shown.`:''}</div>` : ''}
   ${rows.length ? `
   <div style="overflow-x:auto;">
   <table style="width:100%;border-collapse:collapse;font-size:12.5px;">
@@ -13505,7 +13506,7 @@ function renderWipView(){
       <tr style="border-bottom:1px solid var(--line-soft);">
         <td style="padding:6px 8px;">${r.dealId ? `<a href="#" data-opendealdirect="${escapeAttr(r.dealId)}" data-listid="${escapeAttr(r.listId)}" data-client="${escapeAttr(r.clientId)}" style="color:var(--edge);text-decoration:none;">${escapeHtml(r.clientName)} — ${escapeHtml(r.dealName)}</a>` : `${escapeHtml(r.clientName)} — ${escapeHtml(r.dealName)}`}</td>
         ${isOffice ? `<td style="padding:6px 8px;">${escapeHtml(r.brokerNames)}</td>` : ''}
-        <td style="padding:6px 8px;text-align:right;">${r.totalFee.toLocaleString('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0})}</td>
+        <td style="padding:6px 8px;text-align:right;" title="${r.halves?`Full fee ${r.fullFee.toLocaleString('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0})} — ${r.halves} halves in this range`:''}">${r.halves?'<span class="tiny" style="color:var(--ink-soft);">½ </span>':''}${r.totalFee.toLocaleString('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0})}</td>
         <td style="padding:6px 8px;text-align:right;">${r.pct!=null ? r.pct+'%' : '—'}</td>
         <td style="padding:6px 8px;text-align:right;font-weight:600;">${r.waValue.toLocaleString('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0})}</td>
         <td style="padding:6px 8px;text-align:right;">${Math.round(PIPELINE_STAGE_WA[r.stage]*100)}%</td>
@@ -13531,8 +13532,8 @@ function wipExportCsv(){
   const isFull = tier==='companyWide' || tier==='fullOffice';
   const m = state.wipView || {viewUserId: state.currentUser.id, startDate:'', endDate:''};
   const isOffice = isFull && m.viewUserId==='office';
-  let rows = wipRowsForUser(isOffice ? 'office' : (isFull?m.viewUserId:state.currentUser.id));
-  if(m.startDate || m.endDate) rows = rows.filter(r=>r.payDates.some(x=>(!m.startDate || x>=m.startDate) && (!m.endDate || x<=m.endDate)));
+  let rows = wipRowsForUser(isOffice ? 'office' : (isFull?m.viewUserId:state.currentUser.id), m.startDate, m.endDate);
+
   const stageLabel = s => LSR_STAGE_MAP[s] ? LSR_STAGE_MAP[s].name : s;
   const viewLabel = isOffice ? 'Office Total' : nameForSplitUserId(isFull?m.viewUserId:state.currentUser.id);
   const sumTotalFee = rows.reduce((s,r)=>s+r.totalFee, 0);
