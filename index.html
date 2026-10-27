@@ -879,7 +879,7 @@ const EDGE_LOGO_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAARgAAA
 // normal for this specific key type; Google expects it to be visible in page source and
 // restricted by domain, via HTTP referrer restriction in Google Cloud Console, not hidden
 // like the other secrets in this app). Replace once Michael has generated a real key.
-const APP_BUILD = '2026-10-26 todo-answers-2';
+const APP_BUILD = '2026-10-27 loi-match';
 const GOOGLE_MAPS_JS_KEY = 'AIzaSyBMlIjvH2bpZK6mYJeNZSkQvM8TXQkCjDE';
 const CATEGORY_ORANGE_ICONS = ['💲','🏢','🎯','📋','☁️','🔧','✈️','🏛️','💎','📄','⭐','🗂️'];
 
@@ -7280,7 +7280,7 @@ async function processLoiFile(file, dropSide){
 function loiPopulateDealMatch(client){
   const m = state.loiImport;
   const ex = m.extracted;
-  m.matchedClient = client;
+  m.matchedClient = client; m.dealPickerQuery = '';
   if(m.dropSide==='clients'){
     const candidates = client.deals||[];
     m.candidateDeals = candidates;
@@ -7299,14 +7299,53 @@ function loiPopulateDealMatch(client){
 // This is a soft match too now — when nothing matches (the LOI is filed under the shopping
 // center's name instead of the intersection, say), the review screen offers a manual
 // search/pick + Create New instead of a dead end.
+// 2026-10-27: also matches on the file name (e.g. "…_DutchBros_…" when the LOI names the
+// legal entity "Boersma Bros. LLC"), and notices when the file was dropped on the wrong side.
+function loiFileMatch(c, fileName){
+  const n = terNorm(c.name); const f = terNorm(fileName||'');
+  return n.length>=5 && f.includes(n);
+}
+function loiFindOnSide(side, ex, fileName){
+  const l = db.lists.find(x=>x.id===(side==='clients'?'clients':'listings'));
+  if(!l) return null;
+  const live = l.clients.filter(c=>!c.archivedAt);
+  return side==='clients'
+    ? (live.find(c=>fuzzyTextMatch(c.name, ex.accountName)) || live.find(c=>loiFileMatch(c, fileName)))
+    : (live.find(c=>fuzzyTextMatch(c.name, ex.propertyDescription)) || live.find(c=>loiFileMatch(c, fileName)));
+}
+// Deal / Prospect pick-list on the LOI import: A–Z, searchable, Dead ones only when searching.
+function loiDealResultsHtml(){
+  const m = state.loiImport; if(!m) return '';
+  const nameOf = d=> m.dropSide==='clients' ? (d.name||'') : (d.tenantName||'');
+  const q = (m.dealPickerQuery||'').trim().toLowerCase();
+  let rows = (m.candidateDeals||[]).map((d,i)=>({d,i})).filter(x=>!q || nameOf(x.d).toLowerCase().includes(q));
+  if(!q) rows = rows.filter(x=>x.d.stage!=='dead' && x.d.stage!=='notInterested');
+  rows.sort((a,b)=>nameOf(a.d).localeCompare(nameOf(b.d)));
+  const total = rows.length; rows = rows.slice(0,60);
+  if(!total) return `<div class="tiny" style="color:var(--ink-soft);padding:6px 0;">${q?'No matches.':'Nothing open here — search to include Dead ones, or create new below.'}</div>`;
+  return rows.map(x=>`<div class="row-card" data-pickcandidate="${x.i}" style="cursor:pointer;margin-bottom:6px;">
+      <div class="row-body"><div class="row-title">${escapeHtml(nameOf(x.d))}${x.d.stage==='dead'?' <span class="pill gray">Dead</span>':''}</div></div></div>`).join('')
+    + (total>60 ? `<div class="tiny" style="color:var(--ink-soft);">Showing 60 of ${total} — type to narrow it down.</div>` : '');
+}
+document.addEventListener('input', ev=>{
+  if(!ev.target || ev.target.id!=='loiDealSearch' || !state.loiImport) return;
+  state.loiImport.dealPickerQuery = ev.target.value;
+  const box = document.getElementById('loiDealResults'); if(box) box.innerHTML = loiDealResultsHtml();
+});
+document.addEventListener('click', ev=>{
+  const el = ev.target.closest && ev.target.closest('#loiDealResults [data-pickcandidate]'); if(!el || !state.loiImport) return;
+  const m = state.loiImport; m.matchedDeal = m.candidateDeals[parseInt(el.dataset.pickcandidate)]; m.isNewDeal = false; render();
+});
 function matchLoiToAccount(){
   const m = state.loiImport;
   const ex = m.extracted;
-  const l = db.lists.find(x=>x.id===(m.dropSide==='clients'?'clients':'listings'));
-  const client = m.dropSide==='clients'
-    ? l.clients.find(c=>fuzzyTextMatch(c.name, ex.accountName))
-    : l.clients.find(c=>fuzzyTextMatch(c.name, ex.propertyDescription));
-  if(!client){ m.matchedClient=null; m.matchedDeal=null; m.candidateDeals=[]; return; }
+  const client = loiFindOnSide(m.dropSide, ex, m.fileName);
+  m.otherSideMatch = null;
+  if(!client){
+    m.matchedClient=null; m.matchedDeal=null; m.candidateDeals=[];
+    m.otherSideMatch = loiFindOnSide(m.dropSide==='clients'?'listings':'clients', ex, m.fileName);
+    return;
+  }
   loiPopulateDealMatch(client);
 }
 // The filtered pick-list shown when the automatic Client/Listing match fails — its own
@@ -11393,10 +11432,13 @@ function renderLoiImportModal(){
       const label = m.dropSide==='clients' ? 'Client' : 'Listing';
       body = `
         <div class="tiny" style="color:var(--ink-soft);margin-bottom:10px;">Extracted from ${escapeHtml(m.fileName)}: <b>${escapeHtml(ex.accountName||'—')}</b> at <b>${escapeHtml(ex.propertyDescription||'—')}</b></div>
+        ${m.otherSideMatch ? `<div class="ack-banner" style="margin-bottom:12px;">This looks like it belongs under the ${m.dropSide==='clients'?'Listing':'Client'} <b>${escapeHtml(m.otherSideMatch.name)}</b>.
+          <div style="margin-top:8px;"><button class="btn sm" data-action="loiSwitchSide">Switch to ${m.dropSide==='clients'?'Listings':'Clients'} → ${escapeHtml(m.otherSideMatch.name)}</button></div></div>` : ''}
         <div class="tiny" style="margin-bottom:10px;">Couldn't match this to a ${label} automatically — often just means it's filed under a different name (e.g. the shopping center instead of the intersection). Pick the right one below, or create a new one.</div>
         <div class="field"><label>Search ${label}s</label><input id="loiClientPickerSearch" placeholder="Start typing a name…" value="${escapeAttr(m.clientPickerQuery||'')}"></div>
         <div id="loiClientPickerResults">${renderLoiClientPickerResultsHtml()}</div>
         <button class="btn secondary sm" data-action="loiCreateNewClient" style="margin:10px 0 14px;">+ Create New ${label}</button>
+        <button class="btn secondary sm" data-action="loiSwitchSide" style="margin:10px 0 14px;">Wrong side? Switch to ${m.dropSide==='clients'?'Listings':'Clients'}</button>
         <button class="btn secondary" data-action="loiStartOver" style="width:100%;">Start Over</button>
       `;
     } else {
@@ -11425,10 +11467,8 @@ function renderLoiImportModal(){
           ` : ''}
           ${(!m.matchedDeal && m.candidateDeals.length) ? `
             <div class="tiny" style="margin-bottom:6px;">No confident match — choose one below or create new:</div>
-            ${m.candidateDeals.map((d,i)=>`
-              <div class="row-card" data-pickcandidate="${i}" style="cursor:pointer;margin-bottom:6px;">
-                <div class="row-body"><div class="row-title">${escapeHtml(m.dropSide==='clients'?d.name:d.tenantName)}</div></div>
-              </div>`).join('')}
+            <input id="loiDealSearch" placeholder="🔍 Search ${m.dropSide==='clients'?'deals':'prospects'} under ${escapeAttr(m.matchedClient.name)}…" value="${escapeAttr(m.dealPickerQuery||'')}" style="margin-bottom:8px;">
+            <div id="loiDealResults" style="max-height:320px;overflow-y:auto;">${loiDealResultsHtml()}</div>
           ` : ''}
           ${!m.matchedDeal ? `<button class="btn secondary sm" data-action="loiCreateNew">+ Create New ${m.dropSide==='clients'?'Deal':'Prospect'}</button>` : `<button class="btn secondary sm" data-action="loiCreateNew">Actually, create a new one instead</button>`}
         </div>
@@ -11548,6 +11588,13 @@ function renderLoiImportModal(){
       const resultsBox = overlay.querySelector('#loiClientPickerResults');
       if(resultsBox){ resultsBox.innerHTML = renderLoiClientPickerResultsHtml(); wireLoiClientPickerRows(); }
     };
+    overlay.querySelectorAll('[data-action="loiSwitchSide"]').forEach(b=>b.onclick=()=>{
+      m.dropSide = m.dropSide==='clients' ? 'listings' : 'clients';
+      m.clientPickerQuery=''; m.otherClientsOpen=false;
+      const target = m.otherSideMatch; matchLoiToAccount();
+      if(!m.matchedClient && target && b.textContent.includes('→')) loiPopulateDealMatch(target);
+      render();
+    });
     const createClientBtn = overlay.querySelector('[data-action="loiCreateNewClient"]');
     if(createClientBtn) createClientBtn.onclick=safeHandler(async ()=>{
       const label = m.dropSide==='clients' ? 'client' : 'listing';
