@@ -472,6 +472,13 @@
   .ack-row-btns{display:inline-flex;gap:4px;flex-wrap:wrap;align-items:center;}
   .ack-btn{border:1px solid var(--edge);background:#fff;color:var(--edge);border-radius:6px;padding:2px 8px;font-size:11.5px;font-weight:600;cursor:pointer;}
   .ack-btn.primary{background:var(--edge);color:#fff;}
+  .sl2-group{border:1px solid var(--line);border-radius:10px;padding:10px;background:#FAFAFA;}
+  .sl2-cond{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:6px;}
+  .sl2-cond select,.sl2-cond input{width:auto;min-width:120px;}
+  .sl2-x{border:none;background:none;color:var(--ink-soft);cursor:pointer;font-size:14px;}
+  .sl2-or{text-align:center;font-size:11.5px;font-weight:700;color:var(--edge);margin:8px 0;}
+  .sl2-view{display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:12.5px;}
+  .sl2-view label{display:flex;flex-direction:column;gap:4px;}
   .cc-call{border:1px solid var(--line);border-left:4px solid #E8951E;border-radius:10px;padding:10px 12px;margin-bottom:8px;background:#fff;}
   .cc-call.done{border-left-color:#00A65A;opacity:.7;}
   .cc-contacts{margin-top:4px;line-height:1.6;}
@@ -879,7 +886,7 @@ const EDGE_LOGO_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAARgAAA
 // normal for this specific key type; Google expects it to be visible in page source and
 // restricted by domain, via HTTP referrer restriction in Google Cloud Console, not hidden
 // like the other secrets in this app). Replace once Michael has generated a real key.
-const APP_BUILD = '2026-10-27 loi-match';
+const APP_BUILD = '2026-10-27 smart-lists';
 const GOOGLE_MAPS_JS_KEY = 'AIzaSyBMlIjvH2bpZK6mYJeNZSkQvM8TXQkCjDE';
 const CATEGORY_ORANGE_ICONS = ['💲','🏢','🎯','📋','☁️','🔧','✈️','🏛️','💎','📄','⭐','🗂️'];
 
@@ -3329,8 +3336,10 @@ async function fetchSmartListsFromSupabase(){
   if(!authId) return;
   const { data, error } = await supabaseClient.from('smart_lists').select('*').eq('user_id', authId).order('display_order', {ascending:true});
   if(error){ console.error('fetchSmartListsFromSupabase error:', error); return; }
-  const custom = data.map(r=>({id:r.id, name:r.name, icon:r.icon, isDefault:false, filter:r.filter}));
-  let defaults = SMART_LIST_DEFAULTS.map(s=>({...s, isDefault:true}));
+  const custom = data.filter(r=>!(r.filter && r.filter.baseId)).map(r=>({id:r.id, name:r.name, icon:r.icon, isDefault:false, filter:r.filter}));
+  const overrides = {}; data.filter(r=>r.filter && r.filter.baseId).forEach(r=>{ overrides[r.filter.baseId] = {rowId:r.id, filter:r.filter}; });
+  let defaults = SMART_LIST_DEFAULTS.map(s=>{ const o = overrides[s.id]; const out = {...s, isDefault:true, override:o||null};
+    if(o && o.filter.edited){ if(o.filter.name) out.name = o.filter.name; if(o.filter.icon) out.icon = o.filter.icon; } return out; });
   if(state.defaultSmartListOrder && state.defaultSmartListOrder.length){
     const order = state.defaultSmartListOrder;
     const known = new Set(order);
@@ -3399,6 +3408,8 @@ function smartListTodosRaw(key){
   // 10/12 (Michael): Checklists show in the To-Do lists too (they used to vanish into Lists → Checklists only).
   const t = db.todos.filter(td=>{ const ty = td.type||'task'; return ty==='task' || ty==='checklist'; }); // missing/null type defaults to task
   const me = state.currentUser.id;
+  { const slx = smartListsArr.find(x=>x.id===key);
+    if(slx && slx.isDefault && slIsEditedBuiltin(slx)) return slEvalList(t, slx.override.filter); }
   switch(key){
     // 2026-09-26 (Phase 5): Today Me = my single To-Dos due today or overdue, PLUS my
     // To-Dos that belong to a Project and are due by this coming Friday (Sat/Sun → next
@@ -3418,7 +3429,7 @@ function smartListTodosRaw(key){
     case 'fullTeam': return t.filter(td=>!td.completed); // Admin-only, unrestricted — genuinely everyone
     default: {
       const custom = smartListsArr.find(c=>c.id===key && !c.isDefault);
-      if(custom) return t.filter(td=>matchesCustomFilter(td, custom.filter));
+      if(custom) return slEvalList(t, custom.filter);
       return [];
     }
   }
@@ -3567,6 +3578,7 @@ function render(){
   if(state.offlineDuplicateFlags && state.offlineDuplicateFlags.length) renderOfflineDuplicatesModal();
   if(state.myNotesOpen) renderMyNotesModal();
   if(state.newSmartListModal) renderNewSmartListModal();
+  if(state.sl2) renderSl2Editor();
   if(state.brokerReviewModal) renderBrokerReviewModal();
   if(state.qualifiedOfferPrompt) renderQualifiedOfferPrompt();
   if(state.stageReminderPrompt) renderStageReminderPrompt();
@@ -4497,6 +4509,416 @@ function ascendixPickUploader(sourceTable, sourceId, clientId, dealName){
     ov.querySelector('#ascOk').onclick = ()=>{ const v = ov.querySelector('#ascPick').value; ov.remove(); resolve(v || state.currentUser.id); };
   });
 }
+
+/* ---------------- SMART LISTS v2 (2026-10-27) ----------------
+   Michael: built-in Smart Lists stay exactly as they are (they're the starter template every
+   user gets). Each person can Edit / Duplicate / Hide / Reset any of them — just for themselves.
+   User-made lists can fill by rules (condition groups, OR between groups), by hand
+   ("Add to ▸ list"), or both. Everything private. No new tables: overrides of built-ins are
+   rows in smart_lists whose filter has {v:2, baseId}; hand-added To-Do ids live in filter.manualIds. */
+
+// Rules equivalent to each built-in — the starting point when someone edits one.
+const SL_BUILTIN_RULES = {
+  todayMe:   [[{f:'assignee',op:'is',v:'me'},{f:'done',op:'is',v:'open'},{f:'due',op:'todayOrOverdue'}]],
+  todayAll:  [[{f:'sphere',op:'is',v:'yes'},{f:'done',op:'is',v:'open'},{f:'due',op:'today'}]],
+  overdueMe: [[{f:'assignee',op:'is',v:'me'},{f:'done',op:'is',v:'open'},{f:'due',op:'overdue'}]],
+  overdueAll:[[{f:'sphere',op:'is',v:'yes'},{f:'done',op:'is',v:'open'},{f:'due',op:'overdue'}]],
+  assignedByOthers:[[{f:'assignee',op:'is',v:'me'},{f:'from',op:'isnot',v:'me'},{f:'done',op:'is',v:'open'}]],
+  week:      [[{f:'assignee',op:'is',v:'me'},{f:'done',op:'is',v:'open'},{f:'due',op:'thisWeek'}]],
+  month:     [[{f:'assignee',op:'is',v:'me'},{f:'done',op:'is',v:'open'},{f:'due',op:'thisMonth'}]],
+  allMe:     [[{f:'sphere',op:'is',v:'yes'},{f:'done',op:'is',v:'open'}]],
+  someday:   [[{f:'sphere',op:'is',v:'yes'},{f:'done',op:'is',v:'open'},{f:'due',op:'nodate'}]],
+  completed: [[{f:'sphere',op:'is',v:'yes'},{f:'done',op:'is',v:'completed'}]],
+  everything:[[{f:'sphere',op:'is',v:'yes'},{f:'done',op:'is',v:'open'}]],
+};
+const SL_DEAL_STAGES = [['prospect','Prospect'],['loi','LOI'],['signedLOI','Signed LOI'],['negotiating','Negotiating'],['signedLease','Signed Lease'],['inEscrow','In Escrow'],['closedEscrow','Closed Escrow'],['dead','Dead']];
+// Field catalog for the builder. ops: [value, label, valueKind]
+function slFields(){
+  const people = [['me','Me'], ...usersSortedByMe().filter(u=>u.id!==state.currentUser.id).map(u=>[u.id,u.name]), ['unassigned','Unassigned']];
+  return {
+    assignee:{label:'Assigned to', group:'Who', ops:[['is','is','pick'],['isnot','is not','pick']], values:people},
+    from:{label:'From (assigned by)', group:'Who', ops:[['is','is','pick'],['isnot','is not','pick']], values:[['me','Me'], ...usersSortedByMe().filter(u=>u.id!==state.currentUser.id).map(u=>[u.id,u.name]), ['portal','The Portal (Ascendix, Cold Calls…)']]},
+    sphere:{label:'Mine or I assigned it', group:'Who', ops:[['is','yes','none']]},
+    due:{label:'Due date', group:'When', ops:[['today','is today','none'],['tomorrow','is tomorrow','none'],['todayOrOverdue','is today or overdue','none'],['overdue','is overdue','none'],['overdueBy','is overdue by at least','num'],['thisWeek','is this week (incl. overdue)','none'],['thisMonth','is this month (incl. overdue)','none'],['nextDays','is in the next … days','num'],['before','is before','date'],['after','is after','date'],['between','is between','date2'],['nodate','has no date','none'],['hasdate','has a date','none']]},
+    created:{label:'Created', group:'When', ops:[['lastDays','in the last … days','num'],['before','before','date'],['after','after','date']]},
+    completedOn:{label:'Completed', group:'When', ops:[['lastDays','in the last … days','num'],['today','today','none']]},
+    done:{label:'Open / Completed', group:'What', ops:[['is','is','pick']], values:[['open','Open'],['completed','Completed']]},
+    status:{label:'Status', group:'What', ops:[['is','is','pick'],['isnot','is not','pick']], values:STATUS_PRESETS.map(s=>[s,s])},
+    category:{label:'Category', group:'What', ops:[['is','is','cat'],['isnot','is not','cat'],['empty','is empty','none']]},
+    type:{label:'Type', group:'What', ops:[['is','is','pick']], values:[['task','Task'],['checklist','Checklist']]},
+    private:{label:'Private', group:'What', ops:[['is','is','pick']], values:[['yes','Yes'],['no','No']]},
+    attachments:{label:'Attachments', group:'What', ops:[['has','has attachments','none'],['none','has none','none']]},
+    linked:{label:'Linked to', group:'Where', ops:[['is','is','pick'],['isnot','is not','pick']], values:[['client','A Client'],['listing','A Listing'],['deal','A specific Deal / site'],['hitlist','Hit List'],['hotlist','Hot List'],['project','A Project'],['nothing','Nothing (personal)']]},
+    account:{label:'Client / Listing', group:'Where', ops:[['is','is','acct'],['isnot','is not','acct']]},
+    dealStage:{label:'Deal stage', group:'Where', ops:[['is','is','pick'],['isnot','is not','pick']], values:SL_DEAL_STAGES},
+    answer:{label:'Answer', group:'Answers', ops:[['is','is','pick']], values:[['new','New — waiting on my answer'],['accepted','Accepted'],['declined','Declined'],['waiting','Waiting on someone else'],['dateRequested','New date requested'],['locked','🔒 Locked date']]},
+    special:{label:'Special', group:'Special', ops:[['is','is','pick'],['isnot','is not','pick']], values:[['coldCalls','Cold Calls'],['ascendix','Ascendix'],['brokerReview','Broker Review']]},
+  };
+}
+function slDealMap(){
+  const now = Date.now();
+  if(state._slDealMap && now - state._slDealMapAt < 3000) return state._slDealMap;
+  const m = new Map();
+  db.lists.forEach(l=>(l.clients||[]).forEach(c=>{ (c.deals||[]).forEach(d=>m.set(d.id, {deal:d, client:c, listId:l.id})); }));
+  state._slDealMap = m; state._slDealMapAt = now; return m;
+}
+function slResolveUser(v){ return v==='me' ? state.currentUser.id : v; }
+function slCond(td, c){
+  const me = state.currentUser.id; const v = c.v;
+  const d = td.dueDate ? new Date(td.dueDate) : null; const today = todayDate();
+  const dayDiff = (a)=>Math.round((new Date(a.getFullYear(),a.getMonth(),a.getDate()) - today)/86400000);
+  const dt = s=> s ? new Date(s+'T00:00:00') : null;
+  switch(c.f){
+    case 'assignee': { const hit = v==='unassigned' ? !td.assignedTo : td.assignedTo===slResolveUser(v); return c.op==='isnot' ? !hit : hit; }
+    case 'from': { const auto = ['Ascendix','Broker Review','Cold Calls'].includes(td.category);
+      const hit = v==='portal' ? auto : (!auto && td.createdBy===slResolveUser(v) && (v!=='me' || true)); return c.op==='isnot' ? !hit : hit; }
+    case 'sphere': return td.assignedTo===me || td.createdBy===me;
+    case 'due': {
+      const s = dueStatus(td.dueDate);
+      if(c.op==='nodate') return !d; if(c.op==='hasdate') return !!d;
+      if(!d) return false;
+      if(c.op==='today') return s==='today';
+      if(c.op==='tomorrow') return dayDiff(d)===1;
+      if(c.op==='todayOrOverdue') return s==='today' || s==='overdue';
+      if(c.op==='overdue') return s==='overdue';
+      if(c.op==='overdueBy') return dayDiff(d) <= -Math.max(1, parseInt(v,10)||1);
+      if(c.op==='thisWeek') return ['today','overdue','week'].includes(s);
+      if(c.op==='thisMonth') return ['today','overdue','week','month'].includes(s);
+      if(c.op==='nextDays'){ const n=parseInt(v,10)||7; const x=dayDiff(d); return x>=0 && x<n; }
+      if(c.op==='before') return dt(v) ? d < dt(v) : false;
+      if(c.op==='after') return dt(v) ? d > dt(v) : false;
+      if(c.op==='between') return dt(v)&&dt(c.v2) ? (d>=dt(v) && d<=dt(c.v2)) : false;
+      return false;
+    }
+    case 'created': { const cd = td.createdAt ? new Date(td.createdAt) : null; if(!cd) return false;
+      if(c.op==='lastDays') return (Date.now()-cd)/86400000 <= (parseInt(v,10)||7);
+      if(c.op==='before') return dt(v) ? cd < dt(v) : false;
+      if(c.op==='after') return dt(v) ? cd > dt(v) : false; return false; }
+    case 'completedOn': { if(!td.completed) return false; const cd = td.completedAt ? new Date(td.completedAt) : null; if(!cd) return false;
+      if(c.op==='today') return isSameDay(cd, today);
+      return (Date.now()-cd)/86400000 <= (parseInt(v,10)||7); }
+    case 'done': return v==='completed' ? !!td.completed : !td.completed;
+    case 'status': { const hit = (td.status||'Not Started')===v; return c.op==='isnot' ? !hit : hit; }
+    case 'category': { const tc=(td.category||'').trim().toLowerCase(); if(c.op==='empty') return !tc; const hit = tc===(v||'').trim().toLowerCase(); return c.op==='isnot' ? !hit : hit; }
+    case 'type': return (td.type||'task')===v;
+    case 'private': return v==='yes' ? !!td.private : !td.private;
+    case 'attachments': { const has = !!(td.attachments && td.attachments.length); return c.op==='has' ? has : !has; }
+    case 'linked': {
+      const info = td.dealId ? slDealMap().get(td.dealId) : null;
+      let hit = false;
+      if(v==='client') hit = td.listId==='clients' || (info && info.listId==='clients');
+      else if(v==='listing') hit = td.listId==='listings' || (info && info.listId==='listings');
+      else if(v==='deal') hit = !!td.dealId;
+      else if(v==='hitlist') hit = td.listId==='hitlist' && !!td.entryId;
+      else if(v==='hotlist') hit = td.listId==='hotlist' && !!td.entryId;
+      else if(v==='project') hit = !!td.projectId;
+      else if(v==='nothing') hit = !td.clientId && !td.dealId && !td.entryId && !td.projectId;
+      return c.op==='isnot' ? !hit : hit; }
+    case 'account': { const hit = !!v && todoBelongsToClient(td, v); return c.op==='isnot' ? !hit : hit; }
+    case 'dealStage': { const info = td.dealId ? slDealMap().get(td.dealId) : null; const hit = !!info && info.deal.stage===v; return c.op==='isnot' ? !hit : hit; }
+    case 'answer': {
+      if(v==='new') return td.ackStatus==='pending' && td.assignedTo===me;
+      if(v==='accepted') return td.ackStatus==='accepted';
+      if(v==='declined') return td.ackStatus==='declined';
+      if(v==='waiting') return td.ackStatus==='pending' && td.createdBy===me && td.assignedTo!==me;
+      if(v==='dateRequested') return !!td.proposedDue;
+      if(v==='locked') return !!td.dueLocked;
+      return false; }
+    case 'special': { const map = {coldCalls:'Cold Calls', ascendix:'Ascendix', brokerReview:'Broker Review'}; const hit = td.category===map[v]; return c.op==='isnot' ? !hit : hit; }
+  }
+  return true;
+}
+function slHasRules(f){ return !!(f && ((f.v===2 && (f.groups||[]).some(g=>g.length)) || (f.v!==2))); }
+// One list's To-Do's from its filter (v1 old format or v2) plus the hand-added ones.
+function slEvalList(t, f){
+  const manual = new Set((f && f.manualIds) || []);
+  const view = (f && f.view) || {};
+  const showDone = view.showCompleted || 'no';
+  const groups = (f && f.v===2) ? (f.groups||[]).filter(g=>g.length) : null;
+  const rulesMention = groups && groups.some(g=>g.some(c=>c.f==='done' || c.f==='completedOn'));
+  const doneOk = td=>{
+    if(!td.completed) return true;
+    if(showDone==='today') return td.completedAt && isSameDay(new Date(td.completedAt), todayDate());
+    if(showDone==='7d') return td.completedAt && (Date.now()-new Date(td.completedAt))/86400000 <= 7;
+    return false;
+  };
+  return t.filter(td=>{
+    let byRule = false;
+    if(groups) byRule = groups.length ? groups.some(g=>g.every(c=>slCond(td,c))) : false;
+    else if(f) byRule = matchesCustomFilter(td, f);
+    if(byRule) return groups && !rulesMention ? doneOk(td) : true;
+    if(manual.has(td.id)) return doneOk(td);
+    return false;
+  });
+}
+function slOverride(id){ const sl = smartListsArr.find(s=>s.id===id); return sl && sl.override ? sl.override : null; }
+function slFilterOf(sl){ return sl.isDefault ? (sl.override && sl.override.filter) : sl.filter; }
+function slIsHidden(sl){ const f = slFilterOf(sl); return !!(f && f.hidden); }
+function slIsEditedBuiltin(sl){ return sl.isDefault && sl.override && sl.override.filter && sl.override.filter.edited; }
+
+/* ---- saving ---- */
+async function slSaveOverride(sl, patch){
+  const authId = state.currentUser.authId; if(!authId) return;
+  const cur = sl.override ? {...sl.override.filter} : {v:2, baseId:sl.id};
+  const filter = {...cur, ...patch, v:2, baseId:sl.id};
+  if(sl.override){
+    sl.override.filter = filter; if(patch.name) sl.override.name = patch.name;
+    const { error } = await supabaseClient.from('smart_lists').update({name: filter.name||sl.baseName||sl.name, icon: filter.icon||sl.icon, filter}).eq('id', sl.override.rowId);
+    if(error){ flashToast(`Didn't save: ${error.message}`); render(); }
+  } else {
+    const rowId = crypto.randomUUID();
+    sl.override = {rowId, filter};
+    const { error } = await supabaseClient.from('smart_lists').insert({id:rowId, user_id:authId, name: filter.name||sl.name, icon: filter.icon||sl.icon, filter, display_order: 1000});
+    if(error){ flashToast(`Didn't save: ${error.message}`); render(); }
+  }
+  if(filter.edited){ if(filter.name) sl.name = filter.name; if(filter.icon) sl.icon = filter.icon; }
+}
+async function slResetBuiltin(sl){
+  if(!sl.override) return;
+  const rowId = sl.override.rowId; sl.override = null;
+  const base = SMART_LIST_DEFAULTS.find(d=>d.id===sl.id); if(base){ sl.name = base.name; sl.icon = base.icon; }
+  const { error } = await supabaseClient.from('smart_lists').delete().eq('id', rowId);
+  if(error){ flashToast(`Didn't reset: ${error.message}`); }
+}
+async function slSetHidden(sl, hidden){
+  if(sl.isDefault) await slSaveOverride(sl, {hidden});
+  else { sl.filter = {...(sl.filter||{}), hidden}; await supaUpdateSmartList(sl); }
+  if(hidden && state.mainView.type==='smart' && state.mainView.id===sl.id) state.mainView = {type:'smart', id:'todayMe'};
+}
+async function slSetManual(sl, todoId, add){
+  const f = slFilterOf(sl) || {};
+  const ids = new Set(f.manualIds||[]); if(add) ids.add(todoId); else ids.delete(todoId);
+  if(sl.isDefault) await slSaveOverride(sl, {manualIds:[...ids]});
+  else { sl.filter = {...(sl.filter||{}), manualIds:[...ids]}; await supaUpdateSmartList(sl); }
+}
+function slAddableLists(){ return smartListsArr.filter(s=>!s.isDefault && !slIsHidden(s)); }
+
+/* ---- editor ---- */
+function slV1toV2(f){
+  if(!f || f.v===2) return f ? JSON.parse(JSON.stringify(f.groups||[])) : [];
+  const conds = [];
+  if(f.status && f.status!=='any') conds.push({f:'done',op:'is',v:f.status==='completed'?'completed':'open'});
+  if(f.assignee && f.assignee!=='any'){
+    if(f.assignee==='meByOthers'){ conds.push({f:'assignee',op:'is',v:'me'}); conds.push({f:'from',op:'isnot',v:'me'}); }
+    else conds.push({f:'assignee',op:'is',v:f.assignee});
+  }
+  const dr = {today:'today', week:'thisWeek', month:'thisMonth', overdue:'overdue', nodate:'nodate'};
+  if(f.dateRule && f.dateRule!=='any'){ if(f.dateRule==='exact') conds.push({f:'due',op:'between',v:f.exactDate,v2:f.exactDate}); else if(dr[f.dateRule]) conds.push({f:'due',op:dr[f.dateRule]}); }
+  const cats = (f.categories&&f.categories.length) ? f.categories : (f.category?[f.category]:[]);
+  const clients = (f.clientIds&&f.clientIds.length) ? f.clientIds : (f.clientId?[f.clientId]:[]);
+  if(f.personalOnly) conds.push({f:'linked',op:'is',v:'nothing'});
+  // several categories / clients = "any of these" → one OR group per value
+  let groups = [conds];
+  if(cats.length) groups = groups.flatMap(g=>cats.map(cat=>[...g, {f:'category',op:'is',v:cat}]));
+  if(clients.length) groups = groups.flatMap(g=>clients.map(cid=>[...g, {f:'account',op:'is',v:cid}]));
+  if(f.matchMode==='any') groups = groups[0].map(c=>[c]);
+  return groups.filter(g=>g.length);
+}
+function openSl2Editor(id){
+  const sl = id ? smartListsArr.find(s=>s.id===id) : null;
+  if(sl && sl.isDefault){
+    const f = sl.override && sl.override.filter;
+    const groups = (f && f.edited && f.groups) ? JSON.parse(JSON.stringify(f.groups)) : JSON.parse(JSON.stringify(SL_BUILTIN_RULES[sl.id]||[]));
+    state.sl2 = {id:sl.id, builtin:true, name:sl.name, icon:sl.icon, groups, view:{...((f&&f.view)||{})}, manualCount:((f&&f.manualIds)||[]).length};
+  } else if(sl){
+    state.sl2 = {id:sl.id, builtin:false, name:sl.name, icon:sl.icon||'⭐', groups:slV1toV2(sl.filter), view:{...((sl.filter&&sl.filter.view)||{})}, manualCount:((sl.filter&&sl.filter.manualIds)||[]).length};
+  } else {
+    state.sl2 = {id:null, builtin:false, name:'', icon:'⭐', groups:[], view:{}, manualCount:0};
+  }
+  render();
+}
+function slValueInput(c, gi, ci){
+  const F = slFields()[c.f]; if(!F) return '';
+  const op = (F.ops.find(o=>o[0]===c.op)||F.ops[0]); const kind = op[2];
+  const attr = `data-sl2val="${gi}:${ci}"`;
+  if(kind==='none') return '';
+  if(kind==='num') return `<input type="number" min="1" ${attr} value="${escapeAttr(c.v||'')}" placeholder="days" style="width:90px;">`;
+  if(kind==='date') return `<input type="date" ${attr} value="${escapeAttr(c.v||'')}">`;
+  if(kind==='date2') return `<input type="date" ${attr} value="${escapeAttr(c.v||'')}"> <span class="tiny">and</span> <input type="date" data-sl2val2="${gi}:${ci}" value="${escapeAttr(c.v2||'')}">`;
+  if(kind==='cat') return `<input ${attr} list="sl2Cats" value="${escapeAttr(c.v||'')}" placeholder="Category">`;
+  if(kind==='acct') return `<select ${attr}><option value="">Pick a Client / Listing…</option>${allClientsFlat().sort((a,b)=>a.name.localeCompare(b.name)).map(a=>`<option value="${a.id}" ${c.v===a.id?'selected':''}>${escapeHtml(a.name)} (${escapeHtml(a.listName)})</option>`).join('')}</select>`;
+  return `<select ${attr}>${(F.values||[]).map(([vv,l])=>`<option value="${escapeAttr(vv)}" ${c.v===vv?'selected':''}>${escapeHtml(l)}</option>`).join('')}</select>`;
+}
+function renderSl2Editor(){
+  const m = state.sl2; const F = slFields();
+  const fieldOpts = (sel)=>{ const grp = {}; Object.entries(F).forEach(([k,f])=>{ (grp[f.group]=grp[f.group]||[]).push([k,f.label]); });
+    return Object.entries(grp).map(([g,arr])=>`<optgroup label="${g}">${arr.map(([k,l])=>`<option value="${k}" ${sel===k?'selected':''}>${escapeHtml(l)}</option>`).join('')}</optgroup>`).join(''); };
+  const groupsHtml = m.groups.map((g,gi)=>`
+    ${gi>0 ? `<div class="sl2-or">— OR —</div>` : ''}
+    <div class="sl2-group">
+      ${g.map((c,ci)=>{ const f = F[c.f] || F.due; return `<div class="sl2-cond">
+        <select data-sl2field="${gi}:${ci}">${fieldOpts(c.f)}</select>
+        ${f.ops.length>1 || f.ops[0][2]!=='none' || f.ops[0][1]!=='yes' ? `<select data-sl2op="${gi}:${ci}">${f.ops.map(o=>`<option value="${o[0]}" ${c.op===o[0]?'selected':''}>${escapeHtml(o[1])}</option>`).join('')}</select>` : ''}
+        ${slValueInput(c, gi, ci)}
+        <button class="sl2-x" data-sl2del="${gi}:${ci}" title="Remove">✕</button></div>`; }).join('')}
+      <button class="ter-link sl2-add" data-sl2addcond="${gi}">+ Add condition (AND)</button>
+    </div>`).join('');
+  const v = m.view || {};
+  const sel = (key, opts)=>`<select data-sl2view="${key}">${opts.map(([val,l])=>`<option value="${val}" ${(v[key]||opts[0][0])===val?'selected':''}>${l}</option>`).join('')}</select>`;
+  const overlay = document.createElement('div'); overlay.className='modal-overlay'; overlay.style.zIndex=185;
+  overlay.innerHTML = `<div class="modal-card wide" style="max-height:90vh;">
+    <div class="modal-head"><div class="modal-title">${m.id ? 'Edit Smart List' : 'New Smart List'}${m.builtin?' <span style="font-weight:400;opacity:.85;">· just for you</span>':''}</div><button class="modal-close" data-sl2="cancel">✕</button></div>
+    <div class="modal-body">
+      <div style="display:flex;gap:8px;">
+        <div class="field" style="width:80px;"><label>Icon</label><input data-sl2meta="icon" value="${escapeAttr(m.icon||'')}" maxlength="4" style="text-align:center;"></div>
+        <div class="field" style="flex:1;"><label>Name</label><input data-sl2meta="name" value="${escapeAttr(m.name||'')}" placeholder="e.g., Follow Up"></div>
+      </div>
+      <div class="section-label" style="margin-top:4px;">Show To-Do's that match</div>
+      ${groupsHtml || `<div class="tiny" style="color:var(--ink-soft);margin-bottom:8px;">No rules — this list only shows To-Do's you add to it by hand (⋯ → "Add to list" on any To-Do).</div>`}
+      <div style="display:flex;gap:10px;margin:8px 0 4px;">
+        ${m.groups.length ? '' : `<button class="btn secondary sm" data-sl2="addFirst">+ Add a rule</button>`}
+        ${m.groups.length ? `<button class="btn secondary sm" data-sl2="addGroup">+ Add OR group</button>` : ''}
+      </div>
+      <div class="tiny" style="color:var(--ink-soft);margin:6px 0 14px;">Plus ${m.manualCount} To-Do${m.manualCount===1?'':'s'} added by hand.${m.manualCount?` <span class="ter-link" data-sl2="clearManual">Clear them</span>`:''}</div>
+      <div class="section-label">How it looks</div>
+      <div class="sl2-view">
+        <label>Sort by ${sel('sort', [['',"Default"],['due','Due date'],['client','Client / Listing'],['person','Assigned to'],['from','From'],['created','Newest first'],['title','A–Z']])}</label>
+        <label>Group by ${sel('group', [['','None'],['due','Due date'],['client','Client / Listing'],['person','Assigned to'],['category','Category']])}</label>
+        <label>Show completed ${sel('showCompleted', [['no','No'],['today','Done today'],['7d','Done in last 7 days']])}</label>
+        <label>Sidebar count ${sel('badge', [['all','All'],['overdue','Overdue only'],['none','None']])}</label>
+      </div>
+      <datalist id="sl2Cats">${allCategories().map(c=>`<option value="${escapeAttr(c)}">`).join('')}</datalist>
+    </div>
+    <div class="modal-foot">
+      ${m.builtin && slIsEditedBuiltin(smartListsArr.find(s=>s.id===m.id)||{}) ? `<button class="btn secondary" data-sl2="reset" style="margin-right:auto;">↺ Reset to default</button>` : ''}
+      <button class="btn secondary" data-sl2="cancel">Cancel</button>
+      <button class="btn" data-sl2="save">${m.id ? 'Save' : 'Create Smart List'}</button>
+    </div></div>`;
+  document.getElementById('app').appendChild(overlay);
+}
+function sl2Idx(s){ const [g,c] = s.split(':').map(Number); return [g,c]; }
+document.addEventListener('change', ev=>{
+  const m = state.sl2; if(!m) return; const el = ev.target; const F = slFields();
+  if(el.dataset.sl2meta){ m[el.dataset.sl2meta] = el.value; return; }
+  if(el.dataset.sl2view){ m.view[el.dataset.sl2view] = el.value; return; }
+  if(el.dataset.sl2field){ const [g,c]=sl2Idx(el.dataset.sl2field); const f=F[el.value]; m.groups[g][c] = {f:el.value, op:f.ops[0][0], v:(f.values&&f.values[0]?f.values[0][0]:'')}; render(); return; }
+  if(el.dataset.sl2op){ const [g,c]=sl2Idx(el.dataset.sl2op); m.groups[g][c].op = el.value; render(); return; }
+  if(el.dataset.sl2val){ const [g,c]=sl2Idx(el.dataset.sl2val); m.groups[g][c].v = el.value; return; }
+  if(el.dataset.sl2val2){ const [g,c]=sl2Idx(el.dataset.sl2val2); m.groups[g][c].v2 = el.value; return; }
+});
+document.addEventListener('input', ev=>{ const m = state.sl2; if(!m) return; const el = ev.target;
+  if(el.dataset && el.dataset.sl2meta) m[el.dataset.sl2meta] = el.value;
+  if(el.dataset && el.dataset.sl2val && el.tagName==='INPUT'){ const [g,c]=sl2Idx(el.dataset.sl2val); m.groups[g][c].v = el.value; } });
+document.addEventListener('click', async ev=>{
+  const t = ev.target.closest && ev.target.closest('[data-sl2],[data-sl2addcond],[data-sl2del]'); const m = state.sl2; if(!t || !m) return;
+  ev.preventDefault();
+  const newCond = ()=>({f:'due', op:'today'});
+  if(t.dataset.sl2addcond!=null){ m.groups[+t.dataset.sl2addcond].push(newCond()); render(); return; }
+  if(t.dataset.sl2del){ const [g,c]=sl2Idx(t.dataset.sl2del); m.groups[g].splice(c,1); if(!m.groups[g].length) m.groups.splice(g,1); render(); return; }
+  const a = t.dataset.sl2;
+  if(a==='cancel'){ state.sl2=null; render(); return; }
+  if(a==='addFirst' || a==='addGroup'){ m.groups.push([newCond()]); render(); return; }
+  if(a==='clearManual'){ m.clearManual = true; m.manualCount = 0; render(); return; }
+  if(a==='reset'){ const sl = smartListsArr.find(s=>s.id===m.id); if(sl && confirm(`Reset "${sl.name}" to the original?`)){ await slResetBuiltin(sl); state.sl2=null; flashToast('Back to the original.'); render(); } return; }
+  if(a==='save'){
+    const name = (m.name||'').trim(); if(!name){ flashToast('Give it a name.'); render(); return; }
+    const groups = m.groups.filter(g=>g.length);
+    if(m.builtin){
+      const sl = smartListsArr.find(s=>s.id===m.id);
+      const patch = {edited:true, name, icon:m.icon||sl.icon, groups, view:m.view};
+      if(m.clearManual) patch.manualIds = [];
+      await slSaveOverride(sl, patch);
+    } else if(m.id){
+      const sl = smartListsArr.find(s=>s.id===m.id);
+      const keep = sl.filter||{};
+      sl.name = name; sl.icon = m.icon||'⭐';
+      sl.filter = {v:2, groups, view:m.view, manualIds: m.clearManual ? [] : (keep.manualIds||[]), hidden: !!keep.hidden};
+      await supaUpdateSmartList(sl);
+    } else {
+      const sl = {id:crypto.randomUUID(), name, icon:m.icon||'⭐', isDefault:false, filter:{v:2, groups, view:m.view, manualIds:[]}};
+      smartListsArr.push(sl);
+      await supaCreateSmartList(sl, smartListsArr.filter(s=>!s.isDefault).length-1);
+      state.mainView = {type:'smart', id:sl.id};
+    }
+    state.sl2 = null; flashToast('Smart List saved.'); render(); return;
+  }
+});
+// Context-menu extras: Duplicate, Hide / Unhide, Reset.
+async function slDuplicate(id){
+  const sl = smartListsArr.find(s=>s.id===id); if(!sl) return;
+  const groups = sl.isDefault ? (slIsEditedBuiltin(sl) ? sl.override.filter.groups : (SL_BUILTIN_RULES[sl.id]||[])) : slV1toV2(sl.filter);
+  const f = slFilterOf(sl) || {};
+  const copy = {id:crypto.randomUUID(), name:`${sl.name} (copy)`, icon:sl.icon, isDefault:false, filter:{v:2, groups:JSON.parse(JSON.stringify(groups)), view:{...(f.view||{})}, manualIds:[...(f.manualIds||[])]}};
+  smartListsArr.push(copy);
+  await supaCreateSmartList(copy, smartListsArr.filter(s=>!s.isDefault).length-1);
+  openSl2Editor(copy.id);
+}
+document.addEventListener('click', async ev=>{
+  const el = ev.target.closest && ev.target.closest('[data-slmenu]'); if(!el) return;
+  ev.preventDefault(); ev.stopPropagation();
+  const [a, id] = el.dataset.slmenu.split('|'); const sl = smartListsArr.find(s=>s.id===id); state.navContextMenu = null;
+  if(!sl){ render(); return; }
+  if(a==='edit') openSl2Editor(id);
+  else if(a==='dup') await slDuplicate(id);
+  else if(a==='hide'){ await slSetHidden(sl, true); flashToast(`"${sl.name}" hidden — find it under "Hidden" at the bottom of Smart Lists.`); }
+  else if(a==='unhide'){ await slSetHidden(sl, false); }
+  else if(a==='reset'){ if(confirm(`Reset "${sl.name}" to the original?`)) await slResetBuiltin(sl); }
+  render();
+}, true);
+
+/* ---- list view: sort / group ---- */
+function slViewFor(id){ const sl = smartListsArr.find(s=>s.id===id); if(!sl) return null; const f = slFilterOf(sl); return f && f.view ? f.view : null; }
+function slClientName(td){
+  if(td.dealId){ const info = slDealMap().get(td.dealId); if(info) return info.client.name; }
+  if(td.clientId){ const c = allClientsFlat().find(x=>x.id===td.clientId); if(c) return c.name; }
+  return '';
+}
+function slPersonName(id){ const u = USERS.find(x=>x.id===id); return u ? u.name : ''; }
+function renderSlView(list, view){
+  const sorters = {
+    due:(a,b)=>(a.dueDate?+a.dueDate:Infinity)-(b.dueDate?+b.dueDate:Infinity),
+    client:(a,b)=>slClientName(a).localeCompare(slClientName(b)) || ((a.dueDate||Infinity)-(b.dueDate||Infinity)),
+    person:(a,b)=>slPersonName(a.assignedTo).localeCompare(slPersonName(b.assignedTo)),
+    from:(a,b)=>(todoFromLabel(a)||'').localeCompare(todoFromLabel(b)||''),
+    created:(a,b)=>(b.createdAt?+new Date(b.createdAt):0)-(a.createdAt?+new Date(a.createdAt):0),
+    title:(a,b)=>(a.title||'').localeCompare(b.title||''),
+  };
+  const sorted = list.slice().sort((a,b)=>{ if(!!a.completed!==!!b.completed) return a.completed?1:-1; return (sorters[view.sort]||sorters.due)(a,b); });
+  const ids = sorted.map(t=>t.id);
+  if(!view.group) return todoRowLegend(ids) + sorted.map(td=>renderTodoRow(td)).join('');
+  const keyOf = {
+    due: td=>{ if(td.completed) return 'Completed'; const s = dueStatus(td.dueDate); return !td.dueDate ? 'No date' : s==='overdue' ? 'Overdue' : s==='today' ? 'Today' : s==='week' ? 'This week' : s==='month' ? 'This month' : 'Later'; },
+    client: td=>slClientName(td) || 'Not linked',
+    person: td=>slPersonName(td.assignedTo) || 'Unassigned',
+    category: td=>td.category || 'No category',
+  }[view.group];
+  const order = view.group==='due' ? ['Overdue','Today','This week','This month','Later','No date','Completed'] : null;
+  const groups = new Map(); sorted.forEach(td=>{ const k = keyOf(td); if(!groups.has(k)) groups.set(k, []); groups.get(k).push(td); });
+  const keys = [...groups.keys()].sort((a,b)=> order ? order.indexOf(a)-order.indexOf(b) : a.localeCompare(b));
+  return todoRowLegend(ids) + keys.map(k=>`<div class="section-label" style="margin-top:14px;">${escapeHtml(k)} (${groups.get(k).length})</div>${groups.get(k).map(td=>renderTodoRow(td)).join('')}`).join('');
+}
+
+/* ---- "Add to list" on a To-Do ---- */
+function slTodoListsHtml(td){
+  const lists = slAddableLists();
+  if(!lists.length) return '';
+  const inLists = lists.filter(sl=>((slFilterOf(sl)||{}).manualIds||[]).includes(td.id));
+  const out = lists.filter(sl=>!inLists.includes(sl));
+  return `<div class="field"><label>My Smart Lists</label>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">
+      ${inLists.map(sl=>`<span class="pill" style="display:flex;align-items:center;gap:6px;">${sl.icon||''} ${escapeHtml(sl.name)}<button data-sltodo="remove|${sl.id}|${td.id}" style="border:none;background:none;cursor:pointer;color:var(--ink-soft);">✕</button></span>`).join('')}
+      ${out.length ? `<select data-sltodoadd="${td.id}" style="width:auto;"><option value="">+ Add to list…</option>${out.map(sl=>`<option value="${sl.id}">${escapeHtml(sl.name)}</option>`).join('')}</select>` : ''}
+    </div></div>`;
+}
+document.addEventListener('change', async ev=>{
+  const el = ev.target; if(!el.dataset || !el.dataset.sltodoadd || !el.value) return;
+  const sl = smartListsArr.find(s=>s.id===el.value); if(!sl) return;
+  await slSetManual(sl, el.dataset.sltodoadd, true); flashToast(`Added to "${sl.name}".`); renderPreservingScroll('.modal-body');
+});
+document.addEventListener('click', async ev=>{
+  const el = ev.target.closest && ev.target.closest('[data-sltodo]'); if(!el) return;
+  ev.preventDefault();
+  const [a, slId, tdId] = el.dataset.sltodo.split('|'); const sl = smartListsArr.find(s=>s.id===slId); if(!sl) return;
+  await slSetManual(sl, tdId, a==='add'); renderPreservingScroll('.modal-body');
+});
+// Bulk: add the selected To-Do's to a list.
+document.addEventListener('change', async ev=>{
+  const el = ev.target; if(!el.dataset || el.dataset.action!=='bulkAddToList' || !el.value) return;
+  const sl = smartListsArr.find(s=>s.id===el.value); if(!sl) return;
+  const f = slFilterOf(sl) || {}; const ids = new Set([...(f.manualIds||[]), ...state.selectedTodoIds]);
+  if(sl.isDefault) await slSaveOverride(sl, {manualIds:[...ids]}); else { sl.filter = {...f, manualIds:[...ids]}; await supaUpdateSmartList(sl); }
+  flashToast(`Added ${state.selectedTodoIds.length} to "${sl.name}".`); state.selectedTodoIds = []; render();
+});
 
 (function mwObserve(){
   const scan = root=>{ if(root.querySelectorAll) root.querySelectorAll('.modal-card').forEach(mwEnhance); if(root.classList && root.classList.contains('modal-card')) mwEnhance(root); };
@@ -6655,8 +7077,11 @@ function renderNavContextMenu(kind, id){
   <div class="nav-context-menu">
     <button data-navmove="up:${kind}:${id}">↑ Move Up</button>
     <button data-navmove="down:${kind}:${id}">↓ Move Down</button>
-    ${isCustomSmart ? `<button data-editsmartlist="${id}">✏️ Edit</button>` : ''}
-    ${canDelete? `<button class="danger" data-navdelete="${kind}:${id}">🗑️ Delete</button>` : `<button disabled style="opacity:.4;cursor:default;">Default — can't delete</button>`}
+    ${kind==='smart' ? (()=>{ const sl = smartListsArr.find(s=>s.id===id); const editable = !sl.isDefault || !!SL_BUILTIN_RULES[id]; const hidden = slIsHidden(sl);
+      return `${editable ? `<button data-slmenu="edit|${id}">✏️ Edit</button><button data-slmenu="dup|${id}">📄 Duplicate</button>` : ''}
+        ${hidden ? `<button data-slmenu="unhide|${id}">👁️ Unhide</button>` : `<button data-slmenu="hide|${id}">🙈 Hide</button>`}
+        ${slIsEditedBuiltin(sl) ? `<button data-slmenu="reset|${id}">↺ Reset to default</button>` : ''}`; })() : ''}
+    ${canDelete? `<button class="danger" data-navdelete="${kind}:${id}">🗑️ Delete</button>` : (kind==='smart' ? '' : `<button disabled style="opacity:.4;cursor:default;">Default — can't delete</button>`)}
   </div>`;
 }
 function moveKeyInArray(arr, key, dir){
@@ -6676,8 +7101,10 @@ function moveArrayItem(arr, id, dir){
 function renderSidebar(){
   const cu = state.currentUser;
   const showAll = state.showAllSmartLists;
-  const visibleSmarts = showAll ? smartListsArr : smartListsArr.slice(0,10);
-  const hiddenCount = smartListsArr.length - visibleSmarts.length;
+  const shownSmarts = smartListsArr.filter(sl=>!slIsHidden(sl));
+  const hiddenSmarts = smartListsArr.filter(sl=>slIsHidden(sl));
+  const visibleSmarts = showAll ? shownSmarts : shownSmarts.slice(0,10);
+  const hiddenCount = shownSmarts.length - visibleSmarts.length;
   const menu = state.navContextMenu;
   return `
   <div class="sidebar">
@@ -6715,8 +7142,11 @@ function renderSidebar(){
           // behind it whenever something is only there because I created it for someone else.
           items = items.filter(td=>td.assignedTo===state.currentUser.id);
         }
+        { const bv = (slViewFor(sl.id)||{}).badge;
+          if(bv==='none') items = [];
+          else if(bv==='overdue' && Array.isArray(items)) items = items.filter(td=>!td.completed && dueStatus(td.dueDate)==='overdue'); }
         let cls='';
-        if(sl.id==='overdueMe'||sl.id==='overdueAll'||sl.id==='caStatus') cls='urgent';
+        if(sl.id==='overdueMe'||sl.id==='overdueAll'||sl.id==='caStatus' || ((slViewFor(sl.id)||{}).badge==='overdue')) cls='urgent';
         else if(sl.id==='todayMe'||sl.id==='todayAll') cls='mild';
         const active = state.mainView.type==='smart' && state.mainView.id===sl.id;
         const menuOpen = menu && menu.kind==='smart' && menu.id===sl.id;
@@ -6729,7 +7159,10 @@ function renderSidebar(){
           ${menuOpen ? renderNavContextMenu('smart', sl.id) : ''}
         </div>`;
       }).join('')}
-      ${smartListsArr.length>10 ? `
+      ${hiddenSmarts.length ? `<button class="nav-row" data-action="toggleHiddenSmarts" style="color:var(--ink-soft);"><span class="nav-icon">🙈</span><span class="nav-label">Hidden (${hiddenSmarts.length})</span></button>
+        ${state.showHiddenSmarts ? hiddenSmarts.map(sl=>`<div class="nav-row-wrap" style="opacity:.6;"><button class="nav-row" data-nav="smart:${sl.id}"><span class="nav-icon">${sl.icon}</span><span class="nav-label">${escapeHtml(sl.name)}</span></button>
+          <button class="nav-ellipsis" data-ellipsis="smart:${sl.id}">⋯</button>${menu && menu.kind==='smart' && menu.id===sl.id ? renderNavContextMenu('smart', sl.id) : ''}</div>`).join('') : ''}` : ''}
+      ${shownSmarts.length>10 ? `
       <button class="nav-row" data-action="toggleSmartCollapse" style="color:var(--edge-dark);">
         <span class="nav-icon">${showAll?'▲':'▼'}</span><span class="nav-label">${showAll? 'Show fewer':'Show '+hiddenCount+' more'}</span>
       </button>` : ''}
@@ -8711,6 +9144,8 @@ function renderMainContent(){
   const archiveBar = id==='completed' && list.length ?
     `<button class="btn secondary sm" data-action="archiveAllCompleted" style="margin-bottom:12px;">🗄️ Archive All Completed (${list.length})</button>` : '';
   if(!list.length && searchQ) return `<div class="empty-state"><div class="big">No matches for "${escapeHtml(searchQ)}".</div><div class="tiny">Try a different search, or clear it to see everything.</div></div>`;
+  { const slx = smartListsArr.find(x=>x.id===id); const v2 = slx && (slx.isDefault ? slIsEditedBuiltin(slx) : true);
+    if(v2){ const view = slViewFor(id) || {}; return archiveBar + renderBulkBar() + (list.length ? (view.sort || view.group ? renderSlView(list, view) : renderTodoList(list, false, false)) : renderTodoList([], false)); } }
   if(id==='todayMe') return renderBulkBar() + renderTodayMeMain(list);
   return archiveBar + renderBulkBar() + renderTodoList(list, false, id==='allMe');
 }
@@ -8854,6 +9289,7 @@ function renderBulkBar(){
   <div class="bulk-bar">
     <span>${state.selectedTodoIds.length} selected</span>
     <button class="btn secondary" data-action="bulkComplete">✓ Mark Complete</button>
+    ${slAddableLists().length ? `<select data-action="bulkAddToList" style="width:auto;"><option value="">≡ Add to list…</option>${slAddableLists().map(sl=>`<option value="${sl.id}">${escapeHtml(sl.name)}</option>`).join('')}</select>` : ''}
     <button class="btn danger" data-action="bulkDelete">🗑️ Delete</button>
     <button class="btn ghost" data-action="bulkClear">Clear</button>
   </div>`;
@@ -10526,6 +10962,7 @@ function attachShellHandlers(){
     state.navContextMenu=null;
     render();
   });
+  const hidBtn=document.querySelector('[data-action="toggleHiddenSmarts"]'); if(hidBtn) hidBtn.onclick=()=>{ state.showHiddenSmarts=!state.showHiddenSmarts; render(); };
   const collapseBtn=document.querySelector('[data-action="toggleSmartCollapse"]'); if(collapseBtn) collapseBtn.onclick=()=>{
     state.showAllSmartLists=!state.showAllSmartLists;
     renderPreservingScroll('.sidebar');
@@ -11161,7 +11598,8 @@ async function handleAdminAction(a){
   }
   render();
 }
-function promptAddSmartList(editingId){
+function promptAddSmartList(editingId){ openSl2Editor(editingId||null); }
+function promptAddSmartListOld(editingId){
   if(editingId){
     const existing = smartListsArr.find(s=>s.id===editingId);
     if(existing){
@@ -13932,6 +14370,7 @@ function renderTodoDetailModal(){
       ${td.type==='project' ? renderProjectSection(td) : ''}
       ${td.type==='project' ? bdCommentsHtml(td) : ''}
       ${ccTodoSection(td)}
+      ${slTodoListsHtml(td)}
       <div class="field">
         <label>Notes</label>
         <textarea id="detNotes" rows="3" placeholder="Any details worth keeping with this to-do…">${escapeHtml(td.notes||'')}</textarea>
