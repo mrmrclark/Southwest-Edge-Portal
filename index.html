@@ -886,7 +886,7 @@ const EDGE_LOGO_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAARgAAA
 // normal for this specific key type; Google expects it to be visible in page source and
 // restricted by domain, via HTTP referrer restriction in Google Cloud Console, not hidden
 // like the other secrets in this app). Replace once Michael has generated a real key.
-const APP_BUILD = '2026-10-27 smart-lists';
+const APP_BUILD = '2026-10-27 wip-dates';
 const GOOGLE_MAPS_JS_KEY = 'AIzaSyBMlIjvH2bpZK6mYJeNZSkQvM8TXQkCjDE';
 const CATEGORY_ORANGE_ICONS = ['💲','🏢','🎯','📋','☁️','🔧','✈️','🏛️','💎','📄','⭐','🗂️'];
 
@@ -9765,7 +9765,6 @@ function renderAdminMenu(){
     ${isAdmin ? `<div class="admin-item" data-action="adminReset">🔑 Reset a Password</div>` : ''}
     ${(false && isDBRole) ? `<div class="admin-item" data-action="openBrokerReviewLog">📋 Broker Review Log</div>` : ''}
     <div class="admin-item" data-action="goToDashboard">🏠 Dashboard</div>
-    <div class="admin-item" data-action="openPipelineView">📈 Pipeline View</div>
     <div class="admin-item" data-action="openGeocodeIssues">📍 Geocoding Issues</div>
     ${!state.isMobile ? `<div class="admin-item" data-action="openLoiImport">✨ Import Deal Document (AI)</div>` : ''}
   </div>`;
@@ -11066,14 +11065,12 @@ function attachShellHandlers(){
     if(state.wipView) state.wipView.viewUserId = wipViewSelect.value;
     render();
   };
-  const wipStartEl = document.getElementById('wipStartDate'); if(wipStartEl) wipStartEl.onchange=()=>{
-    if(state.wipView) state.wipView.startDate = wipStartEl.value;
-    render();
-  };
-  const wipEndEl = document.getElementById('wipEndDate'); if(wipEndEl) wipEndEl.onchange=()=>{
-    if(state.wipView) state.wipView.endDate = wipEndEl.value;
-    render();
-  };
+  // Dates apply on "Go" (or Enter) — re-rendering on every change kicked people out of the
+  // date box while they were still typing the year.
+  const wipApply = ()=>{ const a=document.getElementById('wipStartDate'), b=document.getElementById('wipEndDate');
+    if(state.wipView){ state.wipView.startDate = a ? a.value : ''; state.wipView.endDate = b ? b.value : ''; } render(); };
+  document.querySelectorAll('[data-action="applyWipDates"]').forEach(el=>el.onclick=wipApply);
+  ['wipStartDate','wipEndDate'].forEach(id=>{ const el=document.getElementById(id); if(el) el.onkeydown=(ev)=>{ if(ev.key==='Enter') wipApply(); }; });
   document.querySelectorAll('[data-action="clearWipDates"]').forEach(el=>el.onclick=()=>{
     if(state.wipView){ state.wipView.startDate=''; state.wipView.endDate=''; }
     render();
@@ -13418,6 +13415,7 @@ function wipRowsForUser(viewUserId){
       clientId:c.id, clientName:c.name, dealName:d.name, listId:r.listId, dealId:d.id,
       stage:d.stage, totalFee, pct, waValue, brokerNames,
       dueDate: d.dueDate ? toLocalDateStr(d.dueDate) : null,
+      payDates: [d.commission1DueDate, isSale ? null : d.commission2DueDate].filter(Boolean).map(x=>String(x).slice(0,10)),
       receivedAmt, pastDueAmt,
     });
   });
@@ -13454,8 +13452,12 @@ function renderWipView(){
   if(!isFull) m.viewUserId = state.currentUser.id; // standard producers only ever see their own numbers, even if state was tampered with
   const isOffice = isFull && m.viewUserId==='office';
   let rows = wipRowsForUser(isOffice ? 'office' : m.viewUserId);
-  if(m.startDate) rows = rows.filter(r=>r.dueDate && r.dueDate>=m.startDate);
-  if(m.endDate) rows = rows.filter(r=>r.dueDate && r.dueDate<=m.endDate);
+  // 2026-10-27: the range means "commission due in this window" (Commission 1 or 2 due date).
+  let noDates = 0;
+  if(m.startDate || m.endDate){
+    noDates = rows.filter(r=>!r.payDates.length).length;
+    rows = rows.filter(r=>r.payDates.some(x=>(!m.startDate || x>=m.startDate) && (!m.endDate || x<=m.endDate)));
+  }
   const stageLabel = s => LSR_STAGE_MAP[s] ? LSR_STAGE_MAP[s].name : s;
   const viewLabel = isOffice ? 'Office Total' : nameForSplitUserId(m.viewUserId);
   const sumTotalFee = rows.reduce((s,r)=>s+r.totalFee, 0);
@@ -13474,14 +13476,16 @@ function renderWipView(){
         ${USERS.filter(u=>u.id!==state.currentUser.id && u.commissionPlanId).map(u=>`<option value="${u.id}" ${m.viewUserId===u.id?'selected':''}>${escapeHtml(u.name)}</option>`).join('')}
       </select>
     </div>` : ''}
-    <div class="field" style="margin:0;"><label>Start Date</label><input type="date" id="wipStartDate" value="${escapeAttr(m.startDate||'')}"></div>
-    <div class="field" style="margin:0;"><label>End Date</label><input type="date" id="wipEndDate" value="${escapeAttr(m.endDate||'')}"></div>
+    <div class="field" style="margin:0;"><label>Commission due from</label><input type="date" id="wipStartDate" value="${escapeAttr(m.startDate||'')}"></div>
+    <div class="field" style="margin:0;"><label>to</label><input type="date" id="wipEndDate" value="${escapeAttr(m.endDate||'')}"></div>
+    <button class="btn sm" data-action="applyWipDates">Go</button>
     ${(m.startDate||m.endDate) ? `<button class="btn secondary sm" data-action="clearWipDates">Clear dates</button>` : ''}
     <button class="btn secondary sm" data-action="exportWip">⬇️ Export to Excel</button>
   </div>
   <div style="font-size:22px;font-weight:700;color:var(--edge);margin-bottom:14px;">
     ${escapeHtml(viewLabel)} — ${sumWaValue.toLocaleString('en-US',{style:'currency',currency:'USD'})} <span style="font-size:13px;font-weight:400;color:var(--ink-soft);">weighted (${sumTotalFee.toLocaleString('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0})} total fee across ${rows.length} deal${rows.length===1?'':'s'})</span>
   </div>
+  ${(m.startDate||m.endDate) ? `<div class="tiny" style="color:var(--ink-soft);margin:-6px 0 12px;">Showing deals with a Commission 1 or 2 due date in this range.${noDates?` ${noDates} deal${noDates===1?' has':'s have'} no commission due dates yet and ${noDates===1?"isn't":"aren't"} shown.`:''}</div>` : ''}
   ${rows.length ? `
   <div style="overflow-x:auto;">
   <table style="width:100%;border-collapse:collapse;font-size:12.5px;">
@@ -13528,8 +13532,7 @@ function wipExportCsv(){
   const m = state.wipView || {viewUserId: state.currentUser.id, startDate:'', endDate:''};
   const isOffice = isFull && m.viewUserId==='office';
   let rows = wipRowsForUser(isOffice ? 'office' : (isFull?m.viewUserId:state.currentUser.id));
-  if(m.startDate) rows = rows.filter(r=>r.dueDate && r.dueDate>=m.startDate);
-  if(m.endDate) rows = rows.filter(r=>r.dueDate && r.dueDate<=m.endDate);
+  if(m.startDate || m.endDate) rows = rows.filter(r=>r.payDates.some(x=>(!m.startDate || x>=m.startDate) && (!m.endDate || x<=m.endDate)));
   const stageLabel = s => LSR_STAGE_MAP[s] ? LSR_STAGE_MAP[s].name : s;
   const viewLabel = isOffice ? 'Office Total' : nameForSplitUserId(isFull?m.viewUserId:state.currentUser.id);
   const sumTotalFee = rows.reduce((s,r)=>s+r.totalFee, 0);
