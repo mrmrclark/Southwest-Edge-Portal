@@ -886,7 +886,7 @@ const EDGE_LOGO_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAARgAAA
 // normal for this specific key type; Google expects it to be visible in page source and
 // restricted by domain, via HTTP referrer restriction in Google Cloud Console, not hidden
 // like the other secrets in this app). Replace once Michael has generated a real key.
-const APP_BUILD = '2026-10-30 egnyte-picker';
+const APP_BUILD = '2026-10-30 loi-fast';
 const GOOGLE_MAPS_JS_KEY = 'AIzaSyBMlIjvH2bpZK6mYJeNZSkQvM8TXQkCjDE';
 const CATEGORY_ORANGE_ICONS = ['💲','🏢','🎯','📋','☁️','🔧','✈️','🏛️','💎','📄','⭐','🗂️'];
 
@@ -7918,11 +7918,27 @@ async function processLoiFile(file, dropSide){
     const base64 = await readFileAsBase64(file);
     const { data: sessionData } = await supabaseClient.auth.getSession();
     const jwt = sessionData?.session?.access_token;
-    const res = await fetch(`https://ugtlyzwvnhmcphtqkbke.supabase.co/functions/v1/extract-loi-terms`, {
+    // 2026-10-30: two calls side by side — the main fields come back in ~5s so the review
+    // screen opens right away; the longer "Other Key Terms" list fills in when it's ready.
+    const call = mode => fetch(`https://ugtlyzwvnhmcphtqkbke.supabase.co/functions/v1/extract-loi-terms`, {
       method:'POST',
       headers:{ 'Content-Type':'application/json', 'Authorization': `Bearer ${jwt}` },
-      body: JSON.stringify({ fileBase64: base64, fileType })
+      body: JSON.stringify({ fileBase64: base64, fileType, mode })
     });
+    const token = Symbol('loi');
+    m.keyTermsToken = token;
+    m.keyTermsPending = true;
+    m.keyTermsPromise = call('keyTerms').then(r=>r.json()).then(b=>{
+      const kt = (b && b.extracted && b.extracted.keyTerms) || '';
+      if(state.loiImport!==m || m.keyTermsToken!==token) return;
+      m.keyTermsPending = false;
+      if(!m.extracted) { m.keyTermsEarly = kt; return; }
+      const el = document.getElementById('loiKeyTerms');
+      const typed = el ? el.value.trim() : (m.extracted.keyTerms||'').trim();
+      if(!typed){ m.extracted.keyTerms = kt; if(el){ el.value = kt; el.placeholder=''; } }
+      const lbl = document.getElementById('loiKeyTermsStatus'); if(lbl) lbl.textContent = '';
+    }).catch(e=>{ console.error('key terms read failed', e); if(state.loiImport===m){ m.keyTermsPending=false; const lbl=document.getElementById('loiKeyTermsStatus'); if(lbl) lbl.textContent='(couldn’t read them — type any you need)'; } });
+    const res = await call('core');
     const body = await res.json();
     if(!res.ok || body.error){
       m.error = body.error || 'AI extraction failed — please try again.';
@@ -7931,6 +7947,7 @@ async function processLoiFile(file, dropSide){
       return;
     }
     m.extracted = body.extracted;
+    if(m.keyTermsEarly){ m.extracted.keyTerms = m.keyTermsEarly; m.keyTermsEarly = null; }
     m.lowConfidenceFileFormat = !!body.lowConfidenceFileFormat;
     matchLoiToAccount();
     m.loading = false;
@@ -8058,6 +8075,8 @@ function renderLoiClientPickerResultsHtml(){
 }
 function loiApplyTerms(rec, ex, isSale, fileName){
   rec.dealType = isSale ? 'sale' : 'lease';
+  // An LOI moves a Prospect (or a deal with no stage) up to LOI — never moves anything back.
+  if(String(ex.documentType||'').toUpperCase()==='LOI' && (!rec.stage || rec.stage==='prospect')) rec.stage = 'loi';
   if(isSale) rec.price = ex.rentOrPrice||rec.price; else rec.rent = ex.rentOrPrice||rec.rent;
   rec.term = ex.term || rec.term;
   rec.tiAllowance = ex.tiAllowance || rec.tiAllowance;
@@ -12155,7 +12174,7 @@ function renderLoiImportModal(){
         <div class="field"><label>TI Allowance</label><input id="loiTI" value="${escapeAttr(ex.tiAllowance||'')}"></div>
         <div class="field"><label>Total Commission / Fee</label><input id="loiFee" value="${escapeAttr(ex.totalFee||'')}" placeholder="e.g. $80,000"></div>
         <div class="field"><label>Commission Structure</label><input id="loiCommStruct" value="${escapeAttr(ex.commissionStructure||'')}" placeholder="e.g. 4% of price, paid at close"></div>
-        <div class="field"><label>Other Key Terms <span class="tiny" style="color:var(--ink-soft);font-weight:400;">(added to the deal's Notes)</span></label><textarea id="loiKeyTerms" rows="5" style="width:100%;">${escapeHtml(ex.keyTerms||'')}</textarea></div>
+        <div class="field"><label>Other Key Terms <span class="tiny" style="color:var(--ink-soft);font-weight:400;">(added to the deal's Notes)</span> <span id="loiKeyTermsStatus" class="tiny" style="color:var(--edge);font-weight:400;">${m.keyTermsPending?'⏳ reading…':''}</span></label><textarea id="loiKeyTerms" rows="5" style="width:100%;" placeholder="${m.keyTermsPending?'Still reading the rest of the document…':''}">${escapeHtml(ex.keyTerms||'')}</textarea></div>
         <div class="field">
           <label>Who is this document from?</label>
           <select id="loiCounterChoice">
@@ -12250,6 +12269,11 @@ function renderLoiImportModal(){
     if(confirmBtn) confirmBtn.onclick=safeHandler(async ()=>{
       loiCaptureFields();
       m.counterChoice = document.getElementById('loiCounterChoice').value;
+      if(m.keyTermsPending && m.keyTermsPromise){
+        confirmBtn.disabled = true; confirmBtn.textContent = 'Finishing key terms…';
+        await Promise.race([m.keyTermsPromise, new Promise(r=>setTimeout(r, 30000))]);
+        loiCaptureFields();
+      }
       await confirmLoiImport();
     });
   }
