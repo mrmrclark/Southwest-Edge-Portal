@@ -886,7 +886,7 @@ const EDGE_LOGO_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAARgAAA
 // normal for this specific key type; Google expects it to be visible in page source and
 // restricted by domain, via HTTP referrer restriction in Google Cloud Console, not hidden
 // like the other secrets in this app). Replace once Michael has generated a real key.
-const APP_BUILD = '2026-10-30 loi-fields';
+const APP_BUILD = '2026-10-30 egnyte-picker';
 const GOOGLE_MAPS_JS_KEY = 'AIzaSyBMlIjvH2bpZK6mYJeNZSkQvM8TXQkCjDE';
 const CATEGORY_ORANGE_ICONS = ['💲','🏢','🎯','📋','☁️','🔧','✈️','🏛️','💎','📄','⭐','🗂️'];
 
@@ -7424,8 +7424,12 @@ function parsePropertyStreetsAndCorner(propertyDescription){
     if(!corner) corner = dashParts[1].trim().toUpperCase().replace(/[^A-Z]/g,'');
     text = dashParts[0];
   }
-  text = text.split(',')[0]; // drop trailing city/state/zip, if any
-  const streets = text.split(/&|\/|\band\b/i).map(s=>s.trim().replace(/[^a-zA-Z0-9]/g,'')).filter(Boolean);
+  text = text.replace(/\([^)]*\)/g,' ').split(',')[0]; // drop (notes) and trailing city/state/zip
+  text = text.replace(/\s+in\s+[A-Za-z .]+$/i,''); // "… in Goodyear"
+  // 2026-10-30: street-type words dropped ("Litchfield Road" → "Litchfield"), so folder and
+  // file names come out as Litchfield_McKinley_NWC, matching how they're named in Egnyte.
+  const SUFFIX = /\s+(Road|Rd|Street|St|Avenue|Ave|Boulevard|Blvd|Drive|Dr|Parkway|Pkwy|Lane|Ln)\.?$/i;
+  const streets = text.split(/&|\/|\band\b/i).map(s=>s.trim().replace(SUFFIX,'').replace(/[^a-zA-Z0-9]/g,'')).filter(Boolean);
   return {streets, corner};
 }
 function computeEgnyteFilename(docType, accountName, propertyDescription, counterCode){
@@ -7537,32 +7541,48 @@ function egnyteFolderSegments(dropSide, accountName, dealFolderName){
 // client, the one that already holds this deal's folder wins; (3) if it still can't tell,
 // nothing is created — the broker picks from a short list, and that choice is remembered
 // (per browser) for that client from then on.
-function egnyteLooseName(s){
-  return String(s||'').toLowerCase().replace(/\([^)]*\)/g,' ').replace(/&/g,' and ').replace(/[^a-z0-9]/g,'');
+// Road names are written many ways — "I-10" / "Interstate 10" / "I10", "Road" / "Rd" —
+// so everything is put in one form before comparing (2026-10-30).
+function egnyteNormWords(s){
+  return String(s||'').toLowerCase()
+    .replace(/\([^)]*\)/g,' ')
+    .replace(/&/g,' and ')
+    .replace(/\binterstate[\s-]*(\d+)/g,'i$1')
+    .replace(/\bi[\s-]+(\d+)\b/g,'i$1')
+    .replace(/\b(?:highway|hwy)[\s-]*(\d+)/g,'hwy$1')
+    .replace(/\b(loop|us|sr)[\s-]+(\d+)/g,'$1$2')
+    .replace(/\broad\b/g,'rd').replace(/\bstreet\b/g,'st').replace(/\bavenue\b/g,'ave')
+    .replace(/\bboulevard\b/g,'blvd').replace(/\bparkway\b/g,'pkwy').replace(/\bdrive\b/g,'dr').replace(/\blane\b/g,'ln');
 }
-// Deal folder key: "Rio_Salado_McClintock_SSEC", "Rio Salado & MCClintock" and
-// "McClintock and Rio Salado - SSEC" all come out the same. Corner (NEC, SSEC…) is optional.
-function egnyteDealKeys(name){
-  let t = String(name||'').replace(/_/g,' ').replace(/\([^)]*\)/g,' ');
-  t = t.replace(/\b[nsew]{1,3}c\b/gi,' ').replace(/\b(ne|nw|se|sw)\b/gi,' ');
-  const parts = t.split(/\s*(?:&|\/|,|-|\band\b)\s*|\s{2,}/i)
-    .map(p=>p.toLowerCase().replace(/[^a-z0-9]/g,'')).filter(Boolean);
-  const flat = t.toLowerCase().replace(/\band\b/g,' ').replace(/[^a-z0-9]/g,'');
-  return { flat, sorted: parts.slice().sort().join('|') };
+function egnyteLooseName(s){ return egnyteNormWords(s).replace(/[^a-z0-9]/g,''); }
+const EGNYTE_STOP = new Set(['and','the','of','llc','inc','co','corp','group','partners','development','dev','properties','swc','sec','nwc','nec','ssec','sswc','nnwc','nnec','esec','wswc','enec','wnwc','ne','nw','se','sw','rd','st','ave','blvd','pkwy','dr','ln','az','arizona','phoenix','center','plaza','shops','at']);
+function egnyteTokens(s){
+  return egnyteNormWords(s).split(/[^a-z0-9]+/).filter(t=>t && t.length>=2 && !EGNYTE_STOP.has(t) && !/^\d$/.test(t));
+}
+// Deal folder key: "Litchfield_McKinley_NWC", "Litchfield Road & McKinley Street",
+// "LitchfieldRd_McKinleySt_NWC" and "McKinley and Litchfield - NWC" all come out the same.
+const EGNYTE_SUFFIX_RE = /(road|rd|street|st|avenue|ave|boulevard|blvd|drive|dr|parkway|pkwy|lane|ln)$/;
+function egnyteDealParts(name){
+  let t = String(name||'').replace(/\([^)]*\)/g,' ').replace(/_/g,' & ');
+  t = t.replace(/\b[nsew]{1,3}c\b/gi,' ').replace(/\b(ne|nw|se|sw)\b/gi,' ').replace(/\bof\b/gi,' ');
+  return t.split(/\s*(?:&|\/|,|\s-\s|\band\b)\s*/i)
+    .map(p=>p.replace(/\s+in\s+[a-z .]+$/i,''))
+    .map(p=>egnyteNormWords(p).replace(/\b(rd|st|ave|blvd|pkwy|dr|ln)\b\.?/g,' ').replace(/[^a-z0-9]/g,'').replace(EGNYTE_SUFFIX_RE,''))
+    .filter(Boolean);
 }
 function egnyteDealMatches(existingName, wantedName){
-  const a = egnyteDealKeys(existingName), b = egnyteDealKeys(wantedName);
-  if(!a.flat || !b.flat) return false;
-  if(a.flat===b.flat) return true;
-  // Wanted is built as Street1_Street2 (one part per street); compare as a set too,
-  // so street order doesn't matter.
-  const bParts = String(wantedName||'').replace(/_/g,' ').replace(/\b[nsew]{1,3}c\b/gi,' ').split(/\s*&\s*|\s+/).map(p=>p.toLowerCase().replace(/[^a-z0-9]/g,'')).filter(Boolean);
-  if(bParts.length>1){
-    let rest = a.flat;
-    for(const p of bParts){ const i = rest.indexOf(p); if(i<0) return false; rest = rest.slice(0,i)+rest.slice(i+p.length); }
+  const a = egnyteDealParts(existingName), b = egnyteDealParts(wantedName);
+  if(!a.length || !b.length) return false;
+  if(a.slice().sort().join('|')===b.slice().sort().join('|')) return true;
+  // Same streets, written with different separators (e.g. "Rio Salado McClintock").
+  const fa = a.join(''), fb = b.join('');
+  if(fa===fb) return true;
+  if(b.length>1){
+    let rest = fa;
+    for(const p of b){ const i = rest.indexOf(p); if(i<0) return false; rest = rest.slice(0,i)+rest.slice(i+p.length); }
     return rest.length===0;
   }
-  return a.sorted===b.sorted;
+  return false;
 }
 async function egnyteSubdirs(dir){
   const out = [];
@@ -7587,28 +7607,43 @@ async function egnyteWalkExisting(rootHandle, pathArr){
   for(const seg of pathArr){ dir = await dir.getDirectoryHandle(seg, {create:false}); }
   return dir;
 }
-// Small pick-list shown only when the Portal can't tell which client folder to use.
-// Resolves to {pick:index} | {create:true} | {browse:handle} | null (cancelled).
-function egnyteAskFolder(accountName, dealFolderName, candidates, activeLabel){
+// Shared pick-list pop-up: every folder, searchable, best guesses first.
+// items: [{name, score, note}] · extra: [{key, label}] buttons under the list.
+// Resolves to {pick:index} | {key} | {browse:handle} | null.
+function egnyteFolderDialog({title, intro, items, extra, allowBrowse}){
   return new Promise(resolve=>{
     const ov = document.createElement('div');
-    ov.className = 'modal-overlay'; ov.style.zIndex = '2000'; ov.id = 'egnyteFolderAsk';
-    const btn = 'display:block;width:100%;text-align:left;padding:10px 12px;margin:0 0 8px;border:1px solid var(--line);border-radius:10px;background:#fff;cursor:pointer;font-size:14px;';
-    ov.innerHTML = `<div class="modal-card" style="width:480px;">
-      <div class="modal-head"><div class="modal-title">Which Egnyte folder?</div><button class="modal-close" data-egk="cancel">✕</button></div>
+    ov.className = 'modal-overlay'; ov.style.zIndex = '2000';
+    const btn = 'display:block;width:100%;text-align:left;padding:9px 12px;margin:0 0 6px;border:1px solid var(--line);border-radius:10px;background:#fff;cursor:pointer;font-size:14px;';
+    const best = items.map((it,i)=>({...it,i})).filter(x=>x.score>0).sort((a,b)=>b.score-a.score||a.name.localeCompare(b.name));
+    const rest = items.map((it,i)=>({...it,i})).filter(x=>!(x.score>0)).sort((a,b)=>a.name.localeCompare(b.name));
+    const row = x=>`<button style="${btn}" data-egk="pick" data-i="${x.i}" data-n="${escapeAttr(x.name.toLowerCase())}">📁 ${escapeHtml(x.name)}${x.note?` <span style="color:var(--ink-soft);font-size:12px;">${escapeHtml(x.note)}</span>`:''}</button>`;
+    ov.innerHTML = `<div class="modal-card" style="width:520px;">
+      <div class="modal-head"><div class="modal-title">${escapeHtml(title)}</div><button class="modal-close" data-egk="cancel">✕</button></div>
       <div class="modal-body">
-        <div style="font-size:13px;color:var(--ink-soft);margin-bottom:12px;">Filing for <b>${escapeHtml(accountName)}</b> — deal folder <b>${escapeHtml(dealFolderName)}</b>.<br>Pick the client folder in <i>${escapeHtml(activeLabel)}</i>. The Portal will remember this for next time.</div>
-        ${candidates.map((c,i)=>`<button style="${btn}" data-egk="pick" data-i="${i}">📁 ${escapeHtml(c.name)}${c.hasDeal?' <span style="color:var(--ink-soft);font-size:12px;">(has this deal’s folder)</span>':''}</button>`).join('')}
-        <button style="${btn}" data-egk="browse">🔎 Browse for a different folder…</button>
-        <button style="${btn}" data-egk="create">➕ Make a new folder “${escapeHtml(egnyteSafeName(accountName))}”</button>
+        <div style="font-size:13px;color:var(--ink-soft);margin-bottom:10px;">${intro}</div>
+        ${items.length>6 ? `<input id="egkSearch" placeholder="🔍 Search folders…" style="width:100%;margin-bottom:8px;">` : ''}
+        <div id="egkList" style="max-height:300px;overflow-y:auto;margin-bottom:8px;">
+          ${best.length ? `<div class="tiny" style="font-weight:700;color:var(--ink-soft);margin:2px 0 6px;" data-sec="1">Best matches</div>${best.map(row).join('')}` : ''}
+          ${rest.length ? `<div class="tiny" style="font-weight:700;color:var(--ink-soft);margin:8px 0 6px;" data-sec="1">${best.length?'All other folders':'All folders'} (A–Z)</div>${rest.map(row).join('')}` : ''}
+          ${!items.length ? `<div class="tiny" style="color:var(--ink-soft);">No folders here yet.</div>` : ''}
+        </div>
+        ${(extra||[]).map(e=>`<button style="${btn}" data-egk="extra" data-key="${escapeAttr(e.key)}">${e.label}</button>`).join('')}
+        ${allowBrowse ? `<button style="${btn}" data-egk="browse">🔎 Browse in Windows…</button>` : ''}
         <button style="${btn}color:var(--ink-soft);" data-egk="cancel">Cancel — don’t file it</button>
       </div></div>`;
     const done = v=>{ ov.remove(); resolve(v); };
+    ov.addEventListener('input', e=>{
+      if(e.target.id!=='egkSearch') return;
+      const q = e.target.value.trim().toLowerCase();
+      ov.querySelectorAll('#egkList [data-egk="pick"]').forEach(b=>{ b.style.display = !q || b.dataset.n.includes(q) ? '' : 'none'; });
+      ov.querySelectorAll('#egkList [data-sec]').forEach(h=>{ h.style.display = q ? 'none' : ''; });
+    });
     ov.addEventListener('click', async e=>{
       const b = e.target.closest('[data-egk]'); if(!b) return;
       const k = b.dataset.egk;
       if(k==='cancel') return done(null);
-      if(k==='create') return done({create:true});
+      if(k==='extra') return done({key:b.dataset.key});
       if(k==='pick') return done({pick:+b.dataset.i});
       if(k==='browse'){
         try{ const h = await window.showDirectoryPicker({id:'egnyte-shared', mode:'readwrite'}); done({browse:h}); }
@@ -7616,10 +7651,14 @@ function egnyteAskFolder(accountName, dealFolderName, candidates, activeLabel){
       }
     });
     document.body.appendChild(ov);
+    setTimeout(()=>{ const s = ov.querySelector('#egkSearch'); if(s) s.focus(); }, 50);
   });
 }
 // Finds (or, only when clearly right, creates) the folder a deal document belongs in.
 // Returns {dir, segments} where segments are the real folder names used.
+// 1) a folder the broker already picked for this client, 2) an exact name match, 3) the
+// only look-alike that already holds this deal's folder, 4) otherwise ask — every folder
+// is listed (best guesses first), and the choice is remembered for that client.
 async function egnyteResolveDealDir(rootHandle, dropSide, accountName, dealFolderName){
   const clean = (accountName||'Unknown').trim();
   const deal = dealFolderName || 'General';
@@ -7628,50 +7667,64 @@ async function egnyteResolveDealDir(rootHandle, dropSide, accountName, dealFolde
   const middle = EGNYTE_CLIENT_DEAL_MIDDLE_FOLDER[clean] || Object.entries(EGNYTE_CLIENT_DEAL_MIDDLE_FOLDER).find(([k])=>egnyteLooseName(k)===egnyteLooseName(clean))?.[1] || null;
   const dealParent = async accDir => middle ? (await egnyteSubdirs(accDir)).find(d=>egnyteLooseName(d.name)===egnyteLooseName(middle))?.handle || null : accDir;
   const mapKey = egnyteFolderMapKey(dropSide, clean);
-  let accDir = null, accPath = null;
+  let accDir = null, accPath = null, askedForAccount = false;
 
-  // 0) A folder the broker already picked for this client.
   const remembered = egnyteGetRememberedPath(mapKey);
   if(remembered){
     try{ accDir = await egnyteWalkExisting(rootHandle, remembered); accPath = remembered; }catch(e){ accDir = null; }
   }
   if(!accDir){
     const want = egnyteLooseName(clean);
+    const wantTok = egnyteTokens(clean);
     const subs = await egnyteSubdirs(activeDir);
-    const exact = subs.filter(d=>egnyteLooseName(d.name)===want);
-    const close = want.length>=4 ? subs.filter(d=>{ const n = egnyteLooseName(d.name); return n && n!==want && n.length>=4 && (n.startsWith(want)||want.startsWith(n)||n.includes(want)||want.includes(n)); }) : [];
+    subs.forEach(d=>{
+      const n = egnyteLooseName(d.name);
+      const tok = egnyteTokens(d.name);
+      d.exact = n===want;
+      d.score = d.exact ? 100 : wantTok.filter(t=>tok.includes(t)).length * 10
+        + ((want.length>=4 && n.length>=4 && (n.includes(want)||want.includes(n))) ? 15 : 0);
+    });
+    const exact = subs.filter(d=>d.exact);
+    const close = subs.filter(d=>!d.exact && d.score>0);
     for(const c of [...exact, ...close]){
       const p = await dealParent(c.handle);
       c.hasDeal = !!(p && await egnyteFindDealDir(p, deal));
+      if(c.hasDeal) c.score += 50;
     }
     let chosen = null;
-    if(exact.length===1) chosen = exact[0];                                  // 1) clear match
+    if(exact.length===1) chosen = exact[0];
     else {
       const pool = exact.length ? exact : close;
       const withDeal = pool.filter(c=>c.hasDeal);
-      if(withDeal.length===1) chosen = withDeal[0];                          // 2) only one already has this deal
+      if(withDeal.length===1) chosen = withDeal[0];
     }
     if(chosen){
       accDir = chosen.handle; accPath = [...topSegs, chosen.name];
-    } else {                                                                 // 3) ask
-      const cands = [...exact, ...close];
-      const ans = await egnyteAskFolder(clean, deal, cands, topSegs.join('\\'));
+    } else {
+      const newName = egnyteSafeName(clean);
+      const ans = await egnyteFolderDialog({
+        title:'Which Egnyte folder?',
+        intro:`Filing for <b>${escapeHtml(clean)}</b>. Pick its folder in <i>${escapeHtml(topSegs.join('\\'))}</i>. The Portal will remember this for next time.`,
+        items: subs.map(d=>({name:d.name, score:d.score, note: d.hasDeal ? '(has this deal’s folder)' : ''})),
+        extra: [{key:'create', label:`➕ Make a new folder “${escapeHtml(newName)}”`}],
+        allowBrowse: true
+      });
       if(!ans) throw new Error('Filing cancelled — nothing was saved to Egnyte. You can save the file manually using the button below.');
-      if(ans.create){
-        accDir = await activeDir.getDirectoryHandle(egnyteSafeName(clean), {create:true});
-        accPath = [...topSegs, egnyteSafeName(clean)];
+      if(ans.key==='create'){
+        accDir = await activeDir.getDirectoryHandle(newName, {create:true});
+        accPath = [...topSegs, newName];
       } else if(ans.browse){
         const rel = await rootHandle.resolve(ans.browse);
         if(!rel) throw new Error("That folder isn't inside your connected Egnyte folder — nothing was saved. Pick a folder under Z:\\Shared.");
         accDir = ans.browse; accPath = rel;
       } else {
-        const c = cands[ans.pick]; accDir = c.handle; accPath = [...topSegs, c.name];
+        const c = subs[ans.pick]; accDir = c.handle; accPath = [...topSegs, c.name];
       }
       egnyteRememberPath(mapKey, accPath);
+      askedForAccount = true;
     }
   }
-  // Middle folder (e.g. Dutch Bros → Active Deals_Corporate), then the deal folder —
-  // an existing deal folder that matches loosely is reused rather than duplicated.
+  // Middle folder (e.g. Dutch Bros → Active Deals_Corporate), then the deal folder.
   let dir = accDir, segs = accPath.slice();
   if(middle){
     const m = (await egnyteSubdirs(dir)).find(d=>egnyteLooseName(d.name)===egnyteLooseName(middle));
@@ -7679,8 +7732,24 @@ async function egnyteResolveDealDir(rootHandle, dropSide, accountName, dealFolde
     segs.push(m ? m.name : middle);
   }
   const existingDeal = await egnyteFindDealDir(dir, deal);
-  if(existingDeal){ dir = existingDeal.handle; segs.push(existingDeal.name); }
-  else { const nm = egnyteSafeName(deal); dir = await dir.getDirectoryHandle(nm, {create:true}); segs.push(nm); }
+  if(existingDeal){ dir = existingDeal.handle; segs.push(existingDeal.name); return {dir, segments: segs}; }
+  const nm = egnyteSafeName(deal);
+  const dealSubs = await egnyteSubdirs(dir);
+  if(askedForAccount && dealSubs.length){
+    // The broker just picked the client folder by hand — show what's already in it rather
+    // than quietly adding a new deal folder next to one that may be the same deal.
+    const dealTok = egnyteDealParts(deal);
+    const ans = await egnyteFolderDialog({
+      title:'Which deal folder?',
+      intro:`Inside <b>${escapeHtml(segs[segs.length-1])}</b>. Pick the deal folder, or make a new one.`,
+      items: dealSubs.map(d=>{ const p = egnyteDealParts(d.name); return {name:d.name, score: dealTok.filter(t=>p.includes(t)).length}; }),
+      extra: [{key:'create', label:`➕ Make a new deal folder “${escapeHtml(nm)}”`}],
+      allowBrowse: false
+    });
+    if(!ans) throw new Error('Filing cancelled — nothing was saved to Egnyte. You can save the file manually using the button below.');
+    if(ans.key!=='create'){ const d = dealSubs[ans.pick]; dir = d.handle; segs.push(d.name); return {dir, segments: segs}; }
+  }
+  dir = await dir.getDirectoryHandle(nm, {create:true}); segs.push(nm);
   return {dir, segments: segs};
 }
 // Writes `blob` as `filename` into the right client/listing folder under the connected
