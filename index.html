@@ -886,7 +886,7 @@ const EDGE_LOGO_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAARgAAA
 // normal for this specific key type; Google expects it to be visible in page source and
 // restricted by domain, via HTTP referrer restriction in Google Cloud Console, not hidden
 // like the other secrets in this app). Replace once Michael has generated a real key.
-const APP_BUILD = '2026-10-27 egnyte-match';
+const APP_BUILD = '2026-10-30 loi-fields';
 const GOOGLE_MAPS_JS_KEY = 'AIzaSyBMlIjvH2bpZK6mYJeNZSkQvM8TXQkCjDE';
 const CATEGORY_ORANGE_ICONS = ['💲','🏢','🎯','📋','☁️','🔧','✈️','🏛️','💎','📄','⭐','🗂️'];
 
@@ -7987,6 +7987,20 @@ function renderLoiClientPickerResultsHtml(){
     ${otherOpen ? others.map(renderRow).join('') : ''}
     ` : '');
 }
+function loiApplyTerms(rec, ex, isSale, fileName){
+  rec.dealType = isSale ? 'sale' : 'lease';
+  if(isSale) rec.price = ex.rentOrPrice||rec.price; else rec.rent = ex.rentOrPrice||rec.rent;
+  rec.term = ex.term || rec.term;
+  rec.tiAllowance = ex.tiAllowance || rec.tiAllowance;
+  rec.size = ex.size || rec.size;
+  rec.spaceNum = ex.spaceNum || rec.spaceNum;
+  if(ex.totalFee){ const f = sanitizeMoneyInput(ex.totalFee); if(f && parseFloat(f)>0) rec.totalFee = f; }
+  rec.commissionStructure = ex.commissionStructure || rec.commissionStructure;
+  if(ex.keyTerms && ex.keyTerms.trim()){
+    const stamp = `${ex.documentType||'Document'} terms (${toLocalDateStr(todayDate())}, ${fileName||'import'}):`;
+    rec.notes = [rec.notes||'', stamp + '\n' + ex.keyTerms.trim()].filter(x=>x.trim()).join('\n\n');
+  }
+}
 async function confirmLoiImport(){
   const m = state.loiImport;
   const ex = m.extracted;
@@ -7994,33 +8008,30 @@ async function confirmLoiImport(){
   const l = db.lists.find(x=>x.id===(m.dropSide==='clients'?'clients':'listings'));
   const c = m.matchedClient;
   if(m.dropSide==='clients'){
-    let d = m.matchedDeal;
-    if(m.isNewDeal || !d){
+    let d = m.isNewDeal ? null : m.matchedDeal;
+    const isNew = !d;
+    if(isNew){
       d = {id:crypto.randomUUID(), name: ex.propertyDescription||'New Deal', complete:false, activeDeal:false, dueDate:null,
         caExecuted:false, dealType: isSale?'sale':'lease', building: ex.propertyDescription||'', stage:'loi',
         splits:[], commission1Paid:false, commission2Paid:false, trackerUserId: state.currentUser.id};
       c.deals.push(d);
     }
     d.building = ex.propertyDescription || d.building;
-    if(isSale) d.price = ex.rentOrPrice||d.price; else d.rent = ex.rentOrPrice||d.rent;
-    d.term = ex.term || d.term;
-    d.tiAllowance = ex.tiAllowance || d.tiAllowance;
-    d.size = ex.size || d.size;
-    await (m.isNewDeal ? supaCreateDeal(d, c.id) : supaUpdateDeal(d, c.id));
+    loiApplyTerms(d, ex, isSale, m.fileName);
+    await (isNew ? supaCreateDeal(d, c.id) : supaUpdateDeal(d, c.id));
     m.savedName = `${c.name} — ${d.name}`;
   } else {
-    let p = m.matchedDeal;
-    if(m.isNewDeal || !p){
+    let p = m.isNewDeal ? null : m.matchedDeal;
+    const isNew = !p;
+    if(isNew){
       p = {id:crypto.randomUUID(), tenantName: ex.accountName||'New Prospect', stage:'loi', dealType: isSale?'sale':'lease',
-        dateOfContact: todayDate(), notes:'', edgeTracker:null, attachments:[], commission1Paid:false, commission2Paid:false};
+        dateOfContact: todayDate(), notes:'', edgeTracker:state.currentUser.id, attachments:[], commission1Paid:false, commission2Paid:false};
       c.prospects = c.prospects || [];
       c.prospects.push(p);
     }
-    if(isSale) p.price = ex.rentOrPrice||p.price; else p.rent = ex.rentOrPrice||p.rent;
-    p.term = ex.term || p.term;
-    p.tiAllowance = ex.tiAllowance || p.tiAllowance;
-    p.size = ex.size || p.size;
-    await (m.isNewDeal ? supaCreateProspect(p, c.id) : supaUpdateProspect(p, c.id));
+    p.building = ex.propertyDescription || p.building;
+    loiApplyTerms(p, ex, isSale, m.fileName);
+    await (isNew ? supaCreateProspect(p, c.id) : supaUpdateProspect(p, c.id));
     m.savedName = `${c.name} — ${p.tenantName}`;
   }
   const key = `${m.dropSide}-${isSale?'sale':'lease'}`;
@@ -12008,6 +12019,17 @@ function nameForSplitUserId(id){
   const co = (commissionOnlyPeople||[]).find(x=>x.id===id);
   return co ? co.name : 'Unknown';
 }
+// 2026-10-30: reads every editable field on the review screen back into m.extracted, so
+// edits survive "Change" (pick a different Listing/Client) and "Create New" re-renders.
+function loiCaptureFields(){
+  const m = state.loiImport; if(!m || !m.extracted) return;
+  const v = id=>{ const el=document.getElementById(id); return el ? el.value.trim() : undefined; };
+  const set = (k,id)=>{ const x=v(id); if(x!==undefined) m.extracted[k]=x; };
+  set('documentType','loiDocType'); set('transactionType','loiTxType'); set('accountName','loiAccountName');
+  set('propertyDescription','loiProperty'); set('spaceNum','loiSpace'); set('size','loiSize');
+  set('rentOrPrice','loiRentPrice'); set('term','loiTerm'); set('tiAllowance','loiTI');
+  set('totalFee','loiFee'); set('commissionStructure','loiCommStruct'); set('keyTerms','loiKeyTerms');
+}
 function renderLoiImportModal(){
   const m = state.loiImport;
   const overlay = document.createElement('div');
@@ -12051,14 +12073,20 @@ function renderLoiImportModal(){
       const key = `${m.dropSide}-${ex.transactionType==='sale'?'sale':'lease'}`;
       const counterInfo = LOI_COUNTER_CODES[key];
       body = `
-        <div class="tiny" style="color:var(--ink-soft);margin-bottom:10px;">Confidence: <b>${escapeHtml(ex.confidence||'—')}</b> · Matched to <b>${escapeHtml(m.matchedClient.name)}</b></div>
+        <div class="tiny" style="color:var(--ink-soft);margin-bottom:10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">Confidence: <b>${escapeHtml(ex.confidence||'—')}</b> · ${m.dropSide==='clients'?'Client':'Listing'}: <b>${escapeHtml(m.matchedClient.name)}</b> <button class="btn secondary sm" data-action="loiChangeAccount">Change</button></div>
         ${m.lowConfidenceFileFormat ? `<div class="tiny" style="color:var(--bad);margin-bottom:10px;">⚠️ This was an old .doc file — text extraction is less reliable for this format. Double-check every field carefully before saving.</div>` : ''}
         <div class="field"><label>Document Type</label><input id="loiDocType" value="${escapeAttr(ex.documentType||'LOI')}"></div>
-        <div class="field"><label>${ex.transactionType==='sale'?'Price':'Rent'}</label><input id="loiRentPrice" value="${escapeAttr(ex.rentOrPrice||'')}"></div>
-        ${ex.transactionType!=='sale' ? `<div class="field"><label>Term</label><input id="loiTerm" value="${escapeAttr(ex.term||'')}"></div>` : ''}
-        <div class="field"><label>TI Allowance</label><input id="loiTI" value="${escapeAttr(ex.tiAllowance||'')}"></div>
-        <div class="field"><label>Size</label><input id="loiSize" value="${escapeAttr(ex.size||'')}"></div>
+        <div class="field"><label>Lease or Sale</label><select id="loiTxType"><option value="lease" ${ex.transactionType!=='sale'?'selected':''}>Lease</option><option value="sale" ${ex.transactionType==='sale'?'selected':''}>Sale</option></select></div>
+        <div class="field"><label>${m.dropSide==='clients'?'Tenant / Buyer (our client)':'Tenant / Buyer'}</label><input id="loiAccountName" value="${escapeAttr(ex.accountName||'')}"></div>
         <div class="field"><label>Property Description</label><input id="loiProperty" value="${escapeAttr(ex.propertyDescription||'')}"></div>
+        <div class="field"><label>Suite / Space #</label><input id="loiSpace" value="${escapeAttr(ex.spaceNum||'')}"></div>
+        <div class="field"><label>Size</label><input id="loiSize" value="${escapeAttr(ex.size||'')}"></div>
+        <div class="field"><label id="loiRentPriceLabel">${ex.transactionType==='sale'?'Price':'Rent'}</label><input id="loiRentPrice" value="${escapeAttr(ex.rentOrPrice||'')}"></div>
+        <div class="field"><label>Term</label><input id="loiTerm" value="${escapeAttr(ex.term||'')}"></div>
+        <div class="field"><label>TI Allowance</label><input id="loiTI" value="${escapeAttr(ex.tiAllowance||'')}"></div>
+        <div class="field"><label>Total Commission / Fee</label><input id="loiFee" value="${escapeAttr(ex.totalFee||'')}" placeholder="e.g. $80,000"></div>
+        <div class="field"><label>Commission Structure</label><input id="loiCommStruct" value="${escapeAttr(ex.commissionStructure||'')}" placeholder="e.g. 4% of price, paid at close"></div>
+        <div class="field"><label>Other Key Terms <span class="tiny" style="color:var(--ink-soft);font-weight:400;">(added to the deal's Notes)</span></label><textarea id="loiKeyTerms" rows="5" style="width:100%;">${escapeHtml(ex.keyTerms||'')}</textarea></div>
         <div class="field">
           <label>Who is this document from?</label>
           <select id="loiCounterChoice">
@@ -12076,7 +12104,8 @@ function renderLoiImportModal(){
             <input id="loiDealSearch" placeholder="🔍 Search ${m.dropSide==='clients'?'deals':'prospects'} under ${escapeAttr(m.matchedClient.name)}…" value="${escapeAttr(m.dealPickerQuery||'')}" style="margin-bottom:8px;">
             <div id="loiDealResults" style="max-height:320px;overflow-y:auto;">${loiDealResultsHtml()}</div>
           ` : ''}
-          ${!m.matchedDeal ? `<button class="btn secondary sm" data-action="loiCreateNew">+ Create New ${m.dropSide==='clients'?'Deal':'Prospect'}</button>` : `<button class="btn secondary sm" data-action="loiCreateNew">Actually, create a new one instead</button>`}
+          ${m.isNewDeal ? `<div class="tiny" style="color:var(--good);margin-bottom:6px;">✓ A new ${m.dropSide==='clients'?'Deal':'Deal (Prospect)'} will be created under <b>${escapeHtml(m.matchedClient.name)}</b> with all the terms above.</div>` : ''}
+          ${!m.isNewDeal ? `<button class="btn secondary sm" data-action="loiCreateNew">${m.matchedDeal?'Actually, create a new one instead':'+ Create New '+(m.dropSide==='clients'?'Deal':'Deal (Prospect)')}</button>` : ''}
         </div>
         <button class="btn" data-action="loiConfirm" style="width:100%;margin-top:10px;">Confirm & Save</button>
         <button class="btn secondary" data-action="loiStartOver" style="width:100%;margin-top:8px;">Start Over</button>
@@ -12143,15 +12172,14 @@ function renderLoiImportModal(){
       render();
     });
     const createNewBtn = overlay.querySelector('[data-action="loiCreateNew"]');
-    if(createNewBtn) createNewBtn.onclick=()=>{ m.matchedDeal=null; m.isNewDeal=true; render(); };
+    if(createNewBtn) createNewBtn.onclick=()=>{ loiCaptureFields(); m.matchedDeal=null; m.isNewDeal=true; render(); };
+    const changeAcctBtn = overlay.querySelector('[data-action="loiChangeAccount"]');
+    if(changeAcctBtn) changeAcctBtn.onclick=()=>{ loiCaptureFields(); m.matchedClient=null; m.matchedDeal=null; m.candidateDeals=[]; m.isNewDeal=false; m.clientPickerQuery=''; m.otherSideMatch=null; render(); };
+    const txSel = overlay.querySelector('#loiTxType');
+    if(txSel) txSel.onchange=()=>{ const lb=overlay.querySelector('#loiRentPriceLabel'); if(lb) lb.textContent = txSel.value==='sale'?'Price':'Rent'; };
     const confirmBtn = overlay.querySelector('[data-action="loiConfirm"]');
     if(confirmBtn) confirmBtn.onclick=safeHandler(async ()=>{
-      m.extracted.documentType = document.getElementById('loiDocType').value.trim();
-      m.extracted.rentOrPrice = document.getElementById('loiRentPrice').value.trim();
-      const termEl = document.getElementById('loiTerm'); if(termEl) m.extracted.term = termEl.value.trim();
-      m.extracted.tiAllowance = document.getElementById('loiTI').value.trim();
-      m.extracted.size = document.getElementById('loiSize').value.trim();
-      m.extracted.propertyDescription = document.getElementById('loiProperty').value.trim();
+      loiCaptureFields();
       m.counterChoice = document.getElementById('loiCounterChoice').value;
       await confirmLoiImport();
     });
