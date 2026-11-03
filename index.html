@@ -886,7 +886,7 @@ const EDGE_LOGO_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAARgAAA
 // normal for this specific key type; Google expects it to be visible in page source and
 // restricted by domain, via HTTP referrer restriction in Google Cloud Console, not hidden
 // like the other secrets in this app). Replace once Michael has generated a real key.
-const APP_BUILD = '2026-10-30 loi-fast';
+const APP_BUILD = '2026-11-03 loi-deals';
 const GOOGLE_MAPS_JS_KEY = 'AIzaSyBMlIjvH2bpZK6mYJeNZSkQvM8TXQkCjDE';
 const CATEGORY_ORANGE_ICONS = ['💲','🏢','🎯','📋','☁️','🔧','✈️','🏛️','💎','📄','⭐','🗂️'];
 
@@ -3553,6 +3553,7 @@ function render(){
   app.innerHTML = renderShell();
   attachShellHandlers();
   if(fwEnabled()){ fwNormalize(); renderFwSnapshots(); }
+  if(state.clientDealsWin) renderClientDealsWin();
   if(state.modalStack.length && fwShowsActive()){
     renderModalStack();
   }
@@ -5209,7 +5210,7 @@ function visibleBoards(){
   // creator + people added — even Admins don't see others' personal templates (no clutter).
   return db.boards.filter(b=>b.kind==='open' && (b.isTemplate
       ? (b.visibility==='company' || b.createdBy===me || (b.userIds||[]).includes(me))
-      : (isAdmin || b.createdBy===me || (b.userIds||[]).includes(me))))
+      : (isAdmin || b.visibility==='company' || b.createdBy===me || (b.userIds||[]).includes(me))))
     .sort((a,b)=>(a.sortOrder-b.sortOrder) || a.name.localeCompare(b.name));
 }
 // Templates (Monday-style): any board can be flagged a Template → it's shown to everyone
@@ -5809,7 +5810,9 @@ function renderBoardModal(){
       ${m.asTemplate ? `<div class="field"><label>Who can use this template?</label>
         <label style="display:flex;gap:8px;align-items:center;margin:4px 0;font-weight:400;"><input type="radio" name="bmShare" value="private" style="width:auto;" checked> <b>My Templates</b> — just me (plus anyone I add under Users)</label>
         <label style="display:flex;gap:8px;align-items:center;margin:4px 0;font-weight:400;"><input type="radio" name="bmShare" value="company" style="width:auto;"> <b>Office Templates</b> — everyone at Edge</label></div>`
-        : `<div class="tiny" style="color:var(--ink-soft);">Only you (and Admins) can see a new board until you add Users to it — same as a Client or Listing.</div>`}` : ''}
+        : `<label style="display:flex;gap:8px;align-items:center;margin-top:4px;font-weight:400;"><input type="checkbox" id="bmPrivate" style="width:auto;" ${(()=>{ const src = m.fromId && db.boards.find(x=>x.id===m.fromId); return src && src.isTemplate && src.visibility==='company' ? '' : 'checked'; })()}> 🔒 <b>Private</b> — only me, people I add, and Admins</label>
+        <div class="tiny" style="color:var(--ink-soft);margin:4px 0 0 24px;">Unchecked = everyone at Edge can see it.</div>`}` : ''}
+      ${m.kind==='settings' && canManage && !b.isTemplate ? `<label style="display:flex;gap:8px;align-items:center;margin-top:10px;font-weight:400;"><input type="checkbox" id="bmPrivate" style="width:auto;" ${b.visibility==='company'?'':'checked'}> 🔒 <b>Private</b> — only the creator, people added under Users, and Admins (unchecked = everyone at Edge)</label>` : ''}
       ${m.kind==='settings' && canManage ? `<label style="display:flex;gap:8px;align-items:center;margin-top:10px;font-weight:400;"><input type="checkbox" id="bmIsTemplate" style="width:auto;" ${b.isTemplate?'checked':''}> 🧩 This board is a <b>Template</b> (new boards can start from it)</label>
         <label style="display:flex;gap:8px;align-items:center;margin:6px 0 0 24px;font-weight:400;"><input type="checkbox" id="bmShared" style="width:auto;" ${b.visibility==='company'?'checked':''}> Office Template — everyone at Edge (otherwise it's in My Templates)</label>` : ''}
       ${m.kind==='settings' && canManage ? `<div style="margin-top:20px;padding-top:14px;border-top:1px solid var(--line-soft);"><button class="btn danger sm" data-bm="delete">🗑️ Delete this board</button>
@@ -5835,19 +5838,24 @@ function renderBoardModal(){
   document.getElementById('app').appendChild(overlay);
   const first = overlay.querySelector('#bmName, #bmText'); if(first) setTimeout(()=>{ first.focus(); first.select && first.select(); },0);
   overlay.querySelectorAll('[data-bm="close"]').forEach(x=>x.onclick=()=>{ state.boardModal=null; render(); });
+  // Starting from an Office Template (e.g. Recruiting / Onboarding) → public by default; otherwise private.
+  const fromSel = overlay.querySelector('#bmFrom'), privBox = overlay.querySelector('#bmPrivate');
+  if(fromSel && privBox) fromSel.onchange = ()=>{ const src = db.boards.find(x=>x.id===fromSel.value); privBox.checked = !(src && src.isTemplate && src.visibility==='company'); };
   const save = overlay.querySelector('[data-bm="save"]'); if(save) save.onclick=safeHandler(async ()=>{
     const name = overlay.querySelector('#bmName').value.trim(); if(!name){ flashToast('Give the board a name.'); return; }
     if(m.kind==='new'){
       const fromId = (overlay.querySelector('#bmFrom')||{}).value;
       const src = fromId && db.boards.find(x=>x.id===fromId);
       const clone = o=>JSON.parse(JSON.stringify(o));
-      const nb = {id:crypto.randomUUID(), name, kind:'open', clientId:null, columns: src ? clone(src.columns) : bdDefaultColumns(), groups: src ? clone(src.groups) : bdDefaultGroups(), subColumns: src ? clone(src.subColumns||[]) : [], visibility: (m.asTemplate && (overlay.querySelector('input[name="bmShare"]:checked')||{}).value==='company') ? 'company' : 'private', isTemplate: !!m.asTemplate, defaultDueDays:0, createdBy:state.currentUser.id, sortOrder:Date.now()/1e12, userIds:[]};
+      const privEl = overlay.querySelector('#bmPrivate');
+      const nb = {id:crypto.randomUUID(), name, kind:'open', clientId:null, columns: src ? clone(src.columns) : bdDefaultColumns(), groups: src ? clone(src.groups) : bdDefaultGroups(), subColumns: src ? clone(src.subColumns||[]) : [], visibility: m.asTemplate ? (((overlay.querySelector('input[name="bmShare"]:checked')||{}).value==='company') ? 'company' : 'private') : (privEl && !privEl.checked ? 'company' : 'private'), isTemplate: !!m.asTemplate, defaultDueDays:0, createdBy:state.currentUser.id, sortOrder:Date.now()/1e12, userIds:[]};
       db.boards.push(nb); setActiveBoard(nb.id); state.boardModal=null; render();
       await supaCreateBoard(nb); flashToast(`Board "${name}" created.`);
     } else {
       b.name=name;
       const tEl = overlay.querySelector('#bmIsTemplate'); const shEl = overlay.querySelector('#bmShared');
       if(tEl){ b.isTemplate = tEl.checked; b.visibility = (tEl.checked && shEl && shEl.checked) ? 'company' : 'private'; }
+      const pEl = overlay.querySelector('#bmPrivate'); if(pEl && !b.isTemplate) b.visibility = pEl.checked ? 'private' : 'company';
       supaSaveBoard(b); state.boardModal=null; render();
     }
   });
@@ -7912,6 +7920,7 @@ async function processLoiFile(file, dropSide){
   m.fileName = file.name;
   m.file = file; // kept through to the 'done' step so it can actually be filed/downloaded, not just described
   m.loading = true;
+  { const t0 = Date.now(); const iv = setInterval(()=>{ if(state.loiImport!==m || !m.loading){ clearInterval(iv); return; } const el = document.getElementById('loiReadSecs'); if(el) el.textContent = Math.round((Date.now()-t0)/1000)+'s'; }, 1000); }
   m.error = null;
   render();
   try{
@@ -7920,26 +7929,39 @@ async function processLoiFile(file, dropSide){
     const jwt = sessionData?.session?.access_token;
     // 2026-10-30: two calls side by side — the main fields come back in ~5s so the review
     // screen opens right away; the longer "Other Key Terms" list fills in when it's ready.
-    const call = mode => fetch(`https://ugtlyzwvnhmcphtqkbke.supabase.co/functions/v1/extract-loi-terms`, {
-      method:'POST',
-      headers:{ 'Content-Type':'application/json', 'Authorization': `Bearer ${jwt}` },
-      body: JSON.stringify({ fileBase64: base64, fileType, mode })
-    });
+    // 2026-11-02: every call has a time limit, so the screen can never just sit.
+    const call = (mode, ms) => {
+      const ctl = new AbortController(); const t = setTimeout(()=>ctl.abort(), ms);
+      return fetch(`https://ugtlyzwvnhmcphtqkbke.supabase.co/functions/v1/extract-loi-terms`, {
+        method:'POST', signal: ctl.signal,
+        headers:{ 'Content-Type':'application/json', 'Authorization': `Bearer ${jwt}` },
+        body: JSON.stringify({ fileBase64: base64, fileType, mode })
+      }).finally(()=>clearTimeout(t));
+    };
     const token = Symbol('loi');
     m.keyTermsToken = token;
     m.keyTermsPending = true;
-    m.keyTermsPromise = call('keyTerms').then(r=>r.json()).then(b=>{
+    m.keyTermsPromise = call('keyTerms', 90000).then(r=>r.json()).then(b=>{
       const kt = (b && b.extracted && b.extracted.keyTerms) || '';
       if(state.loiImport!==m || m.keyTermsToken!==token) return;
       m.keyTermsPending = false;
       if(!m.extracted) { m.keyTermsEarly = kt; return; }
+      if(m.step==='done'){ loiAppendLateKeyTerms(m, kt); return; }
       const el = document.getElementById('loiKeyTerms');
       const typed = el ? el.value.trim() : (m.extracted.keyTerms||'').trim();
       if(!typed){ m.extracted.keyTerms = kt; if(el){ el.value = kt; el.placeholder=''; } }
       const lbl = document.getElementById('loiKeyTermsStatus'); if(lbl) lbl.textContent = '';
     }).catch(e=>{ console.error('key terms read failed', e); if(state.loiImport===m){ m.keyTermsPending=false; const lbl=document.getElementById('loiKeyTermsStatus'); if(lbl) lbl.textContent='(couldn’t read them — type any you need)'; } });
-    const res = await call('core');
-    const body = await res.json();
+    let res;
+    try{ res = await call('core', 75000); }
+    catch(e){
+      m.keyTermsToken = null;
+      m.error = e && e.name==='AbortError'
+        ? 'The AI took too long to answer (over a minute). Drop the file again to retry.'
+        : 'Couldn’t reach the AI — check your connection and drop the file again.';
+      m.loading = false; render(); return;
+    }
+    const body = await res.json().catch(()=>({error:'The AI answer came back garbled — drop the file again to retry.'}));
     if(!res.ok || body.error){
       m.error = body.error || 'AI extraction failed — please try again.';
       m.loading = false;
@@ -7968,20 +7990,27 @@ function loiPopulateDealMatch(client){
   const m = state.loiImport;
   const ex = m.extracted;
   m.matchedClient = client; m.dealPickerQuery = '';
-  if(m.dropSide==='clients'){
-    const candidates = client.deals||[];
-    m.candidateDeals = candidates;
-    const confident = candidates.find(d=>fuzzyTextMatch(d.building||d.name, ex.propertyDescription));
-    m.matchedDeal = confident || null;
-    m.isNewDeal = !confident;
-  } else {
-    const candidates = client.prospects||[];
-    m.candidateDeals = candidates;
-    const confident = candidates.find(p=>fuzzyTextMatch(p.tenantName, ex.accountName));
-    m.matchedDeal = confident || null;
-    m.isNewDeal = !confident;
-  }
+  // 2026-11-03: candidates are wrapped {kind:'deal'|'prospect', rec}. On a Listing that's
+  // its Deals (Sites / Deals) plus any Prospect at Prospect stage or higher. The import
+  // never creates anything on its own any more — no single clear match → you pick, or
+  // click "+ Create New Deal".
+  const deals = (client.deals||[]).filter(d=>d.stage!=='dead').map(rec=>({kind:'deal', rec}));
+  const PROS_OK = ['prospect','loi','signedLOI','negotiating','inEscrow','signedLease','closedEscrow'];
+  const pros = m.dropSide==='clients' ? [] : (client.prospects||[]).filter(p=>PROS_OK.includes(p.stage)).map(rec=>({kind:'prospect', rec}));
+  m.candidateDeals = [...deals, ...pros];
+  const fileHit = name=>{ const n = terNorm(name); const f = terNorm(m.fileName||''); return n.length>=4 && f.includes(n); };
+  const hit = x=>{
+    const nm = loiCandName(x);
+    if(fuzzyTextMatch(nm, ex.accountName) || fileHit(nm)) return true;
+    if(m.dropSide==='clients' && x.kind==='deal' && fuzzyTextMatch(x.rec.building||x.rec.name, ex.propertyDescription)) return true;
+    return false;
+  };
+  const hits = m.candidateDeals.filter(hit);
+  const dealHits = hits.filter(x=>x.kind==='deal');
+  m.matchedDeal = hits.length===1 ? hits[0] : (dealHits.length===1 ? dealHits[0] : null);
+  m.isNewDeal = false;
 }
+function loiCandName(x){ if(!x) return ''; return x.kind==='prospect' ? (x.rec.tenantName||'') : (x.rec.name||''); }
 // Finds the matching Client/Listing automatically (e.g. by the LOI's stated account name).
 // This is a soft match too now — when nothing matches (the LOI is filed under the shopping
 // center's name instead of the intersection, say), the review screen offers a manual
@@ -8003,15 +8032,16 @@ function loiFindOnSide(side, ex, fileName){
 // Deal / Prospect pick-list on the LOI import: A–Z, searchable, Dead ones only when searching.
 function loiDealResultsHtml(){
   const m = state.loiImport; if(!m) return '';
-  const nameOf = d=> m.dropSide==='clients' ? (d.name||'') : (d.tenantName||'');
+  const nameOf = x=> loiCandName(x);
   const q = (m.dealPickerQuery||'').trim().toLowerCase();
   let rows = (m.candidateDeals||[]).map((d,i)=>({d,i})).filter(x=>!q || nameOf(x.d).toLowerCase().includes(q));
-  if(!q) rows = rows.filter(x=>x.d.stage!=='dead' && x.d.stage!=='notInterested');
-  rows.sort((a,b)=>nameOf(a.d).localeCompare(nameOf(b.d)));
+  rows.sort((a,b)=>(a.d.kind===b.d.kind?0:(a.d.kind==='deal'?-1:1)) || nameOf(a.d).localeCompare(nameOf(b.d)));
   const total = rows.length; rows = rows.slice(0,60);
-  if(!total) return `<div class="tiny" style="color:var(--ink-soft);padding:6px 0;">${q?'No matches.':'Nothing open here — search to include Dead ones, or create new below.'}</div>`;
-  return rows.map(x=>`<div class="row-card" data-pickcandidate="${x.i}" style="cursor:pointer;margin-bottom:6px;">
-      <div class="row-body"><div class="row-title">${escapeHtml(nameOf(x.d))}${x.d.stage==='dead'?' <span class="pill gray">Dead</span>':''}</div></div></div>`).join('')
+  if(!total) return `<div class="tiny" style="color:var(--ink-soft);padding:6px 0;">${q?'No matches.':'No open deals here — create a new one below.'}</div>`;
+  return rows.map(x=>{ const st = LSR_STAGE_MAP[x.d.rec.stage]; return `<div class="row-card" data-pickcandidate="${x.i}" style="cursor:pointer;margin-bottom:6px;padding:8px 12px;">
+      <div class="row-body"><div class="row-title" style="font-size:13.5px;">${escapeHtml(nameOf(x.d))}</div></div>
+      ${st ? `<span class="pill" style="background:${st.color}22;color:${st.color};flex-shrink:0;">${escapeHtml(st.name)}</span>` : ''}
+      ${m.dropSide==='listings' ? `<span class="pill gray" style="flex-shrink:0;">${x.d.kind==='deal'?'Deal':'Prospect'}</span>` : ''}</div>`; }).join('')
     + (total>60 ? `<div class="tiny" style="color:var(--ink-soft);">Showing 60 of ${total} — type to narrow it down.</div>` : '');
 }
 document.addEventListener('input', ev=>{
@@ -8021,7 +8051,7 @@ document.addEventListener('input', ev=>{
 });
 document.addEventListener('click', ev=>{
   const el = ev.target.closest && ev.target.closest('#loiDealResults [data-pickcandidate]'); if(!el || !state.loiImport) return;
-  const m = state.loiImport; m.matchedDeal = m.candidateDeals[parseInt(el.dataset.pickcandidate)]; m.isNewDeal = false; render();
+  const m = state.loiImport; loiCaptureFields(); m.matchedDeal = m.candidateDeals[parseInt(el.dataset.pickcandidate)]; m.isNewDeal = false; render();
 });
 function matchLoiToAccount(){
   const m = state.loiImport;
@@ -8075,8 +8105,11 @@ function renderLoiClientPickerResultsHtml(){
 }
 function loiApplyTerms(rec, ex, isSale, fileName){
   rec.dealType = isSale ? 'sale' : 'lease';
-  // An LOI moves a Prospect (or a deal with no stage) up to LOI — never moves anything back.
-  if(String(ex.documentType||'').toUpperCase()==='LOI' && (!rec.stage || rec.stage==='prospect')) rec.stage = 'loi';
+  // The document moves the stage UP, never back: LOI → LOI; PSA or Lease → Negotiating Lease / PSA.
+  const RANK = {prospect:1, contacted:1, loi:2, signedLOI:3, negotiating:4, inEscrow:5, signedLease:6, closedEscrow:6};
+  const dt = String(ex.documentType||'').toUpperCase();
+  const target = dt==='LOI' ? 'loi' : (dt==='PSA' || dt==='LEASE') ? 'negotiating' : null;
+  if(target && rec.stage!=='dead' && (RANK[rec.stage]||0) < RANK[target]) rec.stage = target;
   if(isSale) rec.price = ex.rentOrPrice||rec.price; else rec.rent = ex.rentOrPrice||rec.rent;
   rec.term = ex.term || rec.term;
   rec.tiAllowance = ex.tiAllowance || rec.tiAllowance;
@@ -8089,37 +8122,48 @@ function loiApplyTerms(rec, ex, isSale, fileName){
     rec.notes = [rec.notes||'', stamp + '\n' + ex.keyTerms.trim()].filter(x=>x.trim()).join('\n\n');
   }
 }
+// Saved before the Key Terms list was ready — add it to that deal's Notes when it arrives.
+async function loiAppendLateKeyTerms(m, kt){
+  const tgt = m.savedTarget; if(!tgt || !kt || !kt.trim()) return;
+  if(m.extracted && m.extracted.keyTerms && m.extracted.keyTerms.trim()) return; // typed by hand — already saved
+  const ex = Object.assign({}, m.extracted||{}, {keyTerms: kt});
+  const r = tgt.rec;
+  const stamp = `${ex.documentType||'Document'} terms (${toLocalDateStr(todayDate())}, ${m.fileName||'import'}):`;
+  r.notes = [r.notes||'', stamp + '\n' + kt.trim()].filter(x=>x.trim()).join('\n\n');
+  await (tgt.kind==='deal' ? supaUpdateDeal(r, tgt.clientId) : supaUpdateProspect(r, tgt.clientId));
+  flashToast('Key terms added to Notes.');
+}
 async function confirmLoiImport(){
   const m = state.loiImport;
   const ex = m.extracted;
   const isSale = ex.transactionType==='sale';
   const l = db.lists.find(x=>x.id===(m.dropSide==='clients'?'clients':'listings'));
   const c = m.matchedClient;
-  if(m.dropSide==='clients'){
-    let d = m.isNewDeal ? null : m.matchedDeal;
+  const pick = m.isNewDeal ? null : m.matchedDeal;
+  if(!pick && !m.isNewDeal) throw new Error('No deal picked');
+  if(m.dropSide==='clients' || m.isNewDeal || (pick && pick.kind==='deal')){
+    let d = pick ? pick.rec : null;
     const isNew = !d;
     if(isNew){
-      d = {id:crypto.randomUUID(), name: ex.propertyDescription||'New Deal', complete:false, activeDeal:false, dueDate:null,
-        caExecuted:false, dealType: isSale?'sale':'lease', building: ex.propertyDescription||'', stage:'loi',
+      // Clients: named by the property. Listings: named by the tenant / buyer (like "Federico's").
+      const nm = m.dropSide==='clients' ? (ex.propertyDescription||'New Deal') : (ex.accountName||ex.propertyDescription||'New Deal');
+      d = {id:crypto.randomUUID(), name: nm, complete:false, activeDeal:false, dueDate:null,
+        caExecuted: m.dropSide==='listings', dealType: isSale?'sale':'lease', building: ex.propertyDescription||'', stage:null,
         splits:[], commission1Paid:false, commission2Paid:false, trackerUserId: state.currentUser.id};
       c.deals.push(d);
     }
     d.building = ex.propertyDescription || d.building;
     loiApplyTerms(d, ex, isSale, m.fileName);
     await (isNew ? supaCreateDeal(d, c.id) : supaUpdateDeal(d, c.id));
+    m.savedTarget = {kind:'deal', rec:d, clientId:c.id};
     m.savedName = `${c.name} — ${d.name}`;
   } else {
-    let p = m.isNewDeal ? null : m.matchedDeal;
-    const isNew = !p;
-    if(isNew){
-      p = {id:crypto.randomUUID(), tenantName: ex.accountName||'New Prospect', stage:'loi', dealType: isSale?'sale':'lease',
-        dateOfContact: todayDate(), notes:'', edgeTracker:state.currentUser.id, attachments:[], commission1Paid:false, commission2Paid:false};
-      c.prospects = c.prospects || [];
-      c.prospects.push(p);
-    }
+    const p = pick.rec;
+    const isNew = false;
     p.building = ex.propertyDescription || p.building;
     loiApplyTerms(p, ex, isSale, m.fileName);
     await (isNew ? supaCreateProspect(p, c.id) : supaUpdateProspect(p, c.id));
+    m.savedTarget = {kind:'prospect', rec:p, clientId:c.id};
     m.savedName = `${c.name} — ${p.tenantName}`;
   }
   const key = `${m.dropSide}-${isSale?'sale':'lease'}`;
@@ -9784,6 +9828,168 @@ function renderTeamTodos(smartId){
   }).join('');
 }
 
+/* ---------------- CLIENT DEALS WINDOW: "Open All Deals" / "Open by Tracker" (2026-11-02) ----------------
+   Buttons at the top of the Clients list. Both open the same window: every Client deal,
+   grouped by stage (Signed Lease … LOI, Prospect). Dead deals are never shown, and deals
+   that are finished and fully paid drop off. Admin / Full Access see every Client deal;
+   everyone else sees the deals they have access to. "By Tracker" = the deal's Edge Tracker. */
+function cdwVisible(c, d){
+  const me = state.currentUser.id;
+  if(state.currentUser.role==='Admin' || state.currentUser.role==='FullAccess') return true;
+  return userHasDealRowAccess(c, d, me);
+}
+function cdwRows(){
+  const l = db.lists.find(x=>x.id==='clients'); if(!l) return [];
+  const out = [];
+  l.clients.filter(c=>!c.archivedAt).forEach(c=>(c.deals||[]).forEach(d=>{
+    if(d.stage==='dead') return;
+    const isDone = d.complete || d.stage==='closedEscrow';
+    if(isDone && d.commission1Paid && d.commission2Paid) return;
+    if(!cdwVisible(c, d)) return;
+    out.push({c, d});
+  }));
+  return out;
+}
+function cdwTrackerOptions(){
+  const counts = {};
+  cdwRows().forEach(r=>{ const t = r.d.trackerUserId || 'none'; counts[t] = (counts[t]||0)+1; });
+  const opts = USERS.filter(u=>counts[u.id]).map(u=>({id:u.id, name:u.name, n:counts[u.id]})).sort((a,b)=>a.name.localeCompare(b.name));
+  if(counts.none) opts.push({id:'none', name:'No tracker set', n:counts.none});
+  return opts;
+}
+function renderClientDealsButtons(){
+  const opts = cdwTrackerOptions();
+  return `<span style="display:inline-flex;gap:8px;align-items:center;margin:0 0 14px 8px;flex-wrap:wrap;">
+    <button class="btn secondary sm" data-cdw="all">📋 Open All Deals</button>
+    <select class="btn secondary sm" data-cdw="tracker" style="padding-right:24px;">
+      <option value="">👤 Open by Tracker…</option>
+      ${opts.map(o=>`<option value="${escapeAttr(o.id)}">${escapeHtml(o.name)} (${o.n})</option>`).join('')}
+    </select></span>`;
+}
+function renderClientDealsWin(){
+  const w = state.clientDealsWin;
+  let rows = cdwRows();
+  let who = 'All Deals';
+  if(w.tracker){
+    rows = rows.filter(r=>(r.d.trackerUserId||'none')===w.tracker);
+    const u = USERS.find(x=>x.id===w.tracker);
+    who = w.tracker==='none' ? 'No Tracker Set' : (u ? u.name : 'Tracker');
+  }
+  const q = (w.q||'').trim().toLowerCase();
+  if(q) rows = rows.filter(r=>(`${r.c.name} ${r.d.name}`).toLowerCase().includes(q));
+  const order = ['signedLease','closedEscrow','negotiating','inEscrow','signedLOI','loi','prospect','noStage'];
+  const byStage = {};
+  rows.forEach(r=>{ const k = r.d.stage || 'noStage'; (byStage[k] = byStage[k] || []).push(r); });
+  const trackerName = id => { const u = USERS.find(x=>x.id===id); return u ? u.name.split(' ')[0] : ''; };
+  const body = !rows.length ? `<div class="empty-state"><div class="big">No open deals here.</div></div>` :
+    order.filter(k=>byStage[k]).map(k=>{
+      const info = LSR_STAGE_MAP[k]; const name = info ? info.name : 'No stage'; const color = info ? info.color : 'var(--ink-soft)';
+      const list = byStage[k].sort((a,b)=>a.c.name.localeCompare(b.c.name) || a.d.name.localeCompare(b.d.name));
+      return `<div style="margin-bottom:16px;">
+        <div style="font-size:13px;font-weight:700;margin-bottom:6px;"><span class="pill" style="background:${color}22;color:${color};">${escapeHtml(name)}</span> <span style="color:var(--ink-soft);font-weight:400;">(${list.length})</span></div>
+        ${list.map(r=>`<div class="row-card" data-cdwopen="${r.d.id}" data-client="${r.c.id}" style="margin-bottom:5px;cursor:pointer;padding:8px 12px;">
+          <div class="row-body"><div class="row-title" style="font-size:13.5px;">${escapeHtml(r.c.name)} — ${escapeHtml(r.d.name)}</div></div>
+          ${!w.tracker && r.d.trackerUserId ? `<span class="pill gray" style="flex-shrink:0;">${escapeHtml(trackerName(r.d.trackerUserId))}</span>` : ''}
+        </div>`).join('')}
+      </div>`;
+    }).join('');
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay'; overlay.style.zIndex = 95;
+  overlay.innerHTML = `<div class="modal-card" style="width:720px;">
+    <div class="modal-head"><div class="modal-title">📋 ${escapeHtml(who)} <span style="font-weight:400;font-size:13px;opacity:.85;">· Clients · ${rows.length} deal${rows.length===1?'':'s'}</span></div><button class="modal-close" data-cdw="close">✕</button></div>
+    <div class="modal-body">
+      <input id="cdwSearch" placeholder="🔍 Search client or deal…" value="${escapeAttr(w.q||'')}" style="width:100%;margin-bottom:12px;">
+      <div id="cdwBody">${body}</div>
+    </div></div>`;
+  document.getElementById('app').appendChild(overlay);
+  overlay.querySelector('[data-cdw="close"]').onclick = ()=>{ state.clientDealsWin = null; render(); };
+  overlay.addEventListener('click', e=>{ if(e.target===overlay){ state.clientDealsWin = null; render(); } });
+  overlay.querySelectorAll('[data-cdwopen]').forEach(el=>el.onclick=()=>{
+    state.modalStack = withPageScroll([
+      {kind:'client', listId:'clients', clientId:el.dataset.client, viewMode:'all'},
+      {kind:'deal', listId:'clients', clientId:el.dataset.client, dealId:el.dataset.cdwopen}
+    ]);
+    render();
+  });
+  const sb = overlay.querySelector('#cdwSearch');
+  sb.oninput = ()=>{ w.q = sb.value; const pos = sb.selectionStart; render(); const n = document.getElementById('cdwSearch'); if(n){ n.focus(); n.setSelectionRange(pos,pos); } };
+}
+document.addEventListener('click', e=>{
+  const b = e.target.closest && e.target.closest('button[data-cdw="all"]'); if(!b) return;
+  state.clientDealsWin = {tracker:null, q:''}; render();
+});
+document.addEventListener('change', e=>{
+  if(!e.target || e.target.dataset.cdw!=='tracker' || !e.target.value) return;
+  state.clientDealsWin = {tracker:e.target.value, q:''}; render();
+});
+/* ---------------- CLIENT SPECS (2026-11-03) ----------------
+   The spec fields are columns on the "All Clients" board (marked spec:true), stored per
+   Client in clients.field_values — so the Client page and the board show the same data.
+   "+ Add Field" here adds a new spec column to that board for every Client. */
+function clientSpecsBoard(){ return listBoards().find(b=>b.kind==='client_template') || null; }
+function clientSpecCols(){ const b = clientSpecsBoard(); return b ? (b.columns||[]).filter(c=>c.spec) : []; }
+function renderClientSpecsCard(c, canEdit){
+  const b = clientSpecsBoard(); if(!b) return '';
+  const cols = clientSpecCols();
+  const fv = c.fieldValues || {};
+  const dis = canEdit ? '' : 'disabled';
+  const inputStyle = 'width:100%;font-size:14px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;box-sizing:border-box;';
+  const field = col=>{
+    const v = fv[col.id];
+    let inp;
+    if(col.type==='status') inp = `<select data-cspec="${col.id}" ${dis} style="${inputStyle}"><option value="">—</option>${(col.labels||[]).map(l=>`<option value="${escapeAttr(l.id)}" ${v===l.id||v===l.label?'selected':''}>${escapeHtml(l.label)}</option>`).join('')}</select>`;
+    else if(col.type==='checkbox') inp = `<input type="checkbox" data-cspec="${col.id}" ${v?'checked':''} ${dis} style="width:auto;">`;
+    else if(col.type==='longtext') inp = `<textarea data-cspec="${col.id}" rows="3" ${dis} style="${inputStyle}resize:vertical;">${escapeHtml(v||'')}</textarea>`;
+    else inp = `<input type="${col.type==='number'?'number':col.type==='date'?'date':'text'}" data-cspec="${col.id}" value="${escapeAttr(v==null?'':v)}" placeholder="${escapeAttr(col.placeholder||'')}" ${dis} style="${inputStyle}">`;
+    return inp;
+  };
+  const rows = []; const doneGroups = new Set();
+  cols.forEach(col=>{
+    if(col.specGroup){
+      if(doneGroups.has(col.specGroup)) return; doneGroups.add(col.specGroup);
+      const grp = cols.filter(x=>x.specGroup===col.specGroup);
+      rows.push(`<div class="cs-row"><div class="cs-lbl">${escapeHtml(col.specGroup)}</div><div style="display:flex;gap:18px;flex-wrap:wrap;">${grp.map(g=>`<label style="display:flex;gap:6px;align-items:center;font-weight:400;">${field(g)} ${escapeHtml(g.name)}</label>`).join('')}</div></div>`);
+    } else rows.push(`<div class="cs-row"><div class="cs-lbl">${escapeHtml(col.name)}</div><div>${field(col)}</div></div>`);
+  });
+  return `<div class="contact-card" style="margin-top:20px;">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><div class="label" style="flex:1;">Client Specs</div>
+      <button class="btn secondary sm" data-bd="openListBoard" data-board="${b.id}" title="Every Client's specs on one board">▦ View in Board</button></div>
+    <style>.cs-row{display:grid;grid-template-columns:190px 1fr;gap:10px;align-items:center;padding:5px 0;} .cs-lbl{font-size:13px;color:var(--ink-soft);font-weight:600;} @media(max-width:600px){.cs-row{grid-template-columns:1fr;gap:4px;}}</style>
+    ${rows.join('') || '<div class="tiny" style="color:var(--ink-soft);">No spec fields yet.</div>'}
+    ${canEdit ? `<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center;">
+      <input id="csNewName" placeholder="+ Add field (for every Client)…" style="flex:1 1 200px;${inputStyle}">
+      <select id="csNewType" style="width:auto;${inputStyle}width:auto;"><option value="text">Text</option><option value="number">Number</option><option value="checkbox">Yes / No</option><option value="date">Date</option><option value="longtext">Long text</option></select>
+      <button class="btn secondary sm" data-csadd="${c.id}">Add</button></div>` : ''}
+    <div class="tiny" id="csSaved" style="color:var(--good);min-height:14px;margin-top:4px;"></div>
+  </div>`;
+}
+function cspecClientFromModal(){
+  const f = state.modalStack && state.modalStack[state.modalStack.length-1];
+  const fr = f && f.kind==='client' ? f : (state.modalStack||[]).slice().reverse().find(x=>x.kind==='client');
+  if(!fr) return null;
+  const l = db.lists.find(x=>x.id===fr.listId); return l ? l.clients.find(x=>x.id===fr.clientId) : null;
+}
+document.addEventListener('change', e=>{
+  const el = e.target; if(!el || !el.dataset || !el.dataset.cspec) return;
+  const c = cspecClientFromModal(); if(!c) return;
+  if(!c.fieldValues) c.fieldValues = {};
+  const v = el.type==='checkbox' ? el.checked : el.value.trim();
+  if(v==='' || v===false) delete c.fieldValues[el.dataset.cspec]; else c.fieldValues[el.dataset.cspec] = (el.type==='number' && v!=='') ? Number(v) : v;
+  if(typeof bdRowCache!=='undefined') bdRowCache.delete(c.id);
+  supaUpdateClientContact(c, 'clients');
+  const s = document.getElementById('csSaved'); if(s){ s.textContent='✓ Saved'; setTimeout(()=>{ if(s) s.textContent=''; }, 1500); }
+});
+document.addEventListener('click', async e=>{
+  const btn = e.target.closest && e.target.closest('[data-csadd]'); if(!btn) return;
+  const name = (document.getElementById('csNewName')||{}).value||''; const type = (document.getElementById('csNewType')||{}).value||'text';
+  if(!name.trim()){ flashToast('Type a name for the new field.'); return; }
+  const b = clientSpecsBoard(); if(!b) return;
+  b.columns = b.columns || [];
+  b.columns.push({id:bdUid('cs_'), name:name.trim(), type, width:140, spec:true});
+  await supaSaveBoard(b);
+  flashToast(`"${name.trim()}" added to Client Specs for every Client.`);
+  renderPreservingScroll('.modal-body');
+});
 function renderListMain(listId){
   let l = db.lists.find(x=>x.id===listId);
   if(!l) return '';
@@ -9795,7 +10001,7 @@ function renderListMain(listId){
   const singular = l.name.endsWith('s') ? l.name.slice(0,-1) : l.name;
   if(l.type==='deep'){
     const lbForList = (l.id==='clients'||l.id==='listings') ? listBoards().find(x=>bdListIdFor(x)===l.id) : null;
-    const addBtn = `<button class="btn sm" data-action="addClient" data-listid="${l.id}" style="margin-bottom:14px;">+ New ${singular}</button>${lbForList ? ` <button class="btn secondary sm" data-bd="openListBoard" data-board="${lbForList.id}" style="margin-bottom:14px;" title="See every ${singular} as a Monday-style table">▦ Board view</button>` : ''}`;
+    const addBtn = `<button class="btn sm" data-action="addClient" data-listid="${l.id}" style="margin-bottom:14px;">+ New ${singular}</button>${lbForList ? ` <button class="btn secondary sm" data-bd="openListBoard" data-board="${lbForList.id}" style="margin-bottom:14px;" title="See every ${singular} as a Monday-style table">▦ Board view</button>` : ''}${l.id==='clients' ? renderClientDealsButtons() : ''}`;
     if(!l.clients.length) return addBtn + (searchQ ? `<div class="empty-state"><div class="big">No matches for "${escapeHtml(searchQ)}".</div><div class="tiny">Try a different search, or clear it to see everything.</div></div>` : `<div class="empty-state"><div class="big">No ${l.name.toLowerCase()} yet.</div><div class="tiny">Add your first one to get moving.</div></div>`);
     const renderRow = (c)=>{
       const dealCount = c.deals.length;
@@ -9946,7 +10152,7 @@ function renderNewEventModal(){
     </div>
   </div>`;
   document.getElementById('app').appendChild(overlay);
-  const neNameEl = document.getElementById('neName'); if(neNameEl) setTimeout(()=>neNameEl.focus(), 0);
+  const neNameEl = document.getElementById('neName'); if(neNameEl && !m._nameFocused){ m._nameFocused = true; setTimeout(()=>neNameEl.focus(), 0); }
   // Live-commit typed fields so an attachment add/remove (which re-renders) never wipes them.
   if(!m.attachments) m.attachments=[];
   if(neNameEl) neNameEl.oninput=()=>{ m.name = neNameEl.value; };
@@ -12140,7 +12346,7 @@ function renderLoiImportModal(){
         </div>
       </div>
       ${m.error ? `<div class="tiny" style="color:var(--bad);margin-top:12px;">${escapeHtml(m.error)}</div>` : ''}
-      ${m.loading ? `<div class="tiny" style="margin-top:12px;">Reading ${escapeHtml(m.fileName||'file')}, this can take a few seconds…</div>` : ''}
+      ${m.loading ? `<div class="tiny" style="margin-top:12px;">Reading ${escapeHtml(m.fileName||'file')}… <span id="loiReadSecs"></span></div>` : ''}
     `;
   } else if(m.step==='review'){
     const ex = m.extracted;
@@ -12183,17 +12389,17 @@ function renderLoiImportModal(){
           </select>
         </div>
         <div class="field">
-          <label>${m.dropSide==='clients'?'Deal':'Prospect'}</label>
+          <label>Deal</label>
           ${m.matchedDeal ? `
-            <div class="tiny" style="color:var(--good);">✓ Matched: ${escapeHtml(m.dropSide==='clients'?m.matchedDeal.name:m.matchedDeal.tenantName)}</div>
+            <div class="tiny" style="color:var(--good);margin-bottom:6px;">✓ Goes into: <b>${escapeHtml(loiCandName(m.matchedDeal))}</b>${m.matchedDeal.kind==='prospect'?' (Prospect)':''} <a href="#" data-action="loiPickOther" style="margin-left:8px;color:var(--edge);">Pick a different one</a></div>
           ` : ''}
-          ${(!m.matchedDeal && m.candidateDeals.length) ? `
-            <div class="tiny" style="margin-bottom:6px;">No confident match — choose one below or create new:</div>
-            <input id="loiDealSearch" placeholder="🔍 Search ${m.dropSide==='clients'?'deals':'prospects'} under ${escapeAttr(m.matchedClient.name)}…" value="${escapeAttr(m.dealPickerQuery||'')}" style="margin-bottom:8px;">
-            <div id="loiDealResults" style="max-height:320px;overflow-y:auto;">${loiDealResultsHtml()}</div>
+          ${(!m.matchedDeal && !m.isNewDeal) ? `
+            <div class="tiny" style="margin-bottom:6px;color:var(--bad);font-weight:600;">Which deal is this? Pick one below, or create a new one.</div>
+            ${m.candidateDeals.length ? `<input id="loiDealSearch" placeholder="🔍 Search deals under ${escapeAttr(m.matchedClient.name)}…" value="${escapeAttr(m.dealPickerQuery||'')}" style="margin-bottom:8px;">
+            <div id="loiDealResults" style="max-height:320px;overflow-y:auto;">${loiDealResultsHtml()}</div>` : `<div class="tiny" style="color:var(--ink-soft);margin-bottom:6px;">No open deals under ${escapeHtml(m.matchedClient.name)} yet.</div>`}
           ` : ''}
-          ${m.isNewDeal ? `<div class="tiny" style="color:var(--good);margin-bottom:6px;">✓ A new ${m.dropSide==='clients'?'Deal':'Deal (Prospect)'} will be created under <b>${escapeHtml(m.matchedClient.name)}</b> with all the terms above.</div>` : ''}
-          ${!m.isNewDeal ? `<button class="btn secondary sm" data-action="loiCreateNew">${m.matchedDeal?'Actually, create a new one instead':'+ Create New '+(m.dropSide==='clients'?'Deal':'Deal (Prospect)')}</button>` : ''}
+          ${m.isNewDeal ? `<div class="tiny" style="color:var(--good);margin-bottom:6px;">✓ A new Deal will be created under <b>${escapeHtml(m.matchedClient.name)}</b> with all the terms above. <a href="#" data-action="loiPickOther" style="margin-left:8px;color:var(--edge);">Pick an existing one instead</a></div>` : ''}
+          ${!m.isNewDeal ? `<button class="btn secondary sm" data-action="loiCreateNew">+ Create New Deal</button>` : ''}
         </div>
         <button class="btn" data-action="loiConfirm" style="width:100%;margin-top:10px;">Confirm & Save</button>
         <button class="btn secondary" data-action="loiStartOver" style="width:100%;margin-top:8px;">Start Over</button>
@@ -12255,12 +12461,14 @@ function renderLoiImportModal(){
   if(m.step==='review' && m.matchedClient){
     overlay.querySelectorAll('[data-pickcandidate]').forEach(el=>el.onclick=()=>{
       const idx = parseInt(el.dataset.pickcandidate);
+      loiCaptureFields();
       m.matchedDeal = m.candidateDeals[idx];
       m.isNewDeal = false;
       render();
     });
     const createNewBtn = overlay.querySelector('[data-action="loiCreateNew"]');
     if(createNewBtn) createNewBtn.onclick=()=>{ loiCaptureFields(); m.matchedDeal=null; m.isNewDeal=true; render(); };
+    overlay.querySelectorAll('[data-action="loiPickOther"]').forEach(a=>a.onclick=(ev)=>{ ev.preventDefault(); loiCaptureFields(); m.matchedDeal=null; m.isNewDeal=false; render(); });
     const changeAcctBtn = overlay.querySelector('[data-action="loiChangeAccount"]');
     if(changeAcctBtn) changeAcctBtn.onclick=()=>{ loiCaptureFields(); m.matchedClient=null; m.matchedDeal=null; m.candidateDeals=[]; m.isNewDeal=false; m.clientPickerQuery=''; m.otherSideMatch=null; render(); };
     const txSel = overlay.querySelector('#loiTxType');
@@ -12268,12 +12476,9 @@ function renderLoiImportModal(){
     const confirmBtn = overlay.querySelector('[data-action="loiConfirm"]');
     if(confirmBtn) confirmBtn.onclick=safeHandler(async ()=>{
       loiCaptureFields();
+      if(!m.matchedDeal && !m.isNewDeal){ flashToast('Pick which deal this is, or click "+ Create New Deal".'); const r = document.getElementById('loiDealResults') || document.querySelector('[data-action="loiCreateNew"]'); if(r) r.scrollIntoView({block:'center'}); return; }
       m.counterChoice = document.getElementById('loiCounterChoice').value;
-      if(m.keyTermsPending && m.keyTermsPromise){
-        confirmBtn.disabled = true; confirmBtn.textContent = 'Finishing key terms…';
-        await Promise.race([m.keyTermsPromise, new Promise(r=>setTimeout(r, 30000))]);
-        loiCaptureFields();
-      }
+      confirmBtn.disabled = true; confirmBtn.textContent = 'Saving…';
       await confirmLoiImport();
     });
   }
@@ -15276,6 +15481,7 @@ function renderClientModalBody(l,c,viewMode,pendingDel){
     <textarea id="clientNotes" rows="4" ${canEdit?'':'disabled'} style="width:100%;font-size:14px;padding:12px 14px;border:1px solid var(--line);border-radius:8px;color:var(--ink);background:#fff;box-sizing:border-box;resize:vertical;">${escapeHtml(c.notes||'')}</textarea>
     ${canEdit ? `<button class="btn secondary sm" style="margin-top:10px;" data-action="saveClientNotes" data-listid="${l.id}" data-client="${c.id}">Save Notes</button>` : ''}
   </div>
+  ${l.id==='clients' ? renderClientSpecsCard(c, canEdit) : ''}
   <div class="contact-card" style="margin-top:20px;">
     <div class="label">Tags</div>
     <div style="font-size:12.5px;color:var(--ink-soft);margin:4px 0 8px;">Comma-separated, e.g. #Freddys, #SouthwestEdgeRocks, #PortalPower</div>
@@ -18101,7 +18307,9 @@ function renderNewTodoModal(){
     </div>
   </div>`;
   document.getElementById('app').appendChild(overlay);
-  const ntTitleEl = document.getElementById('ntTitle'); if(ntTitleEl) setTimeout(()=>ntTitleEl.focus(), 0);
+  // Only on first open — re-focusing the Title on every redraw (e.g. "+ Add item") was
+  // jumping the window back to the top. (2026-11-02)
+  const ntTitleEl = document.getElementById('ntTitle'); if(ntTitleEl && !m._titleFocused){ m._titleFocused = true; setTimeout(()=>ntTitleEl.focus(), 0); }
   overlay.querySelectorAll('[data-settype]').forEach(b=>b.onclick=()=>{
     m.type=b.dataset.settype;
     if((m.type==='checklist' || m.type==='project') && !(m.checklistItems && m.checklistItems.length)){
@@ -19498,11 +19706,15 @@ function renderPreservingScroll(containerSelector){
   const savedScrollTop = scroller ? scroller.scrollTop : null;
   render();
   if(savedScrollTop!==null){
-    requestAnimationFrame(()=>{
+    // 2026-11-02: restore right away as well as on the next frame — restoring only on the
+    // next frame let the window flash back to the top (e.g. "+ Add item" on a Checklist).
+    const restore = ()=>{
       const s2 = document.querySelectorAll(containerSelector);
       const s = s2.length ? s2[s2.length-1] : null;
-      if(s) s.scrollTop = savedScrollTop;
-    });
+      if(s && s.scrollTop!==savedScrollTop) s.scrollTop = savedScrollTop;
+    };
+    restore();
+    requestAnimationFrame(restore);
   }
 }
 function safeHandler(fn){
