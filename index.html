@@ -886,7 +886,7 @@ const EDGE_LOGO_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAARgAAA
 // normal for this specific key type; Google expects it to be visible in page source and
 // restricted by domain, via HTTP referrer restriction in Google Cloud Console, not hidden
 // like the other secrets in this app). Replace once Michael has generated a real key.
-const APP_BUILD = '2026-11-03 loi-deals';
+const APP_BUILD = '2026-11-03 ca-expiration';
 const GOOGLE_MAPS_JS_KEY = 'AIzaSyBMlIjvH2bpZK6mYJeNZSkQvM8TXQkCjDE';
 const CATEGORY_ORANGE_ICONS = ['💲','🏢','🎯','📋','☁️','🔧','✈️','🏛️','💎','📄','⭐','🗂️'];
 
@@ -3414,7 +3414,8 @@ function smartListTodosRaw(key){
     // 2026-09-26 (Phase 5): Today Me = my single To-Dos due today or overdue, PLUS my
     // To-Dos that belong to a Project and are due by this coming Friday (Sat/Sun → next
     // Friday) or overdue. No due date → hidden. Rendered grouped under each Project.
-    case 'todayMe': { const cut = addDays(todayMeFriday(), 1); return t.filter(td=>!td.completed && td.assignedTo===me && td.dueDate && (td.projectId ? td.dueDate < cut : ['today','overdue'].includes(dueStatus(td.dueDate)))); }
+    // 2026-11-03 (Michael): Today Me = due TODAY only — no overdue (that's Overdue Me), no week-ahead Project items.
+    case 'todayMe': { return t.filter(td=>!td.completed && td.assignedTo===me && td.dueDate && dueStatus(td.dueDate)==='today'); }
     case 'todayAll': return t.filter(td=>!td.completed && inMySphere(td) && dueStatus(td.dueDate)==='today');
     case 'overdueMe': return t.filter(td=>!td.completed && td.assignedTo===me && dueStatus(td.dueDate)==='overdue');
     case 'overdueAll': return t.filter(td=>!td.completed && inMySphere(td) && dueStatus(td.dueDate)==='overdue');
@@ -4482,6 +4483,42 @@ document.addEventListener('click', ev=>{
   ackAction(el.dataset.id, el.dataset.ack);
 }, true);
 
+// ---- CA expiration (Clients' deals) — 2026-11-03 ----
+function caFmtUS(ymdStr){ if(!ymdStr) return ''; const [y,m,dd]=String(ymdStr).slice(0,10).split('-'); return `${parseInt(m)}/${parseInt(dd)}/${y.slice(2)}`; }
+function caExpChip(d, l, c, canEdit){
+  if(!l || l.id!=='clients' || !d.caExecuted) return '';
+  const label = d.caExpirationDate ? `Expires ${caFmtUS(d.caExpirationDate)}` : 'Add expiration date';
+  const color = d.caExpirationDate ? 'var(--ink-soft)' : 'var(--accent)';
+  if(!canEdit) return d.caExpirationDate ? `<span style="font-size:11.5px;color:${color};">${label}</span>` : '';
+  return `<a href="#" data-caexpedit="${d.id}" data-listid="${l.id}" data-client="${c.id}" title="Change the CA expiration date" style="font-size:11.5px;color:${color};text-decoration:underline dotted;">${label}</a>`;
+}
+function caAskExpiration(d, c, markExecuted){
+  const ov = document.createElement('div');
+  ov.className = 'modal-overlay'; ov.style.zIndex = 400;
+  ov.innerHTML = `<div class="modal-card" style="max-width:400px;">
+    <div class="modal-head"><div class="modal-title">CA Expiration Date</div></div>
+    <div class="modal-body">
+      <p class="tiny" style="margin-top:0;color:var(--ink-soft);"><b>${escapeHtml(c.name)}</b> – ${escapeHtml(d.name)}<br>Everyone on this Client gets a reminder 60 days, 30 days and 1 week before it expires.</p>
+      <input type="date" id="caExpIn" value="${d.caExpirationDate ? String(d.caExpirationDate).slice(0,10) : ''}" style="width:100%;">
+    </div>
+    <div class="modal-foot" style="display:flex;gap:8px;justify-content:flex-end;">
+      <button class="btn ghost" id="caExpCancel">Cancel</button>
+      <button class="btn" id="caExpSave">Save</button>
+    </div></div>`;
+  document.body.appendChild(ov);
+  const inp = ov.querySelector('#caExpIn'); setTimeout(()=>{ try{ inp.focus(); }catch(e){} }, 30);
+  const close = ()=>{ ov.remove(); render(); };
+  ov.querySelector('#caExpCancel').onclick = close;
+  ov.querySelector('#caExpSave').onclick = ()=>{
+    const v = inp.value;
+    if(!v){ flashToast('Pick the CA expiration date (or Cancel).'); return; }
+    d.caExpirationDate = v;
+    if(markExecuted) d.caExecuted = true;
+    supaUpdateDeal(d, c.id);
+    flashToast(markExecuted ? `CA marked executed for ${d.name} — expires ${caFmtUS(v)}.` : `CA expiration changed to ${caFmtUS(v)}.`);
+    close();
+  };
+}
 // "Who uploads this to Ascendix?" — asked when a deal moves to Signed Lease / In Escrow.
 function ascendixPickUploader(sourceTable, sourceId, clientId, dealName){
   return new Promise(resolve=>{
@@ -4520,7 +4557,7 @@ function ascendixPickUploader(sourceTable, sourceId, clientId, dealName){
 
 // Rules equivalent to each built-in — the starting point when someone edits one.
 const SL_BUILTIN_RULES = {
-  todayMe:   [[{f:'assignee',op:'is',v:'me'},{f:'done',op:'is',v:'open'},{f:'due',op:'todayOrOverdue'}]],
+  todayMe:   [[{f:'assignee',op:'is',v:'me'},{f:'done',op:'is',v:'open'},{f:'due',op:'today'}]],
   todayAll:  [[{f:'sphere',op:'is',v:'yes'},{f:'done',op:'is',v:'open'},{f:'due',op:'today'}]],
   overdueMe: [[{f:'assignee',op:'is',v:'me'},{f:'done',op:'is',v:'open'},{f:'due',op:'overdue'}]],
   overdueAll:[[{f:'sphere',op:'is',v:'yes'},{f:'done',op:'is',v:'open'},{f:'due',op:'overdue'}]],
@@ -9644,10 +9681,9 @@ function renderTodayMeMain(list){
   }).join('');
   const label = (txt)=>`<div class="section-label" style="margin-top:14px;">${txt}</div>`;
   if(!singles.length && !groups.length) return renderTodoList([], false);
-  return label(`My To-Do's — due today &amp; overdue (${singles.length})`)
+  return label(`My To-Do's — due today (${singles.length})`)
     + (singles.length ? renderTodoList(singles, true, true) : `<div class="tiny" style="color:var(--ink-soft);padding:6px 0;">Nothing due today.</div>`)
-    + label(`My Project To-Do's — due by Fri ${fmtDate(fri)} (${list.length-singles.length})`)
-    + (groups.length ? projHtml : `<div class="tiny" style="color:var(--ink-soft);padding:6px 0;">No Project To-Do's due this week.</div>`);
+    + (groups.length ? label(`My Project To-Do's — due today (${list.length-singles.length})`) + projHtml : '');
 }
 
 function assigneeRank(td){
@@ -9828,100 +9864,134 @@ function renderTeamTodos(smartId){
   }).join('');
 }
 
-/* ---------------- CLIENT DEALS WINDOW: "Open All Deals" / "Open by Tracker" (2026-11-02) ----------------
-   Buttons at the top of the Clients list. Both open the same window: every Client deal,
-   grouped by stage (Signed Lease … LOI, Prospect). Dead deals are never shown, and deals
-   that are finished and fully paid drop off. Admin / Full Access see every Client deal;
-   everyone else sees the deals they have access to. "By Tracker" = the deal's Edge Tracker. */
-function cdwVisible(c, d){
-  const me = state.currentUser.id;
-  if(state.currentUser.role==='Admin' || state.currentUser.role==='FullAccess') return true;
-  return userHasDealRowAccess(c, d, me);
-}
-function cdwRows(){
-  const l = db.lists.find(x=>x.id==='clients'); if(!l) return [];
-  const out = [];
-  l.clients.filter(c=>!c.archivedAt).forEach(c=>(c.deals||[]).forEach(d=>{
-    if(d.stage==='dead') return;
+/* ---------------- ACCOUNT DEALS WINDOW: row buttons "By Tracker" / "Open All" (2026-11-03) ----------------
+   On every Client row (and Listing row, desktop): [By Tracker] [Open All].
+   Open All  → that account's deals grouped by stage. Dead and finished-and-paid deals left out.
+   By Tracker → closed sections, one per Edge Tracker on that account — the logged-in person
+   first, everyone else A–Z, "No Tracker" last (only if any). Inside: one list sorted by stage.
+   No Tracker lines have a pick-list: people on the account first, then "Pick Another User…".
+   Changing a tracker emails the new tracker (database trigger deals_tracker_notify). */
+const CDW_STAGE_ORDER = ['prospect','loi','signedLOI','negotiating','inEscrow','signedLease','closedEscrow'];
+function cdwAccount(w){ const l = db.lists.find(x=>x.id===w.listId); return l ? l.clients.find(c=>c.id===w.clientId) : null; }
+function cdwDeals(c){
+  return (c.deals||[]).filter(d=>{
+    if(d.stage==='dead') return false;
     const isDone = d.complete || d.stage==='closedEscrow';
-    if(isDone && d.commission1Paid && d.commission2Paid) return;
-    if(!cdwVisible(c, d)) return;
-    out.push({c, d});
-  }));
-  return out;
+    return !(isDone && d.commission1Paid && d.commission2Paid);
+  });
 }
-function cdwTrackerOptions(){
-  const counts = {};
-  cdwRows().forEach(r=>{ const t = r.d.trackerUserId || 'none'; counts[t] = (counts[t]||0)+1; });
-  const opts = USERS.filter(u=>counts[u.id]).map(u=>({id:u.id, name:u.name, n:counts[u.id]})).sort((a,b)=>a.name.localeCompare(b.name));
-  if(counts.none) opts.push({id:'none', name:'No tracker set', n:counts.none});
-  return opts;
+function cdwStageRank(d){ const i = CDW_STAGE_ORDER.indexOf(d.stage); return i<0 ? -1 : i; }
+function cdwUserName(id){ const u = USERS.find(x=>x.id===id); return u ? u.name : 'Unknown user'; }
+function cdwAccountPeople(c){
+  const ids = new Set();
+  if(c.createdBy) ids.add(c.createdBy);
+  (c.authorizedUserIds||[]).forEach(x=>ids.add(x));
+  (c.deals||[]).forEach(d=>{
+    if(d.trackerUserId) ids.add(d.trackerUserId);
+    (Array.isArray(d.splits)?d.splits:[]).forEach(s=>{ const lid = authIdToLocalUserId(s.userId) || s.userId; if(lid) ids.add(lid); });
+  });
+  return USERS.filter(u=>ids.has(u.id)).sort((a,b)=>a.name.localeCompare(b.name));
 }
-function renderClientDealsButtons(){
-  const opts = cdwTrackerOptions();
-  return `<span style="display:inline-flex;gap:8px;align-items:center;margin:0 0 14px 8px;flex-wrap:wrap;">
-    <button class="btn secondary sm" data-cdw="all">📋 Open All Deals</button>
-    <select class="btn secondary sm" data-cdw="tracker" style="padding-right:24px;">
-      <option value="">👤 Open by Tracker…</option>
-      ${opts.map(o=>`<option value="${escapeAttr(o.id)}">${escapeHtml(o.name)} (${o.n})</option>`).join('')}
-    </select></span>`;
+function cdwRowButtons(c, listId){
+  return `<button class="btn secondary sm" data-cdwopen-acct="tracker" data-client="${c.id}" data-listid="${listId}">By Tracker</button>`
+    + (listId==='clients' ? `<button class="btn sm" data-cdwopen-acct="all" data-client="${c.id}" data-listid="${listId}">Open All</button>` : '');
+}
+function cdwDealLine(d, c, w, withPicker){
+  const st = LSR_STAGE_MAP[d.stage];
+  const pill = st ? `<span class="pill" style="background:${st.color}22;color:${st.color};flex-shrink:0;">${escapeHtml(st.name)}</span>` : `<span class="pill gray" style="flex-shrink:0;">No stage</span>`;
+  let picker = '';
+  if(withPicker){
+    const all = !!(w.anotherFor||{})[d.id];
+    const people = all ? USERS.slice().sort((a,b)=>a.name.localeCompare(b.name)) : cdwAccountPeople(c);
+    picker = `<select data-cdwpick="${d.id}" data-stopprop="1" style="width:auto;font-size:12.5px;padding:4px 6px;flex-shrink:0;">
+      <option value="">Pick tracker ▾</option>
+      ${people.map(u=>`<option value="${escapeAttr(u.id)}">${escapeHtml(u.name)}</option>`).join('')}
+      ${all ? '' : `<option value="__other">Pick Another User…</option>`}
+    </select>`;
+  }
+  return `<div class="row-card" data-cdwdeal="${d.id}" style="margin-bottom:5px;cursor:pointer;padding:8px 12px;gap:8px;">
+    <div class="row-body"><div class="row-title" style="font-size:13.5px;">${escapeHtml(d.name)}</div></div>${pill}${picker}</div>`;
 }
 function renderClientDealsWin(){
   const w = state.clientDealsWin;
-  let rows = cdwRows();
-  let who = 'All Deals';
-  if(w.tracker){
-    rows = rows.filter(r=>(r.d.trackerUserId||'none')===w.tracker);
-    const u = USERS.find(x=>x.id===w.tracker);
-    who = w.tracker==='none' ? 'No Tracker Set' : (u ? u.name : 'Tracker');
-  }
-  const q = (w.q||'').trim().toLowerCase();
-  if(q) rows = rows.filter(r=>(`${r.c.name} ${r.d.name}`).toLowerCase().includes(q));
-  const order = ['signedLease','closedEscrow','negotiating','inEscrow','signedLOI','loi','prospect','noStage'];
-  const byStage = {};
-  rows.forEach(r=>{ const k = r.d.stage || 'noStage'; (byStage[k] = byStage[k] || []).push(r); });
-  const trackerName = id => { const u = USERS.find(x=>x.id===id); return u ? u.name.split(' ')[0] : ''; };
-  const body = !rows.length ? `<div class="empty-state"><div class="big">No open deals here.</div></div>` :
-    order.filter(k=>byStage[k]).map(k=>{
+  const c = cdwAccount(w);
+  if(!c){ state.clientDealsWin = null; return; }
+  if(!w.open) w.open = {};
+  const deals = cdwDeals(c);
+  const sorted = list => list.slice().sort((a,b)=>cdwStageRank(a)-cdwStageRank(b) || (a.name||'').localeCompare(b.name||''));
+  let body = '';
+  if(!deals.length) body = `<div class="empty-state"><div class="big">No open deals on ${escapeHtml(c.name)}.</div></div>`;
+  else if(w.mode==='all'){
+    const order = ['signedLease','closedEscrow','negotiating','inEscrow','signedLOI','loi','prospect','noStage'];
+    const byStage = {};
+    deals.forEach(d=>{ const k = d.stage || 'noStage'; (byStage[k] = byStage[k] || []).push(d); });
+    body = order.filter(k=>byStage[k]).map(k=>{
       const info = LSR_STAGE_MAP[k]; const name = info ? info.name : 'No stage'; const color = info ? info.color : 'var(--ink-soft)';
-      const list = byStage[k].sort((a,b)=>a.c.name.localeCompare(b.c.name) || a.d.name.localeCompare(b.d.name));
-      return `<div style="margin-bottom:16px;">
-        <div style="font-size:13px;font-weight:700;margin-bottom:6px;"><span class="pill" style="background:${color}22;color:${color};">${escapeHtml(name)}</span> <span style="color:var(--ink-soft);font-weight:400;">(${list.length})</span></div>
-        ${list.map(r=>`<div class="row-card" data-cdwopen="${r.d.id}" data-client="${r.c.id}" style="margin-bottom:5px;cursor:pointer;padding:8px 12px;">
-          <div class="row-body"><div class="row-title" style="font-size:13.5px;">${escapeHtml(r.c.name)} — ${escapeHtml(r.d.name)}</div></div>
-          ${!w.tracker && r.d.trackerUserId ? `<span class="pill gray" style="flex-shrink:0;">${escapeHtml(trackerName(r.d.trackerUserId))}</span>` : ''}
-        </div>`).join('')}
+      return `<div style="margin-bottom:16px;"><div style="font-size:13px;font-weight:700;margin-bottom:6px;"><span class="pill" style="background:${color}22;color:${color};">${escapeHtml(name)}</span> <span style="color:var(--ink-soft);font-weight:400;">(${byStage[k].length})</span></div>
+        ${byStage[k].sort((a,b)=>(a.name||'').localeCompare(b.name||'')).map(d=>cdwDealLine(d, c, w, false)).join('')}</div>`;
+    }).join('');
+  } else {
+    const me = state.currentUser.id;
+    const groups = {};
+    deals.forEach(d=>{ const k = d.trackerUserId || '__none'; (groups[k] = groups[k] || []).push(d); });
+    const keys = Object.keys(groups).filter(k=>k!=='__none').sort((a,b)=>(a===me?-1:b===me?1:cdwUserName(a).localeCompare(cdwUserName(b))));
+    if(groups.__none) keys.push('__none');
+    body = keys.map(k=>{
+      const open = !!w.open[k];
+      const label = k==='__none' ? 'No Tracker' : cdwUserName(k) + (k===me ? ' (you)' : '');
+      return `<div style="margin-bottom:8px;">
+        <div data-cdwtoggle="${escapeAttr(k)}" style="cursor:pointer;display:flex;align-items:center;gap:8px;padding:9px 12px;border:1px solid var(--line);border-radius:10px;background:${k==='__none'?'#FFF5EF':'#fff'};font-weight:700;font-size:14px;">
+          <span style="width:14px;">${open?'▾':'▸'}</span><span style="flex:1;">${escapeHtml(label)}</span><span style="color:var(--ink-soft);font-weight:400;">${groups[k].length}</span></div>
+        ${open ? `<div style="margin:6px 0 4px 22px;">${sorted(groups[k]).map(d=>cdwDealLine(d, c, w, k==='__none')).join('')}</div>` : ''}
       </div>`;
     }).join('');
+  }
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay'; overlay.style.zIndex = 95;
-  overlay.innerHTML = `<div class="modal-card" style="width:720px;">
-    <div class="modal-head"><div class="modal-title">📋 ${escapeHtml(who)} <span style="font-weight:400;font-size:13px;opacity:.85;">· Clients · ${rows.length} deal${rows.length===1?'':'s'}</span></div><button class="modal-close" data-cdw="close">✕</button></div>
-    <div class="modal-body">
-      <input id="cdwSearch" placeholder="🔍 Search client or deal…" value="${escapeAttr(w.q||'')}" style="width:100%;margin-bottom:12px;">
-      <div id="cdwBody">${body}</div>
-    </div></div>`;
+  overlay.innerHTML = `<div class="modal-card" style="width:680px;">
+    <div class="modal-head"><div class="modal-title">${w.mode==='all'?'📋':'👤'} ${escapeHtml(c.name)} <span style="font-weight:400;font-size:13px;opacity:.85;">· ${w.mode==='all'?'All Deals':'By Tracker'} · ${deals.length} deal${deals.length===1?'':'s'}</span></div><button class="modal-close" data-cdw="close">✕</button></div>
+    <div class="modal-body">${body}</div></div>`;
   document.getElementById('app').appendChild(overlay);
-  overlay.querySelector('[data-cdw="close"]').onclick = ()=>{ state.clientDealsWin = null; render(); };
-  overlay.addEventListener('click', e=>{ if(e.target===overlay){ state.clientDealsWin = null; render(); } });
-  overlay.querySelectorAll('[data-cdwopen]').forEach(el=>el.onclick=()=>{
+  const close = ()=>{ state.clientDealsWin = null; render(); };
+  overlay.querySelector('[data-cdw="close"]').onclick = close;
+  overlay.addEventListener('click', e=>{ if(e.target===overlay) close(); });
+  overlay.querySelectorAll('[data-cdwtoggle]').forEach(el=>el.onclick=()=>{ const k = el.dataset.cdwtoggle; w.open[k] = !w.open[k]; renderPreservingScroll('.modal-body'); });
+  overlay.querySelectorAll('[data-cdwdeal]').forEach(el=>el.onclick=(ev)=>{
+    if(ev.target.closest('select')) return;
     state.modalStack = withPageScroll([
-      {kind:'client', listId:'clients', clientId:el.dataset.client, viewMode:'all'},
-      {kind:'deal', listId:'clients', clientId:el.dataset.client, dealId:el.dataset.cdwopen}
+      {kind:'client', listId:w.listId, clientId:c.id, viewMode:'all'},
+      {kind:'deal', listId:w.listId, clientId:c.id, dealId:el.dataset.cdwdeal}
     ]);
     render();
   });
-  const sb = overlay.querySelector('#cdwSearch');
-  sb.oninput = ()=>{ w.q = sb.value; const pos = sb.selectionStart; render(); const n = document.getElementById('cdwSearch'); if(n){ n.focus(); n.setSelectionRange(pos,pos); } };
+  overlay.querySelectorAll('select[data-cdwpick]').forEach(sel=>{
+    sel.onclick = ev=>ev.stopPropagation();
+    sel.onchange = safeHandler(async ()=>{
+      const d = (c.deals||[]).find(x=>x.id===sel.dataset.cdwpick); if(!d || !sel.value) return;
+      if(sel.value==='__other'){ if(!w.anotherFor) w.anotherFor = {}; w.anotherFor[d.id] = true; renderPreservingScroll('.modal-body'); return; }
+      d.trackerUserId = sel.value;
+      w.open[sel.value] = w.open[sel.value] || false;
+      renderPreservingScroll('.modal-body');
+      await supaUpdateDeal(d, c.id);
+      flashToast(sel.value===state.currentUser.id ? `You're now the tracker on ${d.name}.` : `${cdwUserName(sel.value)} is now the tracker on ${d.name} — they've been emailed.`);
+    });
+  });
 }
 document.addEventListener('click', e=>{
-  const b = e.target.closest && e.target.closest('button[data-cdw="all"]'); if(!b) return;
-  state.clientDealsWin = {tracker:null, q:''}; render();
-});
-document.addEventListener('change', e=>{
-  if(!e.target || e.target.dataset.cdw!=='tracker' || !e.target.value) return;
-  state.clientDealsWin = {tracker:e.target.value, q:''}; render();
-});
+  const b = e.target.closest && e.target.closest('[data-cdwopen-acct]'); if(!b) return;
+  e.stopPropagation(); e.preventDefault();
+  state.clientDealsWin = {mode:b.dataset.cdwopenAcct, listId:b.dataset.listid, clientId:b.dataset.client, open:{}, anotherFor:{}}; render();
+}, true);
+// Deep link from the tracker email: ?deal=<id>&client=<id>
+function checkDealDeepLink(){
+  const params = new URLSearchParams(window.location.search);
+  const dealId = params.get('deal'), clientId = params.get('client');
+  if(!dealId || !clientId) return;
+  history.replaceState(null, '', window.location.pathname);
+  const listId = findListIdForClient(clientId);
+  if(!listId){ flashToast("That deal couldn't be found — you may not have access to it."); return; }
+  try{ openClientModal(listId, clientId); openDealModal(listId, clientId, dealId); }catch(e){ console.error('Deal deep-link failed:', e); }
+}
 /* ---------------- CLIENT SPECS (2026-11-03) ----------------
    The spec fields are columns on the "All Clients" board (marked spec:true), stored per
    Client in clients.field_values — so the Client page and the board show the same data.
@@ -10001,25 +10071,28 @@ function renderListMain(listId){
   const singular = l.name.endsWith('s') ? l.name.slice(0,-1) : l.name;
   if(l.type==='deep'){
     const lbForList = (l.id==='clients'||l.id==='listings') ? listBoards().find(x=>bdListIdFor(x)===l.id) : null;
-    const addBtn = `<button class="btn sm" data-action="addClient" data-listid="${l.id}" style="margin-bottom:14px;">+ New ${singular}</button>${lbForList ? ` <button class="btn secondary sm" data-bd="openListBoard" data-board="${lbForList.id}" style="margin-bottom:14px;" title="See every ${singular} as a Monday-style table">▦ Board view</button>` : ''}${l.id==='clients' ? renderClientDealsButtons() : ''}`;
+    const addBtn = `<button class="btn sm" data-action="addClient" data-listid="${l.id}" style="margin-bottom:14px;">+ New ${singular}</button>${lbForList ? ` <button class="btn secondary sm" data-bd="openListBoard" data-board="${lbForList.id}" style="margin-bottom:14px;" title="See every ${singular} as a Monday-style table">▦ Board view</button>` : ''}`;
     if(!l.clients.length) return addBtn + (searchQ ? `<div class="empty-state"><div class="big">No matches for "${escapeHtml(searchQ)}".</div><div class="tiny">Try a different search, or clear it to see everything.</div></div>` : `<div class="empty-state"><div class="big">No ${l.name.toLowerCase()} yet.</div><div class="tiny">Add your first one to get moving.</div></div>`);
     const renderRow = (c)=>{
       const dealCount = c.deals.length;
       const openDeals = c.deals.filter(d=>!d.complete && d.stage!=='dead').length; // 10/9: dead deals don't count
       const isListingsRow = l.id==='listings' && !state.isMobile;
+      const isClientsRow = l.id==='clients' && !state.isMobile;
       return `
       <div class="row-card" data-openclient="${c.id}" data-listid="${l.id}">
         <div class="nav-icon" style="font-size:20px;">🏷️</div>
         <div class="row-body">
           <div class="row-title">${escapeHtml(c.name)}</div>
-          <div class="row-meta"><span>${openDeals} active site${openDeals===1?'':'s'}</span></div>
+          <div class="row-meta"><span>${openDeals} active ${l.id==='listings'?'deal':'site'}${openDeals===1?'':'s'}</span></div>
         </div>
         ${isListingsRow ? `
         <div style="display:flex;gap:6px;flex-shrink:0;" data-stopprop="1">
           <button class="btn secondary sm" data-openlisting="deals" data-client="${c.id}" data-listid="${l.id}">Open Deals</button>
           <button class="btn secondary sm" data-openlisting="prospecting" data-client="${c.id}" data-listid="${l.id}">Open Prospecting</button>
+          ${cdwRowButtons(c, l.id)}
           <button class="btn sm" data-openlisting="all" data-client="${c.id}" data-listid="${l.id}">Open All</button>
         </div>` : ''}
+        ${isClientsRow ? `<div style="display:flex;gap:6px;flex-shrink:0;" data-stopprop="1">${cdwRowButtons(c, l.id)}</div>` : ''}
       </div>`;
     };
     const byName = (a,b)=>a.name.localeCompare(b.name);
@@ -14477,6 +14550,7 @@ function checkBrokerReviewDeepLink(){
   state.brokerReviewModal = {todoId: matchingTodo ? matchingTodo.id : null, reviewId: rev.id};
 }
 function checkCommissionSummaryDeepLink(){
+  checkDealDeepLink();
   const params = new URLSearchParams(window.location.search);
   const clientId = params.get('commissionSummary');
   if(!clientId) return;
@@ -15547,6 +15621,7 @@ function renderDealRowInClient(l,c,d){
         <input type="checkbox" data-togglecaexec="${d.id}" data-listid="${l.id}" data-client="${c.id}" ${caExecuted?'checked':''} style="width:auto;accent-color:var(--good);">
         CA Executed
       </label>
+      ${caExpChip(d, l, c, true)}
     </div>
   </div>`;
 }
@@ -16097,6 +16172,7 @@ function renderDealModalBody(l,c,d){
         <input type="checkbox" data-togglecaexec="${d.id}" data-listid="${l.id}" data-client="${c.id}" ${caExecuted?'checked':''} ${ro} style="width:auto;accent-color:var(--good);">
         📄 CA Executed
       </label>
+      ${caExpChip(d, l, c, canEdit)}
     </div>
   </div>
   <div style="display:flex;gap:14px;margin-bottom:14px;flex-wrap:wrap;">
@@ -17255,11 +17331,24 @@ function attachModalHandlers(root){
     state.brokerReviewModal = {todoId: matchingTodo ? matchingTodo.id : null, reviewId};
     render();
   }));
+  root.querySelectorAll('[data-caexpedit]').forEach(el=>el.onclick=safeHandler((ev)=>{
+    ev.preventDefault(); ev.stopPropagation();
+    const l=db.lists.find(x=>x.id===el.dataset.listid); const c=l && l.clients.find(x=>x.id===el.dataset.client);
+    const d=c && c.deals.find(x=>x.id===el.dataset.caexpedit);
+    if(d) caAskExpiration(d, c, false);
+  }));
   root.querySelectorAll('[data-togglecaexec]').forEach(el=>el.onclick=safeHandler((ev)=>{
     ev.stopPropagation();
     const l=db.lists.find(x=>x.id===el.dataset.listid); const c=l && l.clients.find(x=>x.id===el.dataset.client);
     const d=c && c.deals.find(x=>x.id===el.dataset.togglecaexec);
     if(!d){ flashToast("Couldn't find this deal."); render(); return; }
+    // 2026-11-03 (Michael): on Clients' deals, checking CA Executed asks for the CA's
+    // expiration date (drives Dashboard "Expiring CAs" + 60/30/7-day reminder emails).
+    if(el.checked && l.id==='clients'){
+      el.checked = false;
+      caAskExpiration(d, c, true);
+      return;
+    }
     d.caExecuted = el.checked;
     supaUpdateDeal(d, c.id);
     flashToast(d.caExecuted ? `CA marked executed for ${d.name}.` : `CA marked outstanding for ${d.name}.`);
