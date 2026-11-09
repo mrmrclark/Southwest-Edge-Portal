@@ -886,7 +886,7 @@ const EDGE_LOGO_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAARgAAA
 // normal for this specific key type; Google expects it to be visible in page source and
 // restricted by domain, via HTTP referrer restriction in Google Cloud Console, not hidden
 // like the other secrets in this app). Replace once Michael has generated a real key.
-const APP_BUILD = '2026-11-04 tracker-open';
+const APP_BUILD = '2026-11-09 recruit-contact';
 const GOOGLE_MAPS_JS_KEY = 'AIzaSyBMlIjvH2bpZK6mYJeNZSkQvM8TXQkCjDE';
 const CATEGORY_ORANGE_ICONS = ['💲','🏢','🎯','📋','☁️','🔧','✈️','🏛️','💎','📄','⭐','🗂️'];
 
@@ -5421,7 +5421,7 @@ function bdCellHtml(b, t, col, mode, isSub){
 }
 
 /* ---------- filtering / sorting ---------- */
-function bdVisibleColumns(b){ const hidden = bdPrefs(b.id).hidden||[]; return (b.columns||[]).filter(c=>!hidden.includes(c.id)); }
+function bdVisibleColumns(b){ const hidden = bdPrefs(b.id).hidden||[]; return (b.columns||[]).filter(c=>!hidden.includes(c.id) && !c.detailsOnly); } // detailsOnly (2026-11-09): shown only in the Project window, never on the board
 function bdColWidth(b, col){ const w = (bdPrefs(b.id).widths||{})[col.id]; return w || col.width || 140; }
 function bdFilterRows(b, rows){
   const p = bdPrefs(b.id);
@@ -5806,7 +5806,7 @@ function renderBoardPopover(){
       ${col.builtin ? `<div class="bd-menu-item tiny" style="color:var(--ink-soft);cursor:default;">Built-in column — can be hidden, not deleted</div>` : `<div class="bd-menu-item" data-bd="deleteCol" style="color:var(--bad);">🗑️ Delete column</div>`}`}`;
   } else if(p.kind==='hide'){
     const hidden = bdPrefs(b.id).hidden||[];
-    html = `<div class="bd-pop-title">Show / hide columns (just for you)</div>` + b.columns.map(c=>`<label class="bd-menu-item"><input type="checkbox" style="width:auto;" data-bd="toggleHide" data-bdc="${c.id}" ${hidden.includes(c.id)?'':'checked'}> ${escapeHtml(c.name)}</label>`).join('');
+    html = `<div class="bd-pop-title">Show / hide columns (just for you)</div>` + b.columns.filter(c=>!c.detailsOnly).map(c=>`<label class="bd-menu-item"><input type="checkbox" style="width:auto;" data-bd="toggleHide" data-bdc="${c.id}" ${hidden.includes(c.id)?'':'checked'}> ${escapeHtml(c.name)}</label>`).join('');
   } else if(p.kind==='groupMenu'){
     const g = b.groups.find(x=>x.id===p.groupId); if(!g){ state.bdPop=null; return; }
     html = `<div class="bd-pop-title">${escapeHtml(g.name)}</div>
@@ -6280,8 +6280,13 @@ document.addEventListener('click', ev=>{ if(ev.target.closest && ev.target.close
 function bdDetailFieldsHtml(td){
   bdEnsure();
   const b = td.boardId && db.boards.find(x=>x.id===td.boardId); if(!b) return '';
-  const cols = b.columns.filter(c=>!['assignedTo','dueDate','notes','status'].includes(c.builtin));
-  return `<div class="contact-card bd-detail-card">
+  const cols = b.columns.filter(c=>!c.detailsOnly && !['assignedTo','dueDate','notes','status'].includes(c.builtin));
+  const infoCols = b.columns.filter(c=>c.detailsOnly);
+  const row = c=>`<div class="bd-form-row"><div class="bd-form-label">${escapeHtml(c.name)}</div><div class="bd-form-cell bd-td-${c.type}">${bdCellHtml(b, td, c, 'form')}</div></div>`;
+  return `${infoCols.length ? `<div class="contact-card bd-detail-card">
+    <div class="label">📇 Contact Info <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--ink-soft);">· only here, not on the board or in Contacts</span></div>
+    <div class="bd-form">${infoCols.map(row).join('')}</div>
+  </div>` : ''}<div class="contact-card bd-detail-card">
     <div class="label">📋 Board: ${escapeHtml(b.name)}${td.completed?` · <span style="color:var(--ink-soft);">Archived (${td.outcome==='failed'?'Failed/Cancelled':'Done'})</span>`:''}</div>
     <div class="bd-form">${cols.map(c=>`<div class="bd-form-row"><div class="bd-form-label">${escapeHtml(c.name)}</div><div class="bd-form-cell bd-td-${c.type}">${bdCellHtml(b, td, c, 'form')}</div></div>`).join('')}</div>
   </div>`;
