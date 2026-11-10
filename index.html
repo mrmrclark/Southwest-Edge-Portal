@@ -886,7 +886,7 @@ const EDGE_LOGO_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAARgAAA
 // normal for this specific key type; Google expects it to be visible in page source and
 // restricted by domain, via HTTP referrer restriction in Google Cloud Console, not hidden
 // like the other secrets in this app). Replace once Michael has generated a real key.
-const APP_BUILD = '2026-11-09 recruit-contact';
+const APP_BUILD = '2026-11-10 row-notes';
 const GOOGLE_MAPS_JS_KEY = 'AIzaSyBMlIjvH2bpZK6mYJeNZSkQvM8TXQkCjDE';
 const CATEGORY_ORANGE_ICONS = ['💲','🏢','🎯','📋','☁️','🔧','✈️','🏛️','💎','📄','⭐','🗂️'];
 
@@ -15620,7 +15620,7 @@ function renderDealRowInClient(l,c,d){
         ${moneyVal ? `<span class="pill">${d.dealType==='sale'?'Price':'Rent'}: ${escapeHtml(moneyVal)}</span>`:''}
         ${d.term ? `<span class="pill gray">${escapeHtml(d.term)}</span>`:''}
       </div>
-      ${d.notes ? `<div class="row-meta" style="color:var(--ink-soft);">${escapeHtml(d.notes)}</div>`:''}
+      <!-- 2026-11-10: notes no longer shown on the row; they live inside the deal -->
     </div>
     <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end;flex-shrink:0;" data-stopprop="1">
       <label style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink-soft);">
@@ -16543,7 +16543,7 @@ function renderLSRRowCard(p, listing, kind){
     <div class="row-body" style="min-width:220px;">
       <div class="row-title">${escapeHtml(p.tenantName)}</div>
       <div class="row-meta">${meta.join('')}</div>
-      ${p.notes? `<div class="row-meta" style="color:var(--ink-soft);">${escapeHtml(p.notes)}</div>`:''}
+      <!-- 2026-11-10: notes no longer shown on the row; they live inside the prospect -->
     </div>
     ${contact ? `
     <div class="row-contact" style="flex-shrink:0;">
