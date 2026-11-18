@@ -886,7 +886,7 @@ const EDGE_LOGO_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAARgAAA
 // normal for this specific key type; Google expects it to be visible in page source and
 // restricted by domain, via HTTP referrer restriction in Google Cloud Console, not hidden
 // like the other secrets in this app). Replace once Michael has generated a real key.
-const APP_BUILD = '2026-11-10 row-notes';
+const APP_BUILD = '2026-11-18 cs-link';
 const GOOGLE_MAPS_JS_KEY = 'AIzaSyBMlIjvH2bpZK6mYJeNZSkQvM8TXQkCjDE';
 const CATEGORY_ORANGE_ICONS = ['💲','🏢','🎯','📋','☁️','🔧','✈️','🏛️','💎','📄','⭐','🗂️'];
 
@@ -14570,6 +14570,16 @@ function checkCommissionSummaryDeepLink(){
     openClientModal(listId, clientId);
     state.commissionSummaryModal = {clientId, listId};
   }catch(e){ console.error('Commission Summary deep-link navigation failed:', e); }
+  // 2026-11-18: the email link can land in a Portal tab that was opened BEFORE the Summary
+  // was created/changed (tab hand-off) — pull the latest Summary from the server and redraw.
+  (async ()=>{
+    try{
+      const { data, error } = await supabaseClient.from('clients').select('commission_summary').eq('id', clientId).single();
+      if(error || !data) return;
+      const l = db.lists.find(x=>x.id===listId); const c = l && l.clients.find(x=>x.id===clientId);
+      if(c){ c.commissionSummary = data.commission_summary || null; render(); }
+    }catch(e){ console.error('Commission Summary refresh failed:', e); }
+  })();
 }
 async function checkTodoDeepLink(){
   const params = new URLSearchParams(window.location.search);
