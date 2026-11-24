@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Southwest Edge Portal</title>
+<title>Cutting | edge</title>
 <link rel="manifest" href="manifest.json">
 <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
 <link rel="icon" type="image/png" sizes="180x180" href="icon-180.png">
@@ -895,7 +895,7 @@ const EDGE_LOGO_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAARgAAA
 // normal for this specific key type; Google expects it to be visible in page source and
 // restricted by domain, via HTTP referrer restriction in Google Cloud Console, not hidden
 // like the other secrets in this app). Replace once Michael has generated a real key.
-const APP_BUILD = '2026-11-20 ce-logo2';
+const APP_BUILD = '2026-11-24 todo-deal-link';
 const GOOGLE_MAPS_JS_KEY = 'AIzaSyBMlIjvH2bpZK6mYJeNZSkQvM8TXQkCjDE';
 const CATEGORY_ORANGE_ICONS = ['💲','🏢','🎯','📋','☁️','🔧','✈️','🏛️','💎','📄','⭐','🗂️'];
 
@@ -14902,6 +14902,26 @@ function renderProjectSection(td){
   ${accessHtml}
   `;
 }
+// 2026-11-24 (Michael): from a To-Do, jump to the Deal / Client it came from. Opening one
+// closes the To-Do window; closing the Deal/Client window (✕) brings the To-Do back.
+function todoLinkTarget(td){
+  let clientId = td.clientId || (td.dealId ? clientIdForDeal(td.dealId) : null);
+  if(!clientId) return null;
+  const listId = td.listId && db.lists.some(l=>l.id===td.listId && (l.clients||[]).some(c=>c.id===clientId)) ? td.listId : findListIdForClient(clientId);
+  const l = listId && db.lists.find(x=>x.id===listId); const c = l && (l.clients||[]).find(x=>x.id===clientId);
+  if(!c) return null;
+  const d = td.dealId ? (c.deals||[]).find(x=>x.id===td.dealId) : null;
+  return {listId, c, d};
+}
+function todoLinkBarHtml(td){
+  const t = todoLinkTarget(td); if(!t) return '';
+  return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:#FFF5EF;border:1px solid #F5D3C2;border-radius:10px;padding:8px 12px;margin-bottom:14px;font-size:13px;">
+    <span>📍 <b>${escapeHtml(t.c.name)}</b>${t.d ? ` &nbsp;›&nbsp; ${escapeHtml(t.d.name)}` : ''}</span>
+    <span style="flex:1;"></span>
+    ${t.d ? `<button class="btn sm" data-tdopen="deal">Open Deal</button>` : ''}
+    <button class="btn secondary sm" data-tdopen="client">Open ${t.listId==='listings'?'Listing':'Client'}</button>
+  </div>`;
+}
 function renderTodoDetailModal(){
   const td = db.todos.find(x=>x.id===state.todoDetailModal.id);
   if(!td){ state.todoDetailModal=null; return; }
@@ -14927,6 +14947,7 @@ function renderTodoDetailModal(){
       </div>
     </div>
     <div class="modal-body">
+      ${todoLinkBarHtml(td)}
       ${ackBannerHtml(td)}
       ${(state.mustRespondTodoId===td.id) ? `<div style="background:#fffbe6;border:1px solid #e0c040;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:13px;">⏰ <b>${USERS.find(u=>u.id===td.createdBy).name}</b> asked for a quick update on this. Change the Status, add a Note, mark it complete, or change the due date — then you're all set.</div>` : ''}
       <div class="type-toggle">
@@ -15023,6 +15044,16 @@ function renderTodoDetailModal(){
     document.getElementById('detDue').value = d ? toLocalDateStr(d) : '';
   });
   overlay.querySelector('[data-action="closeTodoDetail"]').onclick=()=>{ if(attemptCloseTodoDetail(td)) render(); };
+  overlay.querySelectorAll('[data-tdopen]').forEach(b=>b.onclick=()=>{
+    const t = todoLinkTarget(td); if(!t) return;
+    if(!canViewClientLocally(t.listId, t.c.id)){ alert('You are not listed as a user on the account.'); return; }
+    state.todoReturnTo = td.id;
+    state.todoDetailModal = null;
+    const frames = [{kind:'client', listId:t.listId, clientId:t.c.id, viewMode:'all'}];
+    if(b.dataset.tdopen==='deal' && t.d) frames.push({kind:'deal', listId:t.listId, clientId:t.c.id, dealId:t.d.id, fromTodo:true});
+    state.modalStack = withPageScroll(frames);
+    render();
+  });
   overlay.querySelectorAll('[data-action="addChecklistItem"]').forEach(btn=>btn.onclick=()=>{
     const newItem = {id:crypto.randomUUID(), text:'', done:false, dueDate:todayDate()};
     td.checklistItems.push(newItem);
@@ -15302,7 +15333,9 @@ function closeModalStack(){
   // put it back once the page is showing again, so closing out fully doesn't snap back to top.
   const pageScrollTop = bottom && typeof bottom.pageScrollTop==='number' ? bottom.pageScrollTop : null;
   setScrollPin(null); if(pageScrollTop!==null && state._scrollPin) state._scrollPin.content = pageScrollTop;
-  state.modalStack=[]; state.reopenMapAfterDealClose=null; render();
+  state.modalStack=[]; state.reopenMapAfterDealClose=null;
+  if(state.todoReturnTo){ const rid = state.todoReturnTo; state.todoReturnTo = null; if(db.todos.some(t=>t.id===rid)) openTodoDetail(rid); }
+  render();
   if(pageScrollTop!==null){
     requestAnimationFrame(()=>{
       const el = document.querySelector('.content');
@@ -15334,6 +15367,7 @@ function closeTopModalFrame(){
         if(saveBtn) saveBtn.click();
       }
     }
+    if(closingFrame.fromTodo && state.todoReturnTo){ closeModalStack(); return; } // opened from a To-Do → Done goes straight back to it
     setScrollPin(typeof closingFrame.parentScrollTop==='number' ? closingFrame.parentScrollTop : null);
     state.modalStack.pop();
     maybeReopenMapAfterDealClose(closingFrame);
