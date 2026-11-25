@@ -895,7 +895,7 @@ const EDGE_LOGO_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAARgAAA
 // normal for this specific key type; Google expects it to be visible in page source and
 // restricted by domain, via HTTP referrer restriction in Google Cloud Console, not hidden
 // like the other secrets in this app). Replace once Michael has generated a real key.
-const APP_BUILD = '2026-11-24 todo-deal-link';
+const APP_BUILD = '2026-11-25 loi-side';
 const GOOGLE_MAPS_JS_KEY = 'AIzaSyBMlIjvH2bpZK6mYJeNZSkQvM8TXQkCjDE';
 const CATEGORY_ORANGE_ICONS = ['💲','🏢','🎯','📋','☁️','🔧','✈️','🏛️','💎','📄','⭐','🗂️'];
 
@@ -8110,7 +8110,7 @@ function matchLoiToAccount(){
   m.otherSideMatch = null;
   if(!client){
     m.matchedClient=null; m.matchedDeal=null; m.candidateDeals=[];
-    m.otherSideMatch = loiFindOnSide(m.dropSide==='clients'?'listings':'clients', ex, m.fileName);
+    // 2026-11-25 (Michael): the side is fixed by where the file was dropped — never suggest the other side.
     return;
   }
   loiPopulateDealMatch(client);
@@ -12441,13 +12441,10 @@ function renderLoiImportModal(){
       const label = m.dropSide==='clients' ? 'Client' : 'Listing';
       body = `
         <div class="tiny" style="color:var(--ink-soft);margin-bottom:10px;">Extracted from ${escapeHtml(m.fileName)}: <b>${escapeHtml(ex.accountName||'—')}</b> at <b>${escapeHtml(ex.propertyDescription||'—')}</b></div>
-        ${m.otherSideMatch ? `<div class="ack-banner" style="margin-bottom:12px;">This looks like it belongs under the ${m.dropSide==='clients'?'Listing':'Client'} <b>${escapeHtml(m.otherSideMatch.name)}</b>.
-          <div style="margin-top:8px;"><button class="btn sm" data-action="loiSwitchSide">Switch to ${m.dropSide==='clients'?'Listings':'Clients'} → ${escapeHtml(m.otherSideMatch.name)}</button></div></div>` : ''}
         <div class="tiny" style="margin-bottom:10px;">Couldn't match this to a ${label} automatically — often just means it's filed under a different name (e.g. the shopping center instead of the intersection). Pick the right one below, or create a new one.</div>
         <div class="field"><label>Search ${label}s</label><input id="loiClientPickerSearch" placeholder="Start typing a name…" value="${escapeAttr(m.clientPickerQuery||'')}"></div>
         <div id="loiClientPickerResults">${renderLoiClientPickerResultsHtml()}</div>
         <button class="btn secondary sm" data-action="loiCreateNewClient" style="margin:10px 0 14px;">+ Create New ${label}</button>
-        <button class="btn secondary sm" data-action="loiSwitchSide" style="margin:10px 0 14px;">Wrong side? Switch to ${m.dropSide==='clients'?'Listings':'Clients'}</button>
         <button class="btn secondary" data-action="loiStartOver" style="width:100%;">Start Over</button>
       `;
     } else {
